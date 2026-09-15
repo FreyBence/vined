@@ -1,10 +1,11 @@
 from setuptools import setup, find_packages
 
 setup(
-    name='neds',
+    name='vined',
     version='0.0.1',
     python_requires='>=3.10,<3.11',
-    description='Neural Encoding and Decoding at Scale',
+    description='Visual-Neural Encoding and Decoding',
+    url='https://github.com/FreyBence/vined',
     packages=find_packages(),
     install_requires=[
         'torch',

@@ -53,7 +53,7 @@ These extensions are research objectives, not completed features.
 ## Environment and execution
 
 Use **Python 3.10 + pip + a local `.venv`** on Windows or Linux. The Python
-distribution remains `neds`. Install PyTorch first using the CPU or CUDA 11.8
+distribution is `vined`. Install PyTorch first using the CPU or CUDA 11.8
 requirements, then the general dependencies and editable package.
 
 See [environment setup and workflow commands](docs/environment.md) and
@@ -71,6 +71,14 @@ site-specific. Visual replay generation and CLIP extraction precede data prepara
 
 ## Origin and attribution
 
-ViNED derives from **NEDS: Neural Encoding and Decoding at Scale**. The [archived NEDS README](docs/README_NEDS.md) preserves the earlier project description, schematic, usage instructions, and paper citation, including the local Bash command edits that predated this rewrite. It is historical documentation and is deprecated as a guide to ViNED.
+ViNED derives from **[NEDS: Neural Encoding and Decoding at Scale](https://github.com/yzhang511/NEDS)** by Yizi Zhang and collaborators. The ViNED repository is **[FreyBence/vined](https://github.com/FreyBence/vined)**. The [archived NEDS README](docs/README_NEDS.md) preserves the earlier project description, schematic, usage instructions, and paper citation, including the local Bash command edits that predated this rewrite. It is historical documentation and is deprecated as a guide to ViNED.
 
-Refer to that archive for the upstream citation and to [LICENSE](LICENSE) for the repository license. Preserve NEDS attribution when using or extending this work.
+Refer to that archive for the upstream citation. Preserve NEDS attribution when using or extending its work.
+
+## Licensing
+
+The inherited NEDS code and documentation retain their original **MIT license**, including `Copyright (c) 2024 Yizi Zhang`, reproduced unchanged in [LICENSE](LICENSE).
+
+Frey Bence grants **no additional license** for his original ViNED contributions. Public availability does not grant permission to reuse, modify, or redistribute those contributions beyond rights provided by applicable law or GitHub's terms. The upstream MIT license continues to apply to inherited NEDS material; it does not serve as a blanket license for ViNED's additions.
+
+See [LICENSING.md](LICENSING.md) for the scope and Git history reference.

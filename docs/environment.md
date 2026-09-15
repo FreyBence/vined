@@ -1,10 +1,16 @@
 # Python environment and execution
 
 ViNED uses standalone **Python 3.10**, **venv**, and **pip**. The editable
-distribution remains `neds`; Conda and pyenv are not needed. Python itself,
+distribution is `vined`; Conda and pyenv are not needed. Python itself,
 NVIDIA drivers, and Linux Slurm are external prerequisites.
 
 ## Install
+
+When upgrading an existing environment that installed this checkout as `neds`,
+uninstall the old editable distribution first
+(`.venv\Scripts\python.exe -m pip uninstall neds` on Windows,
+or `.venv/bin/python -m pip uninstall neds` on Linux),
+then run the editable install below. Python module import names are unchanged.
 
 Run from the checkout root. Use a working 64-bit Python 3.10 interpreter explicitly;
 do not assume `python` on PATH is the right version. Windows was created with
