@@ -20,11 +20,12 @@ fi
 
 echo "${TMPDIR:-}"
 
-num_sessions=${1:-1}  # Default to 1 if not provided
+num_sessions=${1:-20}  # Default to 20 if not provided
 eid=${2:-"None"}      # Default to "None" if not provided
 
 user_name=$(whoami)
-base_path=${VINED_DATA_DIR}
+video_path=${VINED_REPLAY_DIR}
+base_path=${VINED_VISUAL_DIR}
 
 if ! [[ "$num_sessions" =~ ^[0-9]+$ ]]; then
     echo "Error: num_sessions must be an integer"
@@ -42,6 +43,7 @@ else
     eid="None"
 fi
 
-"$PYTHON" src/prepare_data.py --n_sessions $num_sessions \
+"$PYTHON" src/prepare_visual_stim.py --n_sessions $num_sessions \
                            --eid $eid \
-                           --base_path "${base_path}"
+                           --video_dir "${video_path}" \
+                           --output_dir "${base_path}"

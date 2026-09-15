@@ -11,13 +11,17 @@
 #SBATCH -t 0-01
 #SBATCH --export=ALL
 
-. ~/.bashrc
+set -e
+# Slurm spools the script: locate the original checkout through the submit directory.
+if [[ -n "${SLURM_JOB_ID:-}" ]]; then
+    _root="${VINED_REPO_ROOT:-${SLURM_SUBMIT_DIR:?Submit from the checkout}}"
+    [[ -f "$_root/environment.sh" ]] && _root="$_root/.."
+    source "$_root/script/environment.sh"
+else
+    source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/environment.sh"
+fi
 
-echo $TMPDIR
-
-conda activate neds
-
-cd ..
+echo "${TMPDIR:-}"
 
 num_sessions=${1}
 eid=${2}
@@ -28,8 +32,8 @@ task_var=${6}
 search=${7}
 
 user_name=$(whoami)
-base_path="./" # change to your own path
-data_path="/projects/bcxj/$user_name/datasets/"
+base_path="${VINED_OUTPUT_DIR:-$REPO_ROOT}" # change to your own path
+data_path="${VINED_DATA_DIR}"
 
 if [ $train_mode = "finetune" ]; then
     finetune="--finetune"
@@ -46,39 +50,37 @@ else
 fi
 
 if [ $model_mode = "mm" ]; then
-    python src/eval.py --eid ${eid} \
+    "$PYTHON" src/eval.py --eid ${eid} \
                                 --mask_mode temporal \
                                 --mask_ratio ${mask_rartio} \
                                 --seed 42 \
-                                --base_path $base_path \
+                                --base_path "${base_path}" \
                                 --mixed_training  \
                                 --num_sessions ${num_sessions} \
                                 ${finetune} \
                                 --model_mode ${model_mode} \
                                 --wandb \
             			        --overwrite \
+                                --save_plot \
                                 --enc_task_var $task_var \
-                                --data_path $data_path \
+                                --data_path "${data_path}" \
                                 ${search}
 elif [ $model_mode = "encoding" ] || [ $model_mode = "decoding" ];
 then
-    python src/eval.py --eid ${eid} \
+    "$PYTHON" src/eval.py --eid ${eid} \
                                 --mask_mode temporal \
                                 --mask_ratio ${mask_rartio} \
                                 --seed 42 \
-                                --base_path $base_path \
+                                --base_path "${base_path}" \
                                 --num_sessions ${num_sessions} \
                                 ${finetune} \
                                 --model_mode ${model_mode} \
                                 --wandb \
 				                --overwrite \
                                 --enc_task_var $task_var \
-                                --data_path $data_path \
+                                --data_path "${data_path}" \
                                 ${search}
 else
-    echo "model_mode: $model_mode not supported"
+    echo "model_mode: $model_mode not supported" >&2
+    exit 2
 fi
-
-conda deactivate
-
-cd script

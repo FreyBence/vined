@@ -13,13 +13,17 @@
 
 set -x
 
-. ~/.bashrc
+set -e
+# Slurm spools the script: locate the original checkout through the submit directory.
+if [[ -n "${SLURM_JOB_ID:-}" ]]; then
+    _root="${VINED_REPO_ROOT:-${SLURM_SUBMIT_DIR:?Submit from the checkout}}"
+    [[ -f "$_root/environment.sh" ]] && _root="$_root/.."
+    source "$_root/script/environment.sh"
+else
+    source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/environment.sh"
+fi
 
-echo $TMPDIR
-
-conda activate neds
-
-cd ..
+echo "${TMPDIR:-}"
 
 num_sessions=${1}
 eid=${2}
@@ -31,17 +35,17 @@ search=${7}
 task_var=${8}
 
 user_name=$(whoami)
-config_dir=$(pwd)/src/configs
-data_path="/projects/bcxj/$user_name/datasets/"
+config_dir=${REPO_ROOT}/src/configs
+data_path="${VINED_DATA_DIR}"
 
 if [ "$search" = "True" ]; then
     echo "Doing hyperparameter search"
     search="--search"
-    base_path="/projects/beez/$user_name/tune/session_$num_sessions/"
+    base_path="${VINED_OUTPUT_DIR:-$REPO_ROOT}"
 else
     echo "Not doing hyperparameter search"
     search=""
-    base_path="./" # change to your own path
+    base_path="${VINED_OUTPUT_DIR:-$REPO_ROOT}" # change to your own path
 fi
 
 if [ $train_mode = "finetune" ]; then
@@ -51,6 +55,10 @@ else
 fi
 
 if [ "$search" = "--search" ]; then
+    if [[ -z "${SLURM_JOB_ID:-}" ]]; then
+        echo "This search wrapper requires Linux Slurm; see docs/environment.md." >&2
+        exit 2
+    fi
     # Getting the node names
     nodes=$(scontrol show hostnames "$SLURM_JOB_NODELIST")
     nodes_array=($nodes)
@@ -78,7 +86,7 @@ if [ "$search" = "--search" ]; then
 
     echo "Starting HEAD at $head_node"
     srun --nodes=1 --ntasks=1 -w "$head_node" \
-        ray start --head --node-ip-address="$head_node_ip" --port=$port \
+        "$VENV_BIN/ray" start --head --node-ip-address="$head_node_ip" --port=$port \
         --num-cpus "1" --num-gpus "1" --block &
 
     # Starting the Ray worker nodes
@@ -90,7 +98,7 @@ if [ "$search" = "--search" ]; then
         node_i=${nodes_array[$i]}
         echo "Starting WORKER $i at $node_i"
         srun --nodes=1 --ntasks=1 -w "$node_i" \
-            ray start --address "$ip_head" \
+            "$VENV_BIN/ray" start --address "$ip_head" \
             --num-cpus "1" --num-gpus "1" --block &
         sleep 5
     done
@@ -98,8 +106,8 @@ fi
 
 if [ $model_mode = "mm" ]; then
     echo "Training multimodal model:"
-    python $python_file --eid $eid \
-    --base_path $base_path \
+    "$PYTHON" "$python_file" --eid $eid \
+    --base_path "${base_path}" \
     --mask_ratio $mask_ratio \
     --mixed_training \
     --num_sessions $num_sessions \
@@ -108,13 +116,13 @@ if [ $model_mode = "mm" ]; then
     --enc_task_var $task_var \
     $search \
     --num_tune_sample 30 \
-    --config_dir $config_dir \
-    --data_path $data_path
+    --config_dir "${config_dir}" \
+    --data_path "${data_path}"
 elif [ $model_mode = "encoding" ] || [ $model_mode = "decoding" ];
 then
     echo "Training $model_mode model:"
-    python $python_file --eid $eid \
-    --base_path $base_path \
+    "$PYTHON" "$python_file" --eid $eid \
+    --base_path "${base_path}" \
     --mask_ratio $mask_ratio \
     --num_sessions $num_sessions \
     --dummy_size $dummy_size \
@@ -122,12 +130,9 @@ then
     --enc_task_var all \
     $search \
     --num_tune_sample 30 \
-    --config_dir $config_dir \
-    --data_path $data_path
+    --config_dir "${config_dir}" \
+    --data_path "${data_path}"
 else
-    echo "model_mode: $model_mode not supported"
+    echo "model_mode: $model_mode not supported" >&2
+    exit 2
 fi
-
-conda deactivate
-
-cd script

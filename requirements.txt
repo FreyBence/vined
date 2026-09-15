@@ -1,0 +1,30 @@
+# Install PyTorch first using requirements-torch-cu118.txt or requirements-torch-cpu.txt.
+numpy==1.26.4
+pandas
+tqdm
+matplotlib
+seaborn
+scikit-learn
+scipy
+wandb
+ONE-api
+iblutil
+iblatlas
+ibllib
+ibl-neuropixel
+spikeinterface
+torch==2.2.1
+torchvision==0.17.1
+ray[default,tune]==2.10.0
+einops
+torcheval==0.0.7
+timm==0.9.16
+datasets==2.17.1
+transformers==4.38.2
+accelerate==0.27.2
+opencv-python-headless==4.10.0.84
+Pillow
+PyYAML
+huggingface_hub<1
+# Ray 2.10 and Datasets 2.17 use older Arrow APIs.
+pyarrow==14.0.2

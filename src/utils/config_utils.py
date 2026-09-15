@@ -21,7 +21,8 @@ def unpack_config_rec(config):
     
     # Unpack includes
     if isinstance(config, str) and config.split(":")[0] == "include":
-        config = yaml.safe_load(open(config.split(":")[1],"r"))
+        # Preserve the drive separator in absolute Windows paths.
+        config = yaml.safe_load(open(config.split(":", 1)[1],"r"))
     
     if isinstance(config, dict):
         for field in config:
