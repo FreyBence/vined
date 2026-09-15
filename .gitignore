@@ -1,0 +1,90 @@
+# Generated research data and experiment outputs (also when run from src/ or script/)
+datasets/
+ibl_task_replay/
+results/
+checkpoints/
+wandb/
+ray_results/
+*_visual_clip.npz
+events.out.tfevents.*
+
+# Temporary local tools and scratch files
+/tmp/
+tempCodeRunnerFile.py
+
+# Python bytecode and native extensions
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.pyd
+
+# Python builds and generated package metadata
+build/
+dist/
+.eggs/
+*.egg-info/
+*.egg
+wheels/
+.installed.cfg
+
+# Virtual environments and local credentials
+.venv/
+venv/
+env/
+ENV/
+.pixi/
+__pypackages__/
+.env
+.env.*
+!.env.example
+!.env.sample
+!.env.template
+.envrc
+.pypirc
+
+# Test, coverage, and analysis caches
+.cache/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pyre/
+.pytype/
+.hypothesis/
+.tox/
+.nox/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+nosetests.xml
+.dmypy.json
+dmypy.json
+
+# Notebook and documentation build artifacts
+.ipynb_checkpoints/
+docs/_build/
+
+# Runtime and scheduler logs
+*.log
+slurm-*.out
+data.*.out
+train.*.out
+train-multi-gpu.*.out
+eval.*.out
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Local editor and operating-system files
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+Desktop.ini
