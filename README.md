@@ -1,94 +1,76 @@
-# NEDS: Neural Encoding and Decoding at Scale
+# ViNED: Visual–Neural Encoding and Decoding
 
-We introduce a multimodal, multi-task model that enables simultaneous [Neural Encoding and Decoding at Scale (NEDS)](https://arxiv.org/abs/2504.08201). Central to our approach is a novel multi-task-masking strategy, which alternates between neural, behavioral, within-modality, and cross-modality masking. 
+ViNED is Frey Bence's MSc research project exploring the relationship between visual stimuli and neural activity recorded with implanted Neuropixels electrodes. It builds on **NEDS (Neural Encoding and Decoding at Scale)** and uses International Brain Laboratory (IBL) recordings.
 
-![NEDS](assets/neds_schematic.png)
+## Research goal
 
-## Installation
+Learn both directions of the visual–neural relationship:
 
-```bash
-conda env create -f env.yaml    # Create conda environment
+- **Encoding:** predict neural population activity from visual stimulus representations.
+- **Decoding:** predict visual stimulus representations from neural activity.
 
-conda activate neds             # Activate conda environment
-```
+The current model pairs spike counts with **CLIP embeddings** extracted from synthetic videos that replay the mouse's visual task. Its visual predictions are feature vectors; reconstructing images or playable videos would require an additional method.
 
-## Datasets and Models
+## Current implementation
 
-**NOTE**: The IBL sessions used for pre-training are in `data/train_eids.txt`, while the held-out sessions for evaluation are in `data/test_eids.txt`.
-If you want to train and evaluate on a different set of sessions, you can change the `eids.txt`, `train_eids.txt` and `test_eids.txt` files.
+ViNED adapts the NEDS multimodal transformer, masking strategy, and session-specific projections. The active modalities are `spike` and `vision-clip`, replacing the original behavioral targets. Visual prediction uses cosine loss; neural prediction uses Poisson negative log-likelihood.
 
+The data pipeline consists of:
 
-Download and prepare the IBL dataset. Update `base_path` and `data_path` in the scripts:
+1. Replaying trial stimuli from IBL task timing and wheel movements.
+2. Extracting frame-level features with a frozen CLIP ViT-L/14 encoder.
+3. Preparing visual features and binned neural activity for each trial.
+4. Creating cached train, validation, and test datasets.
+5. Training and evaluating visual–neural predictions.
 
-```bash
-sbatch prepare_data.sh 1 EID    # Download data for a session using the provided EID
+**Status:** this is an experimental research implementation. Temporal alignment, checkpoint restoration, and evaluation task routing need validation before interpreting model scores. See [AGENT.md](AGENT.md) for the findings and development priorities.
 
-sbatch prepare_data.sh 84       # Download 84 sessions from the IBL repeated-site dataset
-```
+## Planned work
 
-To accelerate data loading during training, we pre-save the partitioned train/val/test data and load it when needed:
+- Establish a reproducible visual–neural baseline.
+- Add task-event modalities to model relationships between stimuli, events, and neural responses.
+- Define and evaluate prediction tasks for neural clusters and brain regions.
+- Evaluate multi-session training and adaptation to held-out sessions.
 
-```bash
-sbatch create_dataset.sh 1 EID    # Save the train/val/test data for a session using the provided EID
+These extensions are research objectives, not completed features.
 
-source run_create_dataset.sh      # Save the train/val/test data for each of the 10 test sessions individually
+## Repository guide
 
-sbatch create_dataset.sh 10 none  # Save the train/val/test data for pretraining on a set of 10 sessions
-```
+| Location | Purpose |
+| --- | --- |
+| [AGENT.md](AGENT.md) | Detailed project goal, code-review findings, and research roadmap |
+| [docs/](docs/) | Hungarian research documents and project documentation |
+| [data/](data/) | Session identifiers and training/evaluation session selections |
+| [src/visual_stim_gen.py](src/visual_stim_gen.py) | Synthetic stimulus replay generation |
+| [src/prepare_visual_stim.py](src/prepare_visual_stim.py) | CLIP feature extraction |
+| [src/prepare_data.py](src/prepare_data.py) | IBL data preparation |
+| [src/create_dataset.py](src/create_dataset.py) | Cached dataset creation |
+| [src/multi_modal/](src/multi_modal/) | Multimodal transformer and embeddings |
+| [src/train.py](src/train.py), [src/finetune.py](src/finetune.py) | Training and session adaptation |
+| [src/eval.py](src/eval.py) | Evaluation entry point |
+| [script/](script/) | Environment-specific Bash wrappers |
 
-### Train NEDS
+## Environment and execution
 
-Train NEDS from scratch on a single session using a single GPU. Update `base_path` and `data_path` in the script:
+Use **Python 3.10 + pip + a local `.venv`** on Windows or Linux. The Python
+distribution remains `neds`. Install PyTorch first using the CPU or CUDA 11.8
+requirements, then the general dependencies and editable package.
 
-```bash
-sbatch train.sh 1 EID train mm 0 0.1 False random        # Train multi-modal model
+See [environment setup and workflow commands](docs/environment.md) and
+[validation results and blockers](docs/environment-validation.md).
 
-sbatch train.sh 1 EID train encoding 0 0.1 False random  # Train encoding model
+Bash wrappers resolve the checkout automatically and support `VENV_DIR` and
+`VINED_*` path overrides. Linux Slurm account/partition settings remain
+site-specific. Visual replay generation and CLIP extraction precede data preparation.
 
-sbatch train.sh 1 EID train decoding 0 0.1 False all     # Train decoding model
-```
+## Research documents
 
-Use `Ray Tune` for hyperparameter search. Update `num_tune_sample` in the script to change the number of random models:
+- [IBL visual data specifications and parameters](docs/ibl-visual-data-specs.md) — sourced stimulus reference, replay settings, CLIP schema, and alignment requirements.
+- [Hungarian research report](docs/Frey_Bence_ITLNUH_Beszámoló.pdf)
+- [Hungarian presentation](docs/Frey_Bence_ITLNUH_prezentáció.pptx)
 
-```bash
-sbatch train.sh 1 EID train mm 0 0.1 True random
-```
+## Origin and attribution
 
-Pre-train NEDS on 10 sessions using multiple GPUs. Update `--nodes` and `--ntasks` in the script to change the number of GPUs used:
+ViNED derives from **NEDS: Neural Encoding and Decoding at Scale**. The [archived NEDS README](docs/README_NEDS.md) preserves the earlier project description, schematic, usage instructions, and paper citation, including the local Bash command edits that predated this rewrite. It is historical documentation and is deprecated as a guide to ViNED.
 
-```bash
-sbatch train_multi_gpu.sh 10 none mm 0 0.1 all   # Pre-training requires "all"
-```
-
-Fine-tune the pre-trained 10-session NEDS model on a single held-out test session:
-
-```bash
-sbatch train.sh 10 EID finetune mm 0 0.1 False random
-```
-
-### Evaluate NEDS
-
-To evaluate NEDS on a single session:
-
-```bash
-sbatch eval.sh 1 EID train mm 0.1 random False     # Eval a model trained from scratch (no hyperparameter search)
-
-sbatch eval.sh 10 EID finetune mm 0.1 random False # Eval a pre-trained model fine-tuned on a held-out test session (no hyperparameter search)
-
-sbatch eval.sh 1 EID train mm 0.1 random True      # Eval a model trained from scratch (with hyperparameter search)
-```
-**NOTE**: If you want to evaluate a model after hyperparameter tuning, locate the best model in the training logs and keep only its folder in `/YOUR_PATH/tune/`. Alternatively, you can change `eval.py` to automatically load the best checkpoint.
-
-
-## Citation
-Please cite our paper if you use this code in your own work:
-```
-@article{zhang2025neural,
-  title={Neural Encoding and Decoding at Scale},
-  author={Zhang, Yizi and Wang, Yanchen and Azabou, Mehdi and Andre, Alexandre and Wang, Zixuan and Lyu, Hanrui and Laboratory, The International Brain and Dyer, Eva and Paninski, Liam and Hurwitz, Cole},
-  journal={arXiv preprint arXiv:2504.08201},
-  year={2025}
-}
-```
-
-
+Refer to that archive for the upstream citation and to [LICENSE](LICENSE) for the repository license. Preserve NEDS attribution when using or extending this work.
