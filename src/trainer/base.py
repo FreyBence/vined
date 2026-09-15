@@ -1,22 +1,22 @@
 import os
-import wandb
 import random
+
 import numpy as np
-from tqdm import tqdm
 import torch
-from utils.utils import (
-    move_batch_to_device, 
-    metrics_list, 
-    plot_gt_pred, 
-    plot_neurons_r2
-)
+import torch.nn.functional as F
 from sklearn.metrics import balanced_accuracy_score, r2_score
+from tqdm import tqdm
+
+import wandb
+from utils.utils import (
+    metrics_list,
+    move_batch_to_device,
+    plot_gt_pred,
+    plot_neurons_r2,
+)
 
 OUTPUT_DIM = {
-    "choice": 2, 
-    "block": 3, 
-    "wheel": 1, 
-    "whisker": 1, 
+    "vision-clip": 768,
 }
 
 def set_seed(epoch, base_seed=42):
@@ -72,7 +72,7 @@ class MultiModalTrainer():
         else:
             self.training_schemes = [
                 "encoding", "decoding", 
-                "self-spike", "self-behavior", 
+                "self-spike", "self-vision", 
                 "random_token"
             ]
 
@@ -80,8 +80,8 @@ class MultiModalTrainer():
 
         self.start_epoch = kwargs.get("start_epoch", 0)
 
-        self.STATIC_VARS = ["choice", "block"]
-        self.DYNAMIC_VARS = ["wheel", "whisker"]
+        self.STATIC_VARS = []
+        self.DYNAMIC_VARS = ["vision-clip"]
 
     def _prepare_multimodal_mask(self, mod_dict, training_mode, all_ones, all_zeros):
         
@@ -101,7 +101,7 @@ class MultiModalTrainer():
             for mod in self.mod_to_indx.keys():
                 mod_dict[mod]["eval_mask"] = None if mod == "spike" else all_zeros
                     
-        elif training_mode == "self-behavior":
+        elif training_mode == "self-vision":
             for mod in self.mod_to_indx.keys():
                 mod_dict[mod]["eval_mask"] = None if mod in self.avail_beh else all_zeros
 
@@ -112,6 +112,19 @@ class MultiModalTrainer():
            raise Exception(f"masking mode {training_mode} not implemented.")
                 
         return mod_dict
+    
+    def cosine_similarity_metric(self, gt, pred):
+        """
+        gt/pred:
+            [B, T, D]
+        """
+
+        gt = F.normalize(gt, dim=-1)    
+        pred = F.normalize(pred, dim=-1)
+
+        sim = (gt * pred).sum(dim=-1)
+
+        return sim.mean().item()
     
     def _forward_model_inputs(self, batch, training_mode, enc_task_var=None):
         
@@ -344,7 +357,7 @@ class MultiModalTrainer():
                                 session_results[group_eid]["spike"]["gt"].append(_gt)
                                 session_results[group_eid]["spike"]["preds"].append(_pred)
     
-                if "wheel" in self.modal_filter["output"]:
+                if "vision-clip" in self.modal_filter["output"]:
                     for batch in self.eval_dataloader:
                         eid = np.array(batch["eid"])
                         outputs = self._forward_model_inputs(batch, training_mode="decoding")
@@ -456,6 +469,9 @@ class MultiModalTrainer():
                 try:
                     _gt = torch.cat(session_results[eid][mod]["gt"], dim=0)
                     _preds = torch.cat(session_results[eid][mod]["preds"], dim=0)
+                    if mod == "vision-clip":
+                        _preds = F.normalize(_preds, dim=-1)
+                        _gt = F.normalize(_gt, dim=-1)
                 except:
                     print(f"Missing EID {idx}: {eid} Modality: {mod}")
                 if mod == "spike" and "spike" in self.modal_filter["output"]:
@@ -475,18 +491,28 @@ class MultiModalTrainer():
                     eval_metrics[mod].append(results["bps"])
                 
                 elif mod in self.DYNAMIC_VARS:
-                    self.session_active_neurons[eid][mod] = [i for i in range(gt[idx][mod].size(-1))]
-                    results = metrics_list(
-                        gt = gt[idx][mod].unsqueeze(-1) if gt[idx][mod].ndim == 2 else gt[idx][mod], 
-                        pred = preds[idx][mod].unsqueeze(-1) if preds[idx][mod].ndim == 2 else preds[idx][mod],
-                        metrics=["behave_r2"], device=self.accelerator.device
+                    self.session_active_neurons[eid][mod] = [
+                        i for i in range(gt[idx][mod].size(-1))
+                    ]
+
+                    results = {
+                        "cosine": self.cosine_similarity_metric(
+                            gt[idx][mod],
+                            preds[idx][mod]
+                        ),
+
+                        "mse": torch.mean(
+                            (gt[idx][mod] - preds[idx][mod]) ** 2
+                        ).item()
+                    }
+
+                    eval_metrics[mod].append(
+                        results["cosine"]
                     )
-                    results["behave_r2"] = np.nan if results["behave_r2"] == -float("inf") else results["behave_r2"]
-                    eval_metrics[mod].append(results["behave_r2"])
                 
                 elif mod in self.STATIC_VARS:
                     try:
-                        if mod in ["choice", "block"]:
+                        if mod in self.STATIC_VARS:
                             metric = balanced_accuracy_score(
                                 gt[idx][mod].cpu().numpy(), preds[idx][mod].cpu().numpy()
                             )
@@ -531,7 +557,11 @@ class MultiModalTrainer():
                 epoch = epoch,
                 modality=modality
             )
-            active_neurons = range(gt.size()[-1])
+            active_neurons = np.random.choice(
+                gt.size()[-1],
+                size=min(5, gt.size()[-1]),
+                replace=False
+            )
             
         r2_fig = plot_neurons_r2(
             gt = gt.mean(0),

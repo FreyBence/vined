@@ -1,12 +1,16 @@
 import os
-import torch
+from utils.paths import visual_dir
 import pickle
+from typing import Dict, List, Optional, Tuple
+
 import numpy as np
-from utils.dataset_utils import get_binned_spikes_from_sparse
-from torch.utils.data.sampler import Sampler
-from typing import List, Optional, Tuple, Dict
-from torch.utils.data import Dataset
+import torch
 from numpy.random import default_rng
+from torch.utils.data import Dataset
+from torch.utils.data.sampler import Sampler
+
+from utils.dataset_utils import get_binned_spikes_from_sparse
+
 
 def _pad_seq_right_to_n(
     seq: np.ndarray,
@@ -404,6 +408,25 @@ class BaseDataset(torch.utils.data.Dataset):
             self.load_meta = load_meta
             self.dataset_name = dataset_name
             self.stitching = stitching
+            self.vision_cache = {}
+
+            self.visual_dir = str(visual_dir())
+
+            if self.visual_dir is not None:
+
+                for eid in eids:
+
+                    visual_path = os.path.join(
+                        self.visual_dir,
+                        f"{eid}_visual_clip.npz"
+                    )
+
+                    if os.path.exists(visual_path):
+
+                        self.vision_cache[eid] = np.load(
+                            visual_path,
+                            allow_pickle=True
+                        )
 
     def _preprocess_h5_data(self, data, idx):
         spike_data, rates, _, _ = data
@@ -437,24 +460,23 @@ class BaseDataset(torch.utils.data.Dataset):
 
         # Prepare target behavior
         if self.target:
-            target_behavior, target_behavior_dict = self._prepare_target_behavior(data)
+
+            _, target_behavior_dict = \
+                self._prepare_target_behavior(data)
+
         else:
-            target_behavior = np.array([np.nan])
 
-        # Prepare choice, block, and reward data
-        static_vars = ['choice', 'block', 'reward']
-        choice, block, reward = map(self._prepare_column_data, static_vars, [data] * len(static_vars))
+            target_behavior_dict = {}
 
-        # Prepare lookup dictionaries
-        choice_lookup = {'-1.0': 0, '1.0': 1}
-        block_lookup = {'0.2': 0, '0.5': 1, '0.8': 2}
-
-        # Create lookup arrays for choice and block
-        _choice, _block = self._apply_lookups(choice, block, choice_lookup, block_lookup, target_behavior.shape[0])
-        choice, block = np.float32(_choice[0]), np.float32(_block[0])
-    
-        # Combine target_behavior with choice and block
-        target_behavior = np.concatenate([target_behavior, _choice, _block], axis=1).astype(np.float32)
+        assert (
+            binned_spikes_data.shape[0]
+            ==
+            target_behavior_dict["vision-clip"].shape[0]
+        ), (
+            f"Spike/vision mismatch: "
+            f"{binned_spikes_data.shape[0]} vs "
+            f"{target_behavior_dict['vision-clip'].shape[0]}"
+        )
 
         # Adjust neuron IDs
         include_neuron_ids = np.arange(binned_spikes_data.shape[-1]).astype(np.int64)
@@ -501,32 +523,42 @@ class BaseDataset(torch.utils.data.Dataset):
             "space_attn_mask": space_attn_mask,
             "spikes_timestamps": spikes_timestamps,
             "spikes_spacestamps": spikes_spacestamps,
-            "target": target_behavior,
             "neuron_depths": neuron_depths,
             "neuron_regions": list(neuron_regions),
             "eid": data['eid'],
-            "choice": choice,
-            "block": block,
-            "reward": reward,
             **target_behavior_dict,
         }
     
     def _prepare_target_behavior(self, data):
-        target_behavior = []
+
         target_behavior_dict = {}
+
         for beh_name in self.target:
-            beh = np.array(data[beh_name], dtype=np.float32)
-            target_behavior.append(beh)
-            target_behavior_dict[beh_name.split('-')[0]] = beh
-        return np.array(target_behavior).T, target_behavior_dict
+
+            if beh_name not in data:
+                raise KeyError(
+                    f"Missing modality '{beh_name}' in dataset sample. "
+                    f"Available keys: {list(data.keys())}"
+                )
+
+            beh = np.asarray(
+                data[beh_name],
+                dtype=np.float32
+            )
+
+            # Pad temporal dimension
+            beh, _ = self._pad_data(
+                beh,
+                self.max_time_length,
+                axis=0
+            )
+
+            target_behavior_dict[beh_name] = beh
+
+        return None, target_behavior_dict
 
     def _prepare_column_data(self, col_name, data):
         return np.array(data[col_name], dtype=np.float32)
-
-    def _apply_lookups(self, choice, block, choice_lookup, block_lookup, target_len):
-        _choice = np.array([choice_lookup[str(x)] for x in choice] * target_len).reshape(-1, 1)
-        _block = np.array([block_lookup[str(x)] for x in block] * target_len).reshape(-1, 1)
-        return _choice, _block
 
     def _load_neuron_metadata(self, data, include_neuron_ids):
         neuron_depths = np.array(data['cluster_depths'], dtype=np.float32)[include_neuron_ids].squeeze()

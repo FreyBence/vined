@@ -1,32 +1,25 @@
-import os
-import logging
 import argparse
+import logging
+import os
+
 import numpy as np
+import torch
 from tqdm import tqdm
 
-import torch
-from datasets import (
-    load_dataset, load_from_disk, concatenate_datasets
-)
-
-from utils.utils import set_seed
-from utils.dataset_utils import load_ibl_dataset
-from utils.config_utils import config_from_kwargs, update_config
-
+from datasets import concatenate_datasets, load_dataset, load_from_disk
 from loader.make_loader import make_loader
+from utils.config_utils import config_from_kwargs, update_config
+from utils.dataset_utils import load_ibl_dataset
+from utils.utils import set_seed
 
 logging.basicConfig(level=logging.INFO) 
 
 neural_acronyms = {
     "ap": "spike",
 }
-static_acronyms = {
-    "choice": "choice", 
-    "block": "block",
-}
+static_acronyms = {}
 dynamic_acronyms = {
-    "wheel-speed": "wheel", 
-    "whisker-motion-energy": "whisker",
+    "vision-clip": "vision-clip",
 }
 
 model_config = "src/configs/multi_modal/mm.yaml"
@@ -52,7 +45,7 @@ ap.add_argument("--mask_ratio", type=float, default=0.1)
 ap.add_argument("--mixed_training", action="store_true")
 ap.add_argument(
     "--modality", nargs="+", 
-    default=["ap", "wheel-speed", "whisker-motion-energy", "choice", "block"]
+    default=["ap", "vision-clip"]
 )
 args = ap.parse_args()
 
@@ -77,10 +70,10 @@ for mod in modality:
         dynamic_mods.append(dynamic_acronyms[mod])   
 
 if model_mode == "mm":
-    input_mods = output_mods = neural_mods + static_mods + dynamic_mods
+    input_mods = output_mods = neural_mods + dynamic_mods
 elif model_mode == "decoding":
     input_mods = neural_mods
-    output_mods = static_mods + dynamic_mods
+    output_mods = dynamic_mods
 elif model_mode == "encoding":
     input_mods = static_mods + dynamic_mods
     output_mods = neural_mods
@@ -95,7 +88,7 @@ modal_filter = {"input": input_mods, "output": output_mods}
 # ---------
 train_dataset, val_dataset, test_dataset, meta_data = load_ibl_dataset(
     args.data_path,  
-    config.dirs.huggingface_org,
+    args.data_path,
     num_sessions=args.num_sessions,
     eid = eid if args.num_sessions == 1 else None,
     use_re=True,
@@ -122,7 +115,8 @@ train_dataloader = make_loader(
     sort_by_region=config.data.sort_by_region,
     stitching=True,
     seed=config.seed,
-    shuffle=True
+    shuffle=True,
+    eids=[args.eid]
 )
 
 base_path = args.data_path
@@ -169,7 +163,8 @@ val_dataloader = make_loader(
     sort_by_region=config.data.sort_by_region,
     stitching=True,
     seed=config.seed,
-    shuffle=False
+    shuffle=False,
+    eids=[args.eid]
 )
 for val_data in tqdm(val_dataloader):
     new_dict = {}
@@ -205,7 +200,8 @@ test_dataloader = make_loader(
     sort_by_region=config.data.sort_by_region,
     stitching=True,
     seed=config.seed,
-    shuffle=False
+    shuffle=False,
+    eids=[args.eid]
 )
 for test_data in tqdm(test_dataloader):
     new_dict = {}

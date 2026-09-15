@@ -1,18 +1,19 @@
 import os
-import numpy as np
 from dataclasses import dataclass
-from typing import List, Optional, Tuple, Dict
+from typing import Dict, List, Optional, Tuple
 
-from einops import rearrange
-
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
+from einops import rearrange
 from transformers.activations import ACT2FN
+
 ACT2FN["softsign"] = nn.Softsign
 
 from utils.config_utils import DictConfig, update_config
+
+VISION_VARS = ["vision-clip"]
 
 # Copied from hf Llama
 # Precompute cos and sin for RoPE
@@ -65,7 +66,11 @@ class ScaleNorm(nn.Module):
         self.eps = eps
 
     def forward(self, x):
-        norm = self.scale / torch.norm(x, dim=-1, keepdim=True).clamp(min=self.eps)
+        norm = self.scale / torch.norm(
+            x,
+            dim=-1,
+            keepdim=True
+        ).clamp(min=self.eps)
         return x * norm
         
 
@@ -151,14 +156,32 @@ class Attention(nn.Module):
             mask = mask.unsqueeze(1).expand(B,self.n_heads,T,T).bool()
 
         # Compute query, key, value for attention
-        q = self.query(x).view(B, T, self.n_heads, self.head_size).transpose(1, 2)      
-        k = self.key(x).view(B, T, self.n_heads, self.head_size).transpose(1, 2)        
-        v = self.value(x).view(B, T, self.n_heads, self.head_size).transpose(1, 2)     
+        q = self.query(x)
+        k = self.key(x)
+        v = self.value(x)
+
+        q = F.normalize(q, dim=-1)
+        k = F.normalize(k, dim=-1)
+
+        q = q.view(
+            B, T, self.n_heads, self.head_size
+        ).transpose(1, 2)
+
+        k = k.view(
+            B, T, self.n_heads, self.head_size
+        ).transpose(1, 2)
+
+        v = v.view(
+            B, T, self.n_heads, self.head_size
+        ).transpose(1, 2)   
 
         # Apply rotations to encode relative positions
         if self.use_rope:
             q, k = apply_rotary_pos_emb(q, k, timestamp, self.cos, self.sin, 1)  # (B,n_heads,T,head_size)
 
+        q = q.contiguous()
+        k = k.contiguous()
+        v = v.contiguous()
         out = F.scaled_dot_product_attention(
             q, k, v, attn_mask=mask, dropout_p=(self.attn_dropout if self.training else 0.0), is_causal=False
         )
@@ -211,9 +234,24 @@ class CrossAttention(nn.Module):
         if mask is not None:
             mask = mask.unsqueeze(1).expand(B,self.n_heads,T,M).bool()
         
-        q = self.query(x).view(B, T, self.n_heads, self.head_size).transpose(1, 2)      
-        k = self.key(context).view(B, M, self.n_heads, self.head_size).transpose(1, 2)        
-        v = self.value(context).view(B, M, self.n_heads, self.head_size).transpose(1, 2)   
+        q = self.query(x)
+        k = self.key(x)
+        v = self.value(x)
+
+        q = F.normalize(q, dim=-1)
+        k = F.normalize(k, dim=-1)
+
+        q = q.view(
+            B, T, self.n_heads, self.head_size
+        ).transpose(1, 2)
+
+        k = k.view(
+            B, T, self.n_heads, self.head_size
+        ).transpose(1, 2)
+
+        v = v.view(
+            B, T, self.n_heads, self.head_size
+        ).transpose(1, 2)   
 
         # Apply rotations to encode relative positions
         if self.use_rope:

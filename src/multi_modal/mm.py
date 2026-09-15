@@ -1,31 +1,33 @@
 import os
-import numpy as np
 from dataclasses import dataclass
-from einops import repeat
 from typing import (
-    Any, 
-    List, 
-    Tuple, 
-    Dict, 
+    Any,
+    Dict,
+    List,
+    Optional,
+    Tuple,
     Union,
-    Optional, 
 )
+
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from einops import repeat
 from transformers.activations import ACT2FN
+
 ACT2FN["softsign"] = nn.Softsign
-from utils.config_utils import DictConfig, update_config
 from models.masker import Masker
-from multi_modal.encoder_embeddings import EncoderLayer
-from models.stitcher import StitchDecoder
 from models.model_output import ModelOutput
+from models.stitcher import StitchDecoder
+from multi_modal.encoder_embeddings import EncoderLayer
 from multi_modal.mm_utils import create_context_mask
+from utils.config_utils import DictConfig, update_config
 
 DEFAULT_CONFIG = "src/configs/multi_modal/mm.yaml"
 
-STATIC_VARS = ["choice", "block"]
-DYNAMIC_VARS = ["wheel", "whisker"]
+STATIC_VARS = []
+DYNAMIC_VARS = ["vision-clip"]
 
 @dataclass
 class MultiModalOutput(ModelOutput):
@@ -79,25 +81,35 @@ class MultiModal(nn.Module):
         self.encoder_norm = nn.LayerNorm(self.hidden_size) 
 
         self.num_class = {
-            "spike": None, "wheel": 1, "whisker": 1, "choice": 2, "block": 3,
+            "spike": None, "vision-clip": 768,
         }
         self.mod_type = {
             "spike": "spike", 
-            "choice": "static", 
-            "block": "static",
-            "wheel": "dynamic", 
-            "whisker": "dynamic",
+            "vision-clip": "dynamic", 
         }
 
         self.mod_loss = {
-            "spike": nn.PoissonNLLLoss(reduction="none", log_input=True),
-            "dynamic": nn.MSELoss(reduction="none"),
-            "static": nn.CrossEntropyLoss(reduction="none") if "choice" in self.avail_beh else nn.MSELoss(reduction="none")
+            "spike": nn.PoissonNLLLoss(
+                reduction="none",
+                log_input=True
+            ),
+
+            "dynamic": self.cosine_loss,
+
+            "static": nn.CrossEntropyLoss(reduction="none")
         }
 
         if self.model_mode in ["encoding", "decoding"]:
             self.init_unimodal_stitcher()
         
+    def cosine_loss(self, preds, targets):
+
+        preds = F.normalize(preds, dim=-1)
+        targets = F.normalize(targets, dim=-1)
+
+        loss = 1 - (preds * targets).sum(dim=-1)
+
+        return loss
 
     def init_unimodal_stitcher(self):
         # Trick to handle incompatibility between unimodal and multimodal outputs
@@ -191,17 +203,34 @@ class MultiModal(nn.Module):
         for mod, d in output_mod_dict.items():
             targets = output_mod_dict[mod]["gt"]
             B, T, N = targets.size()
-            targets_mask = output_mod_dict[mod]["targets_mask"].unsqueeze(-1).expand(B, self.max_F, N)
+            targets_mask = output_mod_dict[mod]["targets_mask"]
             preds = output_mod_dict[mod]["preds"]
 
             mod_type = self.mod_type[mod]
             if mod_type != "static":
-                pad_mask = targets != -1.
-                targets_mask = torch.mul(targets_mask, pad_mask)
-                n_examples = targets_mask.sum()
+                if mod == "vision-clip":
+                    preds = F.normalize(preds, dim=-1)
+                    targets = F.normalize(targets, dim=-1)
+                    n_examples = targets_mask.sum()
+                else:
+                    pad_mask = targets != -1.
+                    targets_mask = torch.mul(
+                        targets_mask.unsqueeze(-1),
+                        pad_mask
+                    )
+                    n_examples = targets_mask.sum()
+
                 if n_examples != 0:                        
-                    assert preds.shape == targets.shape == targets_mask.shape, \
-                    f"shape mismatch in computing loss: preds ({preds.shape}) vs. targets ({targets.shape})."
+                    if mod == "vision-clip":
+                        assert preds.shape == targets.shape, \
+                            f"shape mismatch in computing loss: preds ({preds.shape}) vs. targets ({targets.shape})."
+                        assert targets_mask.shape == preds.shape[:2], \
+                            f"vision mask mismatch: mask ({targets_mask.shape}) vs preds ({preds.shape})"
+
+                    else:
+                        assert preds.shape == targets.shape == targets_mask.shape, \
+                            f"shape mismatch in computing loss: preds ({preds.shape}) vs. targets ({targets.shape})."
+                        
                     loss = (self.mod_loss[mod_type](preds, targets)*targets_mask).sum()/n_examples
                 else:
                     loss = torch.zeros(1, device=targets.device, requires_grad=True).squeeze()
@@ -215,15 +244,8 @@ class MultiModal(nn.Module):
                     n_examples, preds, targets
                     continue                
                 static_targets[mod], static_preds[mod] = targets.squeeze(1), preds.argmax(-1) 
-                if mod in ["choice", "block"]:
-                    targets = F.one_hot(
-                        targets.to(torch.int64), num_classes=self.num_class[mod]
-                    ).squeeze(1)          
-                else:
-                    targets = targets.reshape(-1, 1)
+                targets = targets.reshape(-1, 1)
                 loss = self.mod_loss[mod_type](preds.float(), targets.float()).sum() / n_examples
-                if mod in ["choice", "block"]:
-                    preds, targets = preds.argmax(-1), targets.argmax(-1)
             
             mod_loss[mod] = loss
             mod_n_examples[mod] = n_examples
@@ -266,12 +288,7 @@ class MultiModal(nn.Module):
                     y_mod = torch.sum(y.reshape(B,N,P) * weight, 1).reshape(B,-1)
 
                 if self.model_mode == "encoding":
-                    chunks = []
-                    for beh_idx in range(len(self.avail_beh)): 
-                        start_idx = beh_idx * self.max_F
-                        end_idx = start_idx + self.max_F
-                        chunks.append(y_mod[:, start_idx:end_idx])
-                    y_mod = torch.cat(chunks, dim=2)
+                    y_mod = y_mod
                 preds = self.mod_stitcher_proj_dict[mod](y_mod, eid) 
                 output_mod_dict[mod]["preds"] = preds.reshape((B,self.max_F,-1)) \
                     if mod not in STATIC_VARS else preds
@@ -287,7 +304,11 @@ class MultiModal(nn.Module):
         tmp = mod_dict["spike"]["inputs"].clone()
         
         masking_schemes = [
-            "encoding", "decoding", "self-spike", "self-behavior", "random_token"
+            "encoding",
+            "decoding",
+            "self-spike",
+            "self-vision",
+            "random_token"
         ]
         selected_schemes = np.random.choice(
             masking_schemes, size=tmp.size()[0], replace=True
@@ -302,7 +323,7 @@ class MultiModal(nn.Module):
                     "encoding": all_ones,
                     "decoding": all_zeros,
                     "self-spike": self.masker(tmp, None, "temporal")[1],
-                    "self-behavior": all_zeros,
+                    "self-vision": all_zeros,
                     "random_token": self.masker(tmp, None, "temporal")[1],
                 }
             elif mod in DYNAMIC_VARS+STATIC_VARS:
@@ -310,7 +331,7 @@ class MultiModal(nn.Module):
                     "encoding": 1 - mask_map["spike"]["encoding"],
                     "decoding": 1 - mask_map["spike"]["decoding"],
                     "self-spike": all_zeros,
-                    "self-behavior": self.masker(tmp, None, "temporal")[1],
+                    "self-vision": self.masker(tmp, None, "temporal")[1],
                     "random_token": mask_map["spike"]["random_token"],
                 }
         return mask_map, selected_schemes
@@ -357,7 +378,8 @@ class MultiModal(nn.Module):
 
         x = encoder_tokens + encoder_emb
         x = self.forward_encoder(x, input_timestamp=input_timestamp)
-
+        if "vision-clip" in self.avail_beh:
+            x = F.normalize(x, dim=-1)
         if self.model_mode == "mm":
             output_mod_dict = {
                 mod: self.encoder_embeddings[mod].out_proj(
@@ -380,5 +402,3 @@ class MultiModal(nn.Module):
             static_preds=static_preds,
             static_targets=static_targets,
         )
-
-    

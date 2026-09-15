@@ -1,30 +1,26 @@
-import os
-import wandb
-import pickle
-import logging
 import argparse
+import logging
+import os
+import pickle
 import threading
+
 import numpy as np
-
+import ray
 import torch
-from torch.optim.lr_scheduler import OneCycleLR, LinearLR
-
 from accelerate import Accelerator
 from accelerate.utils import DistributedDataParallelKwargs
-
-import ray
-from ray import tune, train
+from ray import train, tune
 from ray.tune.schedulers import ASHAScheduler
+from torch.optim.lr_scheduler import LinearLR, OneCycleLR
 
-from utils.utils import set_seed, dummy_load
-from utils.dataset_utils import load_ibl_dataset
-from utils.config_utils import config_from_kwargs, update_config
-
+import wandb
 from loader.make_loader import make_loader
-from trainer.make import make_multimodal_trainer
-
-from multi_modal.mm import MultiModal
 from multi_modal.encoder_embeddings import EncoderEmbedding
+from multi_modal.mm import MultiModal
+from trainer.make import make_multimodal_trainer
+from utils.config_utils import config_from_kwargs, update_config
+from utils.dataset_utils import load_ibl_dataset
+from utils.utils import dummy_load, set_seed
 
 
 def main(tune_config=None):
@@ -32,13 +28,9 @@ def main(tune_config=None):
     neural_acronyms = {
         "ap": "spike"
     }
-    static_acronyms = {
-        "choice": "choice", 
-        "block": "block"
-    }
+    static_acronyms = {}
     dynamic_acronyms = {
-        "wheel-speed": "wheel", 
-        "whisker-motion-energy": "whisker"
+        "vision-clip": "vision-clip",
     }
 
     if args.num_sessions == 1:
@@ -59,7 +51,7 @@ def main(tune_config=None):
         config = update_config(f"{args.config_dir}/multi_modal/trainer_multi_session.yaml", config)
         
     if args.model_mode == "encoding":
-        config["training"]["num_epochs"] = 4000
+        config["training"]["num_epochs"] = 130
 
     set_seed(config.seed)
 
@@ -146,7 +138,7 @@ def main(tune_config=None):
     # ---------
     train_dataset, val_dataset, test_dataset, meta_data = load_ibl_dataset(
         args.data_path, 
-        config.dirs.huggingface_org,
+        args.data_path,
         num_sessions=args.num_sessions,
         eid = eid if args.num_sessions == 1 else None,
         use_re=True,
@@ -287,7 +279,7 @@ def main(tune_config=None):
     model = model_class(
         encoder_embeddings,
         avail_mod = neural_mods + static_mods + dynamic_mods,
-        avail_beh = static_mods + dynamic_mods,
+        avail_beh = dynamic_mods,
         model_mode = model_mode,
         config = config.model, 
         **config.method.model_kwargs, 
@@ -441,7 +433,7 @@ if __name__ == "__main__":
     ap.add_argument("--enc_task_var", type=str, default="all")
     ap.add_argument(
         "--modality", nargs="+", 
-        default=["ap", "wheel-speed", "whisker-motion-energy", "choice", "block"]
+        default=["ap", "vision-clip"]
     )
     ap.add_argument("--continue_pretrain", action="store_true")
     ap.add_argument("--multi_gpu", action="store_true")

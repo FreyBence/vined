@@ -1,20 +1,20 @@
-import os
-import wandb
-import pickle
-import logging
 import argparse
-import numpy as np
+import logging
+import os
+import pickle
 from math import ceil
 
+import numpy as np
 import torch
+import torch.nn.functional as F
 from accelerate import Accelerator
 
-from utils.utils import set_seed
+import wandb
+from multi_modal.mm import MultiModal
 from utils.config_utils import config_from_kwargs, update_config
 from utils.dataset_utils import load_ibl_dataset
-from utils.eval_utils import load_model_data_local, co_smoothing_eval
-
-from multi_modal.mm import MultiModal
+from utils.eval_utils import co_smoothing_eval, load_model_data_local
+from utils.utils import set_seed
 
 logging.basicConfig(
     level=logging.WARNING, format="%(asctime)s - %(levelname)s - %(message)s"
@@ -34,7 +34,7 @@ ap.add_argument("--finetune", action="store_true")
 ap.add_argument("--param_search", action="store_true")
 ap.add_argument(
     "--modality", nargs="+", 
-    default=["ap", "wheel-speed", "whisker-motion-energy", "choice", "block"]
+    default=["ap", "vision-clip"]
 )
 ap.add_argument("--overwrite", action="store_true")
 ap.add_argument("--save_plot", action="store_true")
@@ -61,13 +61,9 @@ best_ckpt_path, last_ckpt_path = "model_best.pt", "model_last.pt"
 neural_acronyms = {
     "ap": "spike", 
 }
-static_acronyms = {
-    "choice": "choice", 
-    "block": "block"
-}
+static_acronyms = {}
 dynamic_acronyms = {
-    "wheel-speed": "wheel", 
-    "whisker-motion-energy": "whisker"
+    "vision-clip": "vision-clip",
 }
 
 
@@ -114,13 +110,14 @@ num_sessions = args.num_sessions
 if num_sessions > 1:
     logging.warning("num_sessions > 1: ensure the model is trained with multiple sessions.")
     eid_ = "multi"
+    eid = None
 else:
     eid_ = eid[:5]
 
 log_name = \
 "sesNum-{}_ses-{}_set-eval_inModal-{}_outModal-{}_mask-{}_mode-{}_ratio-{}_taskVar-{}".format(
     num_sessions,
-    eid[:5], 
+    eid_[:5], 
     "-".join(modal_filter["input"]),
     "-".join(modal_filter["output"]),
     config.training.mask_type, 
@@ -129,7 +126,7 @@ log_name = \
     args.enc_task_var,
 )
 
-save_path = os.path.join(base_path, "results", log_name)
+save_path = os.path.join(base_path, "results", log_name).replace("\\", "/")
 
 if args.finetune:
     pretrain_path = save_path.replace("eval", "finetune")
@@ -213,9 +210,8 @@ model.load_state_dict(model_state_dict)
 # ----------
 # EVAL MODEL
 # ----------
-eval_spike = True if model_mode in ["mm", "encoding"] else False
-eval_behavior = True if model_mode in ["mm", "decoding"] else False
-
+eval_vision = True if model_mode in ["mm", "encoding"] else False
+eval_spike = True if model_mode in ["mm", "decoding"] else False
 logging.info(f"Start model evaluation:")
 
 if eval_spike:
@@ -223,7 +219,7 @@ if eval_spike:
     eval_spike_r2_file = f"{save_path}/eval_spike/r2.npy"
     if not os.path.exists(eval_spike_bps_file) or \
         not os.path.exists(eval_spike_r2_file) or args.overwrite:
-        logging.info(f"Start evaluation for encoding:")
+        logging.info(f"Start neural reconstruction evaluation:")
         co_smoothing_configs = {
             "subtract": "task",
             "onset_alignment": [40],
@@ -250,39 +246,62 @@ if eval_spike:
     else:
         logging.info("Skip evaluation for encoding since files exist or overwrite is False.")
 
+# ----------
+# EVAL MODEL
+# ----------
 
-if eval_behavior:
-    eval_behavior_bps_file = f"{save_path}/eval_behavior/bps.npy"
-    eval_behavior_r2_file = f"{save_path}/eval_behavior/r2.npy"
-    if not os.path.exists(eval_behavior_bps_file) or \
-        not os.path.exists(eval_behavior_r2_file) or args.overwrite:
-        logging.info(f"Start evaluation for decoding:")
+# Encoding:
+# spikes -> visual stimulus representation
+eval_vision = True if model_mode in ["mm", "encoding"] else False
+
+# Decoding:
+# visual stimulus -> spikes
+eval_spike = True if model_mode in ["mm", "decoding"] else False
+
+logging.info(f"Start model evaluation:")
+
+# -----------------
+# VISION EVALUATION
+# -----------------
+if eval_vision:
+
+    eval_vision_cosine_file = f"{save_path}/eval_vision/cosine.npy"
+    eval_vision_r2_file = f"{save_path}/eval_vision/r2.npy"
+
+    if not os.path.exists(eval_vision_cosine_file) or \
+        not os.path.exists(eval_vision_r2_file) or args.overwrite:
+
+        logging.info(f"Start evaluation for visual stimulus encoding:")
+
         co_smoothing_configs = {
             "subtract": "task",
             "onset_alignment": [40],
-            "method_name": mask_name, 
-            "save_path": f"{save_path}/eval_behavior",
-            "mode": "eval_behavior",
-            "n_time_steps": model.encoder_embeddings["spike"].max_F,  
+            "method_name": mask_name,
+            "save_path": f"{save_path}/eval_vision",
+            "mode": "eval_vision",
+            "n_time_steps": model.encoder_embeddings["spike"].max_F,
             "held_out_list": list(range(model.encoder_embeddings["spike"].max_F)),
             "is_aligned": True,
             "target_regions": None,
             "avail_beh": static_mods + dynamic_mods,
         }
+
         results = co_smoothing_eval(
-            model=model, 
-            accelerator=accelerator, 
-            test_dataloader=dataloader, 
-            test_dataset=dataset, 
+            model=model,
+            accelerator=accelerator,
+            test_dataloader=dataloader,
+            test_dataset=dataset,
             is_multimodal=True if model_mode == "mm" else False,
             save_plot=args.save_plot,
             **co_smoothing_configs
         )
-        logging.info(results)
-        wandb.log(results) if args.wandb else None
-    else:
-        logging.info("Skip evaluation for decoding since files exist or overwrite is False.")
 
+        logging.info(results)
+
+        wandb.log(results) if args.wandb else None
+
+    else:
+        logging.info("Skip evaluation for vision since files exist or overwrite is False.")
 
 if (args.enc_task_var == "random"):
     # Mask selected modalities for encoding
@@ -307,7 +326,7 @@ if (args.enc_task_var == "random"):
         model, accelerator, dataset, dataloader = load_model_data_local(**configs)
 
         eval_spike_bps_file = f"{save_path}/eval_spike_{mod}/bps.npy"
-        eval_spike_r2_file = f"{save_path}/eval_spike_{mod}/r2.npy"
+        eval_spike_r2_file = f"{save_path}/eval_spike_{mod}/cosine.npy"
         if not os.path.exists(eval_spike_bps_file) or \
             not os.path.exists(eval_spike_r2_file) or args.overwrite:
             logging.info(f"Start evaluation for encoding using {mod}:")

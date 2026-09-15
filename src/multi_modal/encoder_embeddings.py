@@ -1,15 +1,17 @@
 import os
-import numpy as np
 from dataclasses import dataclass
-from typing import List, Optional, Tuple, Dict
+from typing import Dict, List, Optional, Tuple
+
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from transformers.activations import ACT2FN
+
 ACT2FN["softsign"] = nn.Softsign
+from models.stitcher import StitchDecoder, StitchEncoder
+from multi_modal.mm_utils import MLP, Attention, ScaleNorm
 from utils.config_utils import DictConfig, update_config
-from multi_modal.mm_utils import ScaleNorm, MLP, Attention
-from models.stitcher import StitchEncoder, StitchDecoder
 
 DEFAULT_CONFIG = "src/configs/multi_modal/mm.yaml"
 
@@ -19,7 +21,8 @@ with open(f"{PROJ_DIR}/data/train_eids.txt") as file:
 with open(f"{PROJ_DIR}/data/test_eids.txt") as file:
     INCLUDE_EIDS += [line.rstrip() for line in file]
 
-STATIC_VARS = ["choice", "block"]
+STATIC_VARS = []
+VISION_VARS = ["vision-clip"]
 
 
 class EncoderEmbeddingLayer(nn.Module):
@@ -46,27 +49,69 @@ class EncoderEmbeddingLayer(nn.Module):
         self.dropout = nn.Dropout(config.dropout)
 
         if stitching:
+
             self.mod_stitch_encoder = StitchEncoder(
-                eid_list=eid_list, n_channels=hidden_size, mod=mod, max_F=max_F
+                eid_list=eid_list,
+                n_channels=hidden_size,
+                mod=mod,
+                max_F=max_F
             )
+
+        elif mod in VISION_VARS:
+
+            self.vision_proj = nn.Sequential(
+                nn.LayerNorm(self.n_channels),
+                nn.Linear(self.n_channels, hidden_size)
+            )
+
         else:
-            self.token_embed = nn.Linear(self.n_channels, self.input_dim, bias=self.bias)
-            self.projection = nn.Linear(self.input_dim, hidden_size)
-            self.act = ACT2FN[config.act] if config.act != "identity" else nn.Identity()
-            self.scale = hidden_size ** 0.5 if config.scale == None else config.scale
+
+            self.token_embed = nn.Linear(
+                self.n_channels,
+                self.input_dim,
+                bias=self.bias
+            )
+
+            self.projection = nn.Linear(
+                self.input_dim,
+                hidden_size
+            )
+
+            self.act = (
+                ACT2FN[config.act]
+                if config.act != "identity"
+                else nn.Identity()
+            )
+
+            self.scale = (
+                hidden_size ** 0.5
+                if config.scale == None
+                else config.scale
+            )
 
     
     def forward(self, d: Dict[str, torch.Tensor]) -> Tuple[torch.FloatTensor, torch.FloatTensor]:  
 
         inputs, inputs_timestamp, inputs_modality, eid = \
         d["inputs"], d["inputs_timestamp"], d["inputs_modality"], d["eid"]
+        if d["inputs_modality"] == self.mod_emb.weight.device:
+            pass
         B, N, D = inputs.size()
         N = self.max_F
         if hasattr(self, "mod_stitch_encoder"):
+
             x = self.mod_stitch_encoder(inputs, eid)
+
+        elif hasattr(self, "vision_proj"):
+            inputs = F.normalize(inputs, dim=-1)
+            x = self.vision_proj(inputs)
+
         else:
+
             x = self.token_embed(inputs)
+
             x = self.act(x) * self.scale
+
             x = self.projection(x)
 
         x_embed = self.mod_emb(inputs_modality)[None,None,:].expand(B,N,-1).clone()
@@ -110,16 +155,30 @@ class EncoderEmbedding(nn.Module):
         )
 
         if stitching:
+
             self.mod_stitcher_proj_dict = StitchDecoder(
-                eid_list = eid_list, n_channels = self.n_channel, mod = mod, max_F = max_F
+                eid_list=eid_list,
+                n_channels=self.n_channel,
+                mod=mod,
+                max_F=max_F
             )
+
             if mod in STATIC_VARS:
-                mod_static_weight_dict = {}
-                for key, val in eid_list.items():
-                    mod_static_weight_dict[str(key)] = nn.Parameter(torch.rand(self.max_F))
-                self.mod_static_weight_dict = nn.ParameterDict(mod_static_weight_dict)
+                ...
+                
+        elif mod in VISION_VARS:
+
+            self.out = nn.Sequential(
+                nn.Linear(self.hidden_size, self.output_channel),
+                nn.LayerNorm(self.output_channel)
+            )
+
         else:
-            self.out = nn.Linear(self.hidden_size, self.output_channel)
+
+            self.out = nn.Linear(
+                self.hidden_size,
+                self.output_channel
+            )
 
     def forward(self, d : Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:    
                         
@@ -154,7 +213,10 @@ class EncoderEmbedding(nn.Module):
                 if not hasattr(self, "mod_static_weight_dict") else preds
         else:
             y_mod = self.out(y_mod).reshape((B,-1,self.output_channel))
-            d["preds"] = y_mod
+            if self.output_channel > 1:
+                d["preds"] = F.normalize(y_mod, dim=-1)
+            else:
+                d["preds"] = y_mod
         
         return d
         

@@ -1,18 +1,22 @@
-import numpy as np
-from datasets import (
-    Dataset, 
-    DatasetInfo, 
-    list_datasets, 
-    load_dataset, 
-    concatenate_datasets, 
-    DatasetDict, 
-    load_from_disk,
-)
 # import h5py
 import os
+
+import numpy as np
 import torch
-from tqdm import tqdm
+from huggingface_hub import list_datasets
 from scipy.sparse import csr_array
+from tqdm import tqdm
+
+from datasets import (
+    Dataset,
+    DatasetDict,
+    DatasetInfo,
+    concatenate_datasets,
+    # list_datasets,
+    load_dataset,
+    load_from_disk,
+)
+
 
 class DATASET_MODES:
     train = "train"
@@ -72,7 +76,16 @@ def create_dataset(
     if binned_behaviors is not None:
         # Store choice behaviors more efficiently (save this option for later)
         # binned_behaviors["choice"] = np.where(binned_behaviors["choice"] > 0, 0, 1).astype(bool)
-        data_dict.update(binned_behaviors)
+        processed_behaviors = {}
+
+        for beh_name, beh_data in binned_behaviors.items():
+
+            processed_behaviors[beh_name] = [
+                np.asarray(trial, dtype=np.float32)
+                for trial in beh_data
+            ]
+
+        data_dict.update(processed_behaviors)
 
     if binned_lfp is not None:
         data_dict.update({"lfp": binned_lfp})
@@ -175,9 +188,29 @@ def get_data_from_h5(mode, filepath, config):
 
 # This function will fetch all dataset repositories for a given user or organization
 def get_user_datasets(user_or_org_name):
-    all_datasets = list_datasets()
-    user_datasets = [d for d in all_datasets if d.startswith(f"{user_or_org_name}/")]
-    return user_datasets
+    # original:
+
+    # all_datasets = list_datasets()
+    # user_datasets = [d for d in all_datasets if d.startswith(f"{user_or_org_name}/")]
+    # return user_datasets
+
+    #-------------
+
+    # local fix:
+
+    if not os.path.isdir(user_or_org_name):
+        raise ValueError(f"Path does not exist or is not a directory: {user_or_org_name}")
+    
+    dataset_dirs = []
+    
+    for name in os.listdir(user_or_org_name):
+        dataset_dirs.append(os.path.join(user_or_org_name, name))
+    
+    return [dataset.replace("\\", "/") for dataset in dataset_dirs]
+
+    #-------------
+    # New version
+    # return [item.id for item in list(list_datasets(author=user_or_org_name))]
 
 def load_ibl_dataset(
     cache_dir,
@@ -195,7 +228,6 @@ def load_ibl_dataset(
     use_re=False,
     seed=42
 ):
-
     if aligned_data_dir:
         dataset = load_from_disk(aligned_data_dir)
         # if dataset does not have a 'train' key, it is a single session dataset
@@ -212,13 +244,12 @@ def load_ibl_dataset(
     test_session_eid_dir = []
     train_session_eid_dir = []
     if eid is not None:
-        eid_dir = os.path.join(user_or_org_name, eid+"_aligned")
+        eid_dir = os.path.join(user_or_org_name, eid+"_aligned").replace("\\", "/")
         if eid_dir not in user_datasets:
             raise ValueError(f"Dataset with eid: {eid} not found in the user's datasets")
         else:
             train_session_eid_dir = [eid_dir]
             user_datasets = [eid_dir]
-
     if len(test_session_eid) > 0:
         test_session_eid_dir = [os.path.join(user_or_org_name, eid) for eid in test_session_eid]
         print("Test session-wise datasets found: ", len(test_session_eid_dir))
@@ -246,7 +277,7 @@ def load_ibl_dataset(
     if mode == "eval":
         print("eval mode: only loading test datasets...")
         for dataset_eid in tqdm(test_session_eid_dir):
-            session_dataset = load_dataset(dataset_eid)["test"]
+            session_dataset = load_from_disk(f"{cache_dir}/{dataset_eid}_aligned")["test"]
             all_sessions_datasets.append(session_dataset)
         all_sessions_datasets = concatenate_datasets(all_sessions_datasets)
         test_dataset = all_sessions_datasets.select_columns(DATA_COLUMNS)
@@ -255,7 +286,7 @@ def load_ibl_dataset(
     if split_method == 'random_split':
         print("Loading datasets...")
         for dataset_eid in tqdm(train_session_eid_dir[:num_sessions]):
-            session_dataset = load_dataset(dataset_eid)["train"]
+            session_dataset = load_from_disk(f"{cache_dir}/{dataset_eid}_aligned")["train"]
             all_sessions_datasets.append(session_dataset)
         all_sessions_datasets = concatenate_datasets(all_sessions_datasets)
         # split the dataset to train and test
@@ -276,15 +307,17 @@ def load_ibl_dataset(
             target_eids = get_train_eids()
             test_re_eids = get_test_eids()
             if len(train_session_eid_dir) > 1:
-                train_session_eid_dir = [eid for eid in train_session_eid_dir if eid.split('_')[0].split('/')[1] in target_eids]
+                train_session_eid_dir = [eid for eid in train_session_eid_dir if eid.split('_')[-2].split('/')[-1] in target_eids]
                 # # remove the test_re_eids from the train_session_eid_dir
-                train_session_eid_dir = [eid for eid in train_session_eid_dir if eid.split('_')[0].split('/')[1] not in test_re_eids]
-        
+                train_session_eid_dir = [eid for eid in train_session_eid_dir if eid.split('_')[-2].split('/')[-1] not in test_re_eids]
+
         eid_tracker = []
         for dataset_eid in tqdm(train_session_eid_dir[:num_sessions]):
             try:
-                eid_prefix = dataset_eid.split('_')[0] if train_aligned else dataset_eid
-                eid_prefix = eid_prefix.split('/')[1]
+                # eid_prefix = dataset_eid.split('_')[0] if train_aligned else dataset_eid
+                eid_prefix = dataset_eid.split('_')[-2] if train_aligned else dataset_eid
+                # eid_prefix = eid_prefix.split('/')[1]
+                eid_prefix = eid_prefix.split('/')[-1]
                 # session_dataset = load_dataset(dataset_eid)
                 session_dataset = load_from_disk(f"{cache_dir}/{eid_prefix}_aligned")
 
@@ -296,12 +329,10 @@ def load_ibl_dataset(
                 
                 test_trials = len(session_dataset["test"]["spikes_sparse_data"])
                 session_test_datasets.append(session_dataset["test"].select(list(range(test_trials))))
-                
                 binned_spikes_data = get_binned_spikes_from_sparse([session_dataset["train"]["spikes_sparse_data"][0]], 
                                                                     [session_dataset["train"]["spikes_sparse_indices"][0]],
                                                                     [session_dataset["train"]["spikes_sparse_indptr"][0]],
                                                                     [session_dataset["train"]["spikes_sparse_shape"][0]])
-
                 num_neuron_set.add(binned_spikes_data.shape[2])
         
                 eids_set.add(eid_prefix)
@@ -331,14 +362,14 @@ def load_ibl_dataset(
     elif split_method == 'session_based':
         print("Loading train dataset sessions...")
         for dataset_eid in tqdm(train_session_eid_dir):
-            session_dataset = load_dataset(dataset_eid)["train"]
+            session_dataset = load_from_disk(f"{cache_dir}/{dataset_eid}_aligned")["train"]
             all_sessions_datasets.append(session_dataset)
         train_dataset = concatenate_datasets(all_sessions_datasets)
 
         print("Loading test dataset session...")
         all_sessions_datasets = []
         for dataset_eid in tqdm(test_session_eid_dir):
-            session_dataset = load_dataset(dataset_eid)["train"]
+            session_dataset = load_from_disk(f"{cache_dir}/{dataset_eid}_aligned")["train"]
             all_sessions_datasets.append(session_dataset)
         test_dataset = concatenate_datasets(all_sessions_datasets)
         

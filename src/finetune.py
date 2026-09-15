@@ -1,30 +1,27 @@
-import os
-import wandb
-import pickle
-import logging
 import argparse
+import logging
+import os
+import pickle
 import threading
-import numpy as np
 from math import ceil
 
+import numpy as np
+import ray
 import torch
 from accelerate import Accelerator
+from ray import train, tune
+from ray.tune.schedulers import ASHAScheduler
 from torch.optim.lr_scheduler import OneCycleLR
 
-import ray
-from ray import tune, train
-from ray.tune.schedulers import ASHAScheduler
-
-from utils.utils import set_seed, dummy_load
+import wandb
+from loader.make_loader import make_loader
+from multi_modal.encoder_embeddings import EncoderEmbedding
+from multi_modal.mm import MultiModal
+from trainer.make import make_multimodal_trainer
 from utils.config_utils import config_from_kwargs, update_config
 from utils.dataset_utils import load_ibl_dataset
 from utils.eval_utils import load_model_data_local
-
-from loader.make_loader import make_loader
-from trainer.make import make_multimodal_trainer
-
-from multi_modal.mm import MultiModal
-from multi_modal.encoder_embeddings import EncoderEmbedding
+from utils.utils import dummy_load, set_seed
 
 
 def main(tune_config=None):
@@ -98,7 +95,7 @@ def main(tune_config=None):
     # ---------
     train_dataset, val_dataset, test_dataset, meta_data = load_ibl_dataset(
         args.data_path, 
-        config.dirs.huggingface_org,
+        args.data_path,
         num_sessions=1,
         eid=eid,
         use_re=True,
@@ -230,12 +227,7 @@ def main(tune_config=None):
 
     if args.model_mode == "mm":
         best_ckpt_path = [
-            "model_best_avg.pt", 
-            # "model_best_spike.pt",
-            # "model_best_wheel.pt", 
-            # "model_best_whisker.pt",
-            # "model_best_choice.pt",
-            # "model_best_block.pt"
+            "model_best_avg.pt"
         ]
     else:
         best_ckpt_path = ["model_best_avg.pt"]
@@ -391,13 +383,9 @@ if __name__ == "__main__":
     neural_acronyms = {
         "ap": "spike",
     }
-    static_acronyms = {
-        "choice": "choice", 
-        "block": "block",
-    }
+    static_acronyms = {}
     dynamic_acronyms = {
-        "wheel-speed": "wheel", 
-        "whisker-motion-energy": "whisker",
+        "vision-clip": "vision-clip",
     }
 
     ap = argparse.ArgumentParser()
@@ -413,7 +401,7 @@ if __name__ == "__main__":
     ap.add_argument("--enc_task_var", type=str, default="all")
     ap.add_argument(
         "--modality", nargs="+", 
-        default=["ap", "wheel-speed", "whisker-motion-energy", "choice", "block"]
+        default=["ap", "vision-clip"]
     )
     ap.add_argument("--overwrite", action="store_true")
     ap.add_argument("--dummy_load", action="store_true")

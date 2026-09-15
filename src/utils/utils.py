@@ -1,15 +1,16 @@
-import os
-import time
 import glob
+import os
 import random
-import numpy as np
-from tqdm import tqdm
-import torch
+import time
+
 import matplotlib.pyplot as plt
-from torcheval.metrics import R2Score
-from sklearn.metrics import r2_score as r2_score_sklearn
+import numpy as np
+import torch
 from sklearn.cluster import SpectralClustering
 from sklearn.metrics import accuracy_score
+from sklearn.metrics import r2_score as r2_score_sklearn
+from torcheval.metrics import R2Score
+from tqdm import tqdm
 
 PROJ_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 with open(f"{PROJ_DIR}/data/test_eids.txt") as file:
@@ -62,10 +63,10 @@ def plot_neurons_r2(gt, pred, epoch=0, neuron_idx=[],modality="behavior"):
     fig, axes = plt.subplots(len(neuron_idx), 1, figsize=(12, 5 * len(neuron_idx)))
     r2_values = []  # To store R2 values for each neuron
     
-    for neuron in neuron_idx:
+    for idx, neuron in enumerate(neuron_idx):
         r2 = r2_score(y_true=gt[:, neuron], y_pred=pred[:, neuron])
         r2_values.append(r2)
-        ax = axes if len(neuron_idx) == 1 else axes[neuron_idx.index(neuron)]
+        ax = axes if len(neuron_idx) == 1 else axes[idx]
         ax.plot(gt[:, neuron].cpu().numpy(), label="Ground Truth", color="blue")
         ax.plot(pred[:, neuron].cpu().numpy(), label="Prediction", color="red")
         ax.set_title("Neuron: {}, R2: {:.4f}".format(neuron, r2))
@@ -110,6 +111,8 @@ def plt_condition_avg_r2(gt, pred, epoch=0, neuron_idx=0, condition_idx=0, first
 
 
 from scipy.special import gammaln
+
+
 def neg_log_likelihood(rates, spikes, zero_warning=True):
     """Calculates Poisson negative log likelihood given rates and spikes.
     formula: -log(e^(-r) / n! * r^n)
@@ -304,214 +307,6 @@ def plot_avg_rate_and_spike(output, epoch=0):  # output is the list of batches (
     return fig
 
 
-"""
-:X: [n_trials, n_timesteps, n_variables]
-:y: [n_trials, n_timesteps] (in Hz)
-:y_pred: [n_trials, n_timesteps] (in Hz)
-:var_tasklist: for each task variable in var_tasklists, compute PSTH
-:var_name2idx: for each task variable in var_tasklists, the corresponding index of X
-:var_value2label:
-:aligned_tbins: reference time steps to annotate. 
-"""
-def plot_psth(X, y, y_pred, var_tasklist, var_name2idx, var_value2label,
-              aligned_tbins=[],
-              axes=None, legend=False, neuron_idx=0):
-    if axes is None:
-        nrows = 1; ncols = len(var_tasklist)
-        fig, axes = plt.subplots(nrows, ncols, figsize=(3 * ncols, 2 * nrows))
-
-    for ci, var in enumerate(var_tasklist):
-        ax = axes[ci]
-        psth_xy = compute_all_psth(X, y, var_name2idx[var])
-        psth_pred_xy = compute_all_psth(X, y_pred, var_name2idx[var])
-        for _i, _x in enumerate(psth_xy.keys()):
-            psth = psth_xy[_x]
-            psth_pred = psth_pred_xy[_x]
-            ax.plot(psth,
-                    color=plt.get_cmap('tab10')(_i),
-                    linewidth=3, alpha=0.3, label=f"{var_value2label[var][tuple(_x)]}")
-            ax.plot(psth_pred,
-                    color = plt.get_cmap('tab10')(_i),
-                    linestyle='--')
-            ax.set_xlabel("Time bin")
-            if ci == 0:
-                ax.set_ylabel("Neural activity")
-            else:
-                ax.sharey(axes[0])
-        _add_baseline(ax, aligned_tbins=aligned_tbins)
-        if legend:
-            ax.legend()
-            ax.set_title(f"{var}")
-    
-    # compute PSTH for task_contingency
-    idxs_psth = np.concatenate([var_name2idx[var] for var in var_tasklist])
-    psth_xy = compute_all_psth(X, y, idxs_psth)
-    psth_pred_xy = compute_all_psth(X, y_pred, idxs_psth)
-    r2_psth = compute_R2_psth(psth_xy, psth_pred_xy)
-    r2_single_trial = np.mean(compute_R2_main(y, y_pred, clip=False))
-    axes[0].set_ylabel(f'Neuron: #{neuron_idx} \n PSTH R2: {r2_psth:.2f} \n Pred R2: {r2_single_trial:.2f}')    
-    
-    for ax in axes:
-        # ax.axis('off')
-        ax.spines[['right', 'top']].set_visible(False)
-        # ax.set_frame_on(False)
-        # ax.tick_params(bottom=False, left=False)
-    plt.tight_layout()
-
-    return {"psth_r2": r2_psth,
-            "pred_r2": r2_single_trial}
-
-"""
-:X: [n_trials, n_timesteps, n_variables]
-:y: [n_trials, n_timesteps] (in Hz)
-:y_pred: [n_trials, n_timesteps] (in Hz)
-:var_tasklist: variables used for computing the task-condition-averaged psth if subtract_psth=='task'
-:var_name2idx:
-:var_tasklist: variables to be plotted in the single-trial behavior
-:subtract_psth: 
-    - None: no subtraction
-    - "task": subtract task-condition-averaged psth
-    - "global": subtract global-averaged psth
-:aligned_tbins: reference time steps to annotate. 
-:nclus, n_neighbors: hyperparameters for spectral_clustering
-:cmap, vmax_perc, vmin_perc: parameters used when plotting the activity and behavior
-"""
-def plot_single_trial_activity(X, y, y_pred,
-                               var_name2idx,
-                               var_behlist,
-                               var_tasklist, subtract_psth="task",
-                               aligned_tbins=[],
-                               n_clus=8, n_neighbors=5, n_pc=32, clusby='y_pred',
-                               cmap='bwr', vmax_perc=90, vmin_perc=10,
-                               axes=None):
-    if axes is None:
-        ncols = 1; nrows = 2+len(var_behlist)+1+1
-        fig, axes = plt.subplots(nrows, ncols, figsize=(8 * ncols, 3 * nrows))
-
-    ### get the psth-subtracted y
-    if subtract_psth is None:
-        pass
-    elif subtract_psth == "task":
-        idxs_psth = np.concatenate([var_name2idx[var] for var in var_tasklist])
-        psth_xy = compute_all_psth(X, y, idxs_psth)
-        psth_pred_xy = compute_all_psth(X, y_pred, idxs_psth)
-        y_psth = np.asarray(
-            [psth_xy[tuple(x)] for x in X[:, 0, idxs_psth]])  # (K, T) predict the neural activity with psth
-        y_predpsth = np.asarray(
-            [psth_pred_xy[tuple(x)] for x in X[:, 0, idxs_psth]])  # (K, T) predict the neural activity with psth
-        y = y - y_psth  # (K, T)
-        y_pred = y_pred - y_predpsth  # (K, T)
-    elif subtract_psth == "global":
-        y_psth = np.mean(y, 0)
-        y_predpsth = np.mean(y_pred, 0)
-        y = y -y_psth  # (K, T)
-        y_pred = y-y_predpsth  # (K, T)
-    else:
-        assert False, "Unknown subtract_psth, has to be one of: task, global. \'\'"
-    y_residual = (y_pred - y)  # (K, T), residuals of prediction
-    idxs_behavior = np.concatenate(([var_name2idx[var] for var in var_behlist])) if len(var_behlist)>0 else []
-    X_behs = X[:, :, idxs_behavior]
-
-    clustering = SpectralClustering(n_clusters=n_clus, n_neighbors=n_neighbors,
-                                        affinity='nearest_neighbors',
-                                        assign_labels='discretize',
-                                        random_state=0)
-    if clusby == 'y_pred':
-        clustering = clustering.fit(y_pred)
-    elif clusby == 'y':
-        clustering = clustering.fit(y)
-    else:
-        assert False, "invalid clusby"
-    t_sort = np.argsort(clustering.labels_)
-
-    for ri, (toshow, label, ax) in enumerate(zip([y, y_pred, X_behs, y_residual],
-                                                 [f"obs. act. \n (subtract_psth={subtract_psth})",
-                                                  f"pred. act. \n (subtract_psth={subtract_psth})",
-                                                  var_behlist,
-                                                  "residual act."],
-                                                 [axes[0], axes[1], axes[2:-2], axes[-2]])):
-        if ri <= 1:
-            # plot obs./ predicted activity
-            vmax = np.percentile(y_pred, vmax_perc)
-            vmin = np.percentile(y_pred, vmin_perc)
-            raster_plot(toshow[t_sort], vmax, vmin, True, label, ax,
-                        cmap=cmap,
-                        aligned_tbins=aligned_tbins)
-        elif ri == 2:
-            # plot behavior
-            for bi in range(len(var_behlist)):
-                ts_ = toshow[:, :, bi][t_sort]
-                vmax = np.percentile(ts_, vmax_perc)
-                vmin = np.percentile(ts_, vmin_perc)
-                raster_plot(ts_, vmax, vmin, True, label[bi], ax[bi],
-                            cmap=cmap,
-                            aligned_tbins=aligned_tbins)
-        elif ri == 3:
-            # plot residual activity
-            vmax = np.percentile(toshow, vmax_perc)
-            vmin = np.percentile(toshow, vmin_perc)
-            raster_plot(toshow[t_sort], vmax, vmin, True, label, ax,
-                        cmap=cmap,
-                        aligned_tbins=aligned_tbins)
-
-    ### plot single-trial activity
-    # re-arrange the trials
-    clustering = SpectralClustering(n_clusters=n_clus,n_neighbors=n_neighbors,
-                                    affinity='nearest_neighbors',
-                                    assign_labels='discretize',
-                                    random_state=0).fit(y_residual)
-    t_sort_rd = np.argsort(clustering.labels_)
-    # model = Rastermap(n_clusters=n_clus, n_PCs=n_pc, locality=0.15, time_lag_window=15, grid_upsample=0,).fit(y_residual)
-    # t_sort_rd = model.isort
-    raster_plot(y_residual[t_sort_rd], np.percentile(y_residual, vmax_perc), np.percentile(y_residual, vmin_perc), True, "residual act. (re-clustered)", axes[-1])
-
-    plt.tight_layout()
-
-
-"""
-This script generates a plot to examine the (single-trial) fitting of a single neuron.
-:X: behavior matrix of the shape [n_trials, n_timesteps, n_variables]. 
-:y: true neural activity matrix of the shape [n_trials, n_timesteps] 
-:ypred: predicted activity matrix of the shape [n_trials, n_timesteps] 
-:var_name2idx: dictionary mapping feature names to their corresponding index of the 3-rd axis of the behavior matrix X. e.g.: {"choice": [0], "wheel": [1]}
-:var_tasklist: *static* task variables used to form the task condition and compute the psth. e.g.: ["choice"]
-:var_value2label: dictionary mapping values in X to their corresponding readable labels (only required for static task variables). e.g.: {"choice": {1.: "left", -1.: "right"}}
-:var_behlist: *dynamic* behavior variables. e.g., ["wheel"]
-:subtract_psth: 
-    - None: no subtraction
-    - "task": subtract task-condition-averaged psth
-    - "global": subtract global-averaged psth
-:algined_tbins: reference time steps to annotate in the plot. 
-"""
-def viz_single_cell(X, y, y_pred, var_name2idx, var_tasklist, var_value2label, var_behlist,
-                    subtract_psth="task", aligned_tbins=[], clusby='y_pred', neuron_idx=0):
-    nrows = 8
-    plt.figure(figsize=(8, 2 * nrows))
-
-    ### plot psth
-    axes_psth = [plt.subplot(nrows, len(var_tasklist), k+1) for k in range(len(var_tasklist))]
-    metrics = plot_psth(X, y, y_pred,
-              var_tasklist=var_tasklist,
-              var_name2idx=var_name2idx,
-              var_value2label=var_value2label,
-              aligned_tbins=aligned_tbins,
-              axes=axes_psth, legend=True, neuron_idx=neuron_idx)
-
-    ### plot the psth-subtracted activity
-    axes_single = [plt.subplot(nrows, 1, k) for k in range(2, 2 + 2 + len(var_behlist) + 2)]
-    plot_single_trial_activity(X, y, y_pred,
-                               var_name2idx,
-                               var_behlist,
-                               var_tasklist, subtract_psth=subtract_psth,
-                               aligned_tbins=aligned_tbins,
-                               clusby=clusby,
-                               axes=axes_single)
-
-    fig_name = 'single_neuron' + str(neuron_idx)
-    plt.tight_layout()
-    return metrics
-    # plt.show()
-
 def _add_baseline(ax, aligned_tbins=[40]):
     for tbin in aligned_tbins:
         ax.axvline(x=tbin-1, c='k', alpha=0.2)
@@ -544,42 +339,6 @@ def raster_plot(ts_, vmax, vmin, whether_cbar, ylabel, ax,
     else:
         ax.axis('off')
 
-"""
-- X, y should be nparray with
-    - X: [K,T,ncoef]
-    - y: [K,T,N] or [K,T]
-- axis and value should be list
-- return: nparray [T, N] or [T]
-"""
-def compute_PSTH(X, y, axis, value):
-    trials = np.all(X[:, 0, axis] == value, axis=-1)
-    return y[trials].mean(0)
-
-def compute_all_psth(X, y, idxs_psth):
-    uni_vs = np.unique(X[:, 0, idxs_psth], axis=0)  # get all the unique task-conditions
-    psth_vs = {}
-    for v in uni_vs:
-        # compute separately for true y and predicted y
-        _psth = compute_PSTH(X, y,
-                                axis=idxs_psth, value=v)  # (T)
-        psth_vs[tuple(v)] = _psth
-    return psth_vs
-
-"""
-psth_xy/ psth_pred_xy: {tuple(x): (T) or (T,N)}
-return a float or (N) array
-"""
-def compute_R2_psth(psth_xy, psth_pred_xy, clip=True):
-    # compute r2 along dim 0
-    r2s = [r2_score_sklearn(psth_xy[x], psth_pred_xy[x], multioutput='raw_values') for x in psth_xy]
-    if clip:
-        r2s = np.clip(r2s,0.,1.)
-    r2s = np.mean(r2s, 0)
-    if len(r2s) == 1:
-        r2s = r2s[0]
-    return r2s
-
-
 
 def compute_R2_main(y, y_pred, clip=True):
     """
@@ -597,42 +356,6 @@ def compute_R2_main(y, y_pred, clip=True):
     else:
         return r2s
     
-def prep_cond_matrix(test_dataset):
-    b_list = []
-    # choice
-    choice = np.array(test_dataset['choice'])
-    choice = np.tile(np.reshape(choice, (choice.shape[0], 1)), (1, 100))
-    b_list.append(choice)
-    # reward
-    reward = np.array(test_dataset['reward'])
-    reward = np.tile(np.reshape(reward, (reward.shape[0], 1)), (1, 100))
-    b_list.append(reward)
-    # block
-    block = np.array(test_dataset['block'])
-    block = np.tile(np.reshape(block, (block.shape[0], 1)), (1, 100))
-    b_list.append(block)
-    # wheel
-    wheel = np.array(test_dataset['wheel-speed'])
-    b_list.append(wheel)
-    behavior_set = np.stack(b_list,axis=-1)
-    return behavior_set
-
-var_name2idx = {'block':[2], 
-                'choice': [0], 
-                'reward': [1], 
-                'wheel': [3],
-                }
-
-var_value2label = {'block': {(0.2,): "p(left)=0.2",
-                            (0.5,): "p(left)=0.5",
-                            (0.8,): "p(left)=0.8",},
-                   'choice': {(-1.0,): "right",
-                            (1.0,): "left"},
-                   'reward': {(0.,): "no reward",
-                            (1.,): "reward", } }
-
-var_tasklist = ['block','choice','reward']
-
 
 def _one_hot(arr, T):
     uni = np.sort(np.unique(arr))
@@ -703,55 +426,6 @@ def get_npy_files(log_dir,
 
     return npy_files
 
-def return_behav_r2(npy_files, avail_beh = ['wheel-speed', 'whisker-motion-energy']):
-    r2_list = []
-    choice_acc_list = []
-    block_acc_list = []
-    choice_balanced_acc_list = []
-    block_balanced_acc_list = []
-    r2_dict = {}
-    acc_dict = {}
-    for npy_file in npy_files['behavior']:
-        ses = npy_file.split('ses-')[1].split('/')[0]
-        if 'acc.npy' in npy_file:
-            decoding_data = np.load(npy_file, allow_pickle=True)
-            choice_acc_list.append(decoding_data[0])
-            block_acc_list.append(decoding_data[1])
-            choice_balanced_acc_list.append(decoding_data[2])
-            block_balanced_acc_list.append(decoding_data[3])
-            print(f"session {ses} choice acc: {decoding_data[0]}, block acc: {decoding_data[1]} balanced choice acc: {decoding_data[2]}, balanced block acc: {decoding_data[3]}")
-            acc_dict[ses] = {'choice_acc': decoding_data[0], 'block_acc': decoding_data[1], 'choice_balanced_acc': decoding_data[2], 'block_balanced_acc': decoding_data[3]}
-        else:
-            decoding_data = np.load(npy_file, allow_pickle=True)
-            decoding_data = decoding_data.item()
-            # only remain key with r2_trial
-            decoding_data = {k: decoding_data[k] for k in decoding_data if 'r2_trial' in k}
-            # only remain key with avail_beh
-            decoding_data = {k: decoding_data[k] for k in decoding_data if any([beh in k for beh in avail_beh])}
-            r2_list.append(decoding_data)
-            print(f"session {ses} behavior decoding r2: {decoding_data}")
-            r2_dict[ses] = decoding_data
-    print("total {} sessions of behavior decoding".format(len(r2_list)))
-    # return r2 for each session
-    behav_result = {avail_beh[i]: [] for i in range(len(avail_beh))}
-    for r2 in r2_list:
-        for beh in avail_beh:
-            behav_result[beh].append(np.mean(r2[f'{beh}_r2_trial']))
-    behav_result['choice_acc'] = choice_acc_list
-    behav_result['block_acc'] = block_acc_list
-    behav_result['choice_balanced_acc'] = choice_balanced_acc_list
-    behav_result['block_balanced_acc'] = block_balanced_acc_list
-    # merge the r2 and acc dict based on the session
-    assert len(r2_dict) == len(acc_dict), "r2 and acc dict should have the same length"
-    all_ses = list(r2_dict.keys())
-    all_dict = {}
-    for ses in all_ses:
-        all_dict[ses] = {acc_dict[ses]['choice_acc'], acc_dict[ses]['block_acc'], acc_dict[ses]['choice_balanced_acc'], acc_dict[ses]['block_balanced_acc'], r2_dict[ses]['wheel-speed_r2_trial'], r2_dict[ses]['whisker-motion-energy_r2_trial']}
-        # save 5 decimal
-        all_dict[ses] = {round(k, 5) for k in all_dict[ses]}
-    if len(all_dict) == 0:
-        print("No behavior decoding result found")
-    return behav_result, all_dict
 
 def return_spike_bps(npy_files):
     bps_list = []

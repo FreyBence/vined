@@ -1,65 +1,51 @@
-import os
 import logging
-import numpy as np
-from tqdm import tqdm
+import os
 from pathlib import Path
 
-import matplotlib.pyplot as plt
 import matplotlib.colors as colors
-
+import matplotlib.pyplot as plt
+import numpy as np
+import torch
+import torch.nn.functional as F
+from accelerate import Accelerator
 from scipy.special import gammaln
 from sklearn.cluster import SpectralClustering
-from sklearn.metrics import (
-    r2_score, 
-    balanced_accuracy_score, 
-    accuracy_score
-)
+from sklearn.metrics import accuracy_score, balanced_accuracy_score, r2_score
+from tqdm import tqdm
 
-import torch
-from accelerate import Accelerator
-from datasets import load_from_disk, concatenate_datasets
-
+from datasets import concatenate_datasets, load_from_disk
 from loader.make_loader import make_loader
-from utils.dataset_utils import load_ibl_dataset, get_binned_spikes_from_sparse
-
-from utils.utils import (
-    set_seed, 
-    move_batch_to_device, 
-    plot_gt_pred, 
-    metrics_list, 
-    plot_avg_rate_and_spike, 
-    plot_rate_and_spike, 
-    plot_neurons_r2,
-)
-from utils.config_utils import config_from_kwargs, update_config
-
-from multi_modal.mm import MultiModal
 from multi_modal.encoder_embeddings import EncoderEmbedding
+from multi_modal.mm import MultiModal
+from utils.config_utils import config_from_kwargs, update_config
+from utils.dataset_utils import get_binned_spikes_from_sparse, load_ibl_dataset
+from utils.utils import (
+    metrics_list,
+    move_batch_to_device,
+    plot_avg_rate_and_spike,
+    plot_gt_pred,
+    plot_neurons_r2,
+    plot_rate_and_spike,
+    set_seed,
+)
 
 NAME2MODEL = {"MultiModal": MultiModal}
 
 logger = logging.getLogger(__name__)
 
-STATIC_VARS = ["choice", "block"]
-DYNAMIC_VARS = ["wheel", "whisker"]
+STATIC_VARS = []
+DYNAMIC_VARS = ["vision-clip"]
 
 neural_acronyms = {
     "ap": "spike",
 }
-static_acronyms = {
-    "choice": "choice",
-    "block": "block",
-}
+static_acronyms = {}
 dynamic_acronyms = {
-    "wheel-speed": "wheel",
-    "whisker-motion-energy": "whisker",
+    "vision-clip": "vision-clip",
 }
 
 OUTPUT_DIM = {
-    "choice": 2, 
-    "block": 3, 
-    "wheel": 1, 
-    "whisker": 1, 
+    "vision-clip": 768
 }
 
 # --------------------------------------------------------------------------------------------------
@@ -70,7 +56,7 @@ def load_model_data_local(**kwargs):
     eid = kwargs["eid"]
     model_config = kwargs["model_config"]
     trainer_config = kwargs["trainer_config"]
-    model_path = kwargs["model_path"]
+    model_path = kwargs["model_path"].replace("\\", "/")
     dataset_path = kwargs["dataset_path"]
     mask_name = kwargs["mask_name"]
     mask_mode = mask_name.split("_")[1]
@@ -83,8 +69,8 @@ def load_model_data_local(**kwargs):
 
     num_sessions = kwargs["num_sessions"] if "num_sessions" in kwargs else 1
 
-    avail_mod = neural_mods + static_mods + dynamic_mods
-    avail_beh = static_mods + dynamic_mods
+    avail_mod = neural_mods + dynamic_mods
+    avail_beh = dynamic_mods
 
     set_seed(seed)
 
@@ -97,7 +83,7 @@ def load_model_data_local(**kwargs):
 
     _, _, dataset, meta_data = load_ibl_dataset(
         config.dirs.dataset_cache_dir, 
-        config.dirs.huggingface_org,
+        config.dirs.dataset_cache_dir, 
         num_sessions=num_sessions,
         eid = eid if num_sessions == 1 else None,
         use_re=True,
@@ -151,13 +137,45 @@ def load_model_data_local(**kwargs):
         **config.method.model_kwargs, 
         **meta_data
     )
+    print("Checkpoint path:", model_path)
 
     try:
         state_dict = torch.load(model_path)["model"]
     except:
         state_dict = torch.load(model_path, map_location=torch.device("cpu"))["model"]
 
-    model.load_state_dict(state_dict) 
+    # model.load_state_dict(state_dict, strict=False)
+
+    model_state = model.state_dict()
+
+    filtered_state = {}
+    skipped_session_specific_layer = 0
+    skipped_shape_missmatch = 0
+    for k, v in state_dict.items():
+
+        if (
+            "stitcher_dict" in k
+            or "project_dict" in k
+            or "stitch_decoder_dict" in k
+        ):
+            skipped_session_specific_layer += 1
+            continue
+
+        if k in model_state and model_state[k].shape == v.shape:
+            filtered_state[k] = v
+        else:
+            skipped_shape_missmatch += 1
+
+    missing, unexpected = model.load_state_dict(
+        filtered_state,
+        strict=False
+    )
+
+    print()
+    print("Missing:", missing)
+    print("Unexpected:", unexpected)
+    print(f"Skipped {skipped_session_specific_layer} out of {len(state_dict.items())} due to session specific layer")
+    print(f"Skipped {skipped_shape_missmatch} out of {len(state_dict.items())} due to shape_missmatch")
     
     # Change model to eval mode
     model.masker.ratio = 0
@@ -169,7 +187,7 @@ def load_model_data_local(**kwargs):
 
     _, _, dataset, meta_data = load_ibl_dataset(
         config.dirs.dataset_cache_dir, 
-        config.dirs.huggingface_org,
+        config.dirs.dataset_cache_dir, 
         num_sessions=1,
         eid = eid,
         use_re=True,
@@ -205,8 +223,8 @@ def load_model_data_local(**kwargs):
 
 # --------------------------------------------------------------------------------------------------
 # Evaluation
-# 1. Spiking activity reconstruction
-# 2. Behavior reconstruction
+# 1. Neural activity reconstruction
+# 2. Visual stimulus reconstruction
 # 3. Co-smooth/forward-pred/inter-region/intra-region
 # --------------------------------------------------------------------------------------------------
 def co_smoothing_eval(
@@ -245,29 +263,17 @@ def co_smoothing_eval(
     os.makedirs(kwargs["save_path"], exist_ok=True)
 
     if is_aligned:
-        b_list = []
-    
-        choice = np.array(test_dataset["choice"])
-        choice = np.tile(np.reshape(choice, (choice.shape[0], 1)), (1, T))
-        b_list.append(choice)
-    
-        reward = np.array(test_dataset["reward"])
-        reward = np.tile(np.reshape(reward, (reward.shape[0], 1)), (1, T))
-        b_list.append(reward)
-    
-        block = np.array(test_dataset["block"])
-        block = np.tile(np.reshape(block, (block.shape[0], 1)), (1, T))
-        b_list.append(block)
-    
-        behavior_set = np.stack(b_list, axis=-1)
-    
-        var_name2idx = {"block": [2], "choice": [0], "reward": [1], "wheel": [3]}
-        var_value2label = {
-            "block": {(0.2,): "p(left)=0.2", (0.5,): "p(left)=0.5", (0.8,): "p(left)=0.8",},
-            "choice": {(-1.0,): "right", (1.0,): "left"},
-            "reward": {(0.,): "no reward", (1.,): "reward", }
-        }
-        var_tasklist = ["block", "choice", "reward"]
+
+        # --------------------------------------------------
+        # Legacy behavior PSTH variables
+        # Not used for CLIP vision evaluation
+        # --------------------------------------------------
+
+        behavior_set = None
+
+        var_name2idx = {}
+        var_value2label = {}
+        var_tasklist = []
         var_behlist = []
     
     if mode == "eval_spike":
@@ -287,6 +293,26 @@ def co_smoothing_eval(
             model.eval()
             with torch.no_grad():
                 for batch in test_dataloader:
+                    # --------------------------------------------------
+                    # Build placeholder alignment tensor
+                    # Only needed for PSTH plotting
+                    # --------------------------------------------------
+
+                    B = batch["spikes_data"].shape[0]
+
+                    behavior_set = np.zeros(
+                        (
+                            B,
+                            T,
+                            1
+                        ),
+                        dtype=np.float32
+                    )
+
+                    var_name2idx = {"dummy": [0]}
+                    var_tasklist = ["dummy"]
+                    var_value2label = {}
+                    var_behlist = []
                     batch = move_batch_to_device(batch, accelerator.device)
                     
                     mask_result = heldout_mask(
@@ -380,7 +406,7 @@ def co_smoothing_eval(
                     else:
                         raise ValueError("Unaligned data not supported.")
                 
-    elif mode == "eval_behavior":
+    elif mode == "eval_vision":
 
         N = len(DYNAMIC_VARS)
         held_out_list = [kwargs["held_out_list"]]
@@ -388,7 +414,7 @@ def co_smoothing_eval(
             "Forward prediction requires specific target time points to predict."
         target_regions = neuron_regions = None
 
-        bps_result_list = [float('nan')] * N
+        cosine_result_list = [float('nan')] * N
         r2_result_list = [np.array([np.nan, np.nan])] * N
         
         for hd_idx in held_out_list:
@@ -457,60 +483,88 @@ def co_smoothing_eval(
                     gt_static[mod] = outputs.static_targets[mod].detach().cpu().numpy()
                     preds_static[mod] = outputs.static_preds[mod].detach().cpu().numpy()
               
-            gt = np.stack(gt, axis=-1).squeeze(2)
-            preds = np.stack(preds, axis=-1).squeeze(2)
+            # --------------------------------------------------
+            # CLIP embeddings already have feature dimension
+            # Shape:
+            # [B, T, 768]
+            # --------------------------------------------------
+
+            gt = np.stack(gt, axis=0)
+            preds = np.stack(preds, axis=0)
+
+            # Remove modality dimension if only one modality exists
+            if gt.shape[0] == 1:
+                gt = gt[0]
+
+            if preds.shape[0] == 1:
+                preds = preds[0]
+
+            gt_tensor = torch.tensor(gt)
+            preds_tensor = torch.tensor(preds)
+
+            gt_tensor = F.normalize(gt_tensor, dim=-1)
+            preds_tensor = F.normalize(preds_tensor, dim=-1)
 
             for mod in STATIC_VARS:
                 acc_dict[mod] = accuracy_score(gt_static[mod], preds_static[mod])
                 balanced_acc_dict[mod] = balanced_accuracy_score(gt_static[mod], preds_static[mod])
 
             target_n_i, target_t_i = np.arange(N), held_out_list[0]
+            cosine_sim = F.cosine_similarity(
+                preds_tensor,
+                gt_tensor,
+                dim=-1
+            )
+
+            mean_cosine = cosine_sim.mean().item()
 
             gt_held_out = gt[:,target_t_i][...,target_n_i]
             pred_held_out = preds[:,target_t_i][...,target_n_i]
 
-            for n_i in tqdm(range(len(target_n_i)), desc="co-bps"): 
-                bps_result_list[target_n_i[n_i]] = np.nan
+            for n_i in tqdm(range(len(target_n_i)), desc="cosine"):
+                cosine_result_list[target_n_i[n_i]] = mean_cosine
 
             ys, y_preds = gt[:,target_t_i], preds[:,target_t_i]
 
-            behav_results = {}
-            for i in tqdm(range(target_n_i.shape[0]), desc="R2"):
-                beh_name = DYNAMIC_VARS[i]
-                if is_aligned:
-                    X = behavior_set[:,target_t_i,:]  
-                    _r2_psth, _r2_trial = viz_single_cell(
-                        X, ys[...,target_n_i[i]], y_preds[...,target_n_i[i]],
-                        var_name2idx, var_tasklist, var_value2label, var_behlist,
-                        subtract_psth=kwargs["subtract"],
-                        aligned_tbins=[],
-                        neuron_idx=uuids_list[target_n_i[i]][:4],
-                        neuron_region=region_list[target_n_i[i]],
-                        method=method_name, save_path=kwargs["save_path"],
-                        save_plot=save_plot
-                    )
-                    r2_result_list[target_n_i[i]] = np.array([_r2_psth, _r2_trial])
-                    behav_results[f"{beh_name}_r2_psth"] = _r2_psth
-                    behav_results[f"{beh_name}_r2_trial"] = _r2_trial
+            vision_results = {}
+            for i in tqdm(range(target_n_i.shape[0]), desc="Vision Eval"):
 
-                    y = ys[...,target_n_i[i]].squeeze()
-                    y_pred = y_preds[...,target_n_i[i]].squeeze()
-                    np.save(
-                        f"{kwargs['save_path']}/{beh_name}_data.npy", {"gt": y, "pred": y_pred}
-                    )
-                else:
-                    raise ValueError("Unaligned data not supported.")
+                beh_name = DYNAMIC_VARS[i]
+
+                y = ys[..., target_n_i[i]]
+                y_pred = y_preds[..., target_n_i[i]]
+
+                # ---------------------------------------------
+                # Save GT / prediction pairs
+                # ---------------------------------------------
+                np.save(
+                    f"{kwargs['save_path']}/{beh_name}_data.npy",
+                    {
+                        "gt": y,
+                        "pred": y_pred
+                    }
+                )
+
+                # ---------------------------------------------
+                # Store cosine metric
+                # ---------------------------------------------
+                vision_results[f"{beh_name}_cosine"] = mean_cosine
                     
-            np.save(os.path.join(kwargs["save_path"], "r2.npy"), behav_results)
+            np.save(os.path.join(kwargs["save_path"], "r2.npy"), vision_results)
+            np.save(
+                os.path.join(kwargs["save_path"], "cosine.npy"),
+                cosine_sim.detach().cpu().numpy()
+            )
             np.save(
                 os.path.join(kwargs["save_path"], "acc.npy"), 
                 {"acc": acc_dict, "balanced_acc": balanced_acc_dict}
             )
             return {
-                **behav_results,
+                "mean_cosine_similarity": mean_cosine,
+                **vision_results,
                 **acc_dict,
                 **balanced_acc_dict
-            }     
+            }    
     else:
         raise NotImplementedError("Evaluation mode not implemented.")
 
@@ -586,7 +640,7 @@ def heldout_mask(
         hd = heldout_idxs
         mask[:, hd, :] = 0
     
-    elif mode == 'eval_behavior':
+    elif mode == 'eval_vision':
         hd = heldout_idxs; n_heldout = len(np.unique(heldout_idxs))
         if mask.shape[1] != n_heldout:
             mask = mask.expand(-1, n_heldout, 1)

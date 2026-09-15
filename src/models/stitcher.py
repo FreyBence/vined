@@ -2,10 +2,11 @@ import numpy as np
 import torch
 from torch import nn
 
-STATIC_VARS = ["choice", "block"]
-DYNAMIC_VARS = ["wheel", "whisker"]
-OUTPUT_DIM = {"choice": 2, "block": 3, "wheel": 1, "whisker": 1}
-
+STATIC_VARS = []
+DYNAMIC_VARS = ["vision-clip"]
+OUTPUT_DIM = {
+    "vision-clip": 768
+}
 class StitchEncoder(nn.Module):
     def __init__(self, 
          eid_list: dict,
@@ -22,12 +23,31 @@ class StitchEncoder(nn.Module):
         self.N = max(list(eid_list.values()))
         stitcher_dict, project_dict = {}, {}
         for key, val in eid_list.items():
-            val = 1 if mod in STATIC_VARS + DYNAMIC_VARS else self.N
+            if mod == "vision-clip":
+                val = OUTPUT_DIM["vision-clip"]
+            elif mod in STATIC_VARS:
+                val = 1
+            else:
+                val = self.N
             mult = max_F if mod in STATIC_VARS else 1
             # token embedding layer
             stitcher_dict[str(key)] = nn.Linear(int(val), int(val) * 2 * mult)
             # projection layer
-            project_dict[str(key)] = nn.Linear(int(val) * 2, n_channels)
+            if mod == "vision-clip":
+                project_dict[str(key)] = nn.Sequential(
+                    nn.LayerNorm(OUTPUT_DIM["vision-clip"]),
+                    nn.Linear(OUTPUT_DIM["vision-clip"], n_channels)
+                )
+            else:
+                stitcher_dict[str(key)] = nn.Linear(
+                    int(val),
+                    int(val) * 2 * mult
+                )
+                project_dict[str(key)] = nn.Linear(
+                    int(val) * 2,
+                    n_channels
+                )
+
         self.stitcher_dict = nn.ModuleDict(stitcher_dict)
         self.project_dict = nn.ModuleDict(project_dict)
         self.scale = scale
@@ -40,10 +60,17 @@ class StitchEncoder(nn.Module):
         for group_eid in unique_eids:
             mask = torch.tensor(np.argwhere(eid==group_eid), device=x.device).squeeze()
             x_group = x[mask]
-            stitched = self.stitcher_dict[group_eid](x_group)
+            if self.mod == "vision-clip":
+                stitched = x_group
+            else:
+                stitched = self.stitcher_dict[group_eid](x_group)
+                
             if self.mod in STATIC_VARS:
                 stitched = stitched.reshape(stitched.shape[0], -1, 2)
-            stitched = self.act(stitched) * self.scale
+            if self.mod == "vision-clip":
+                stitched = stitched
+            else:
+                stitched = self.act(stitched) * self.scale
             out[mask] = self.project_dict[group_eid](stitched)
         return out
 
@@ -69,7 +96,18 @@ class StitchDecoder(nn.Module):
                 val, mult = OUTPUT_DIM[mod], 1
             else:
                 val, mult = max_num_neuron, 1
-            stitch_decoder_dict[str(key)] = nn.Linear(n_channels * mult, val)
+
+            if mod == "vision-clip":
+                stitch_decoder_dict[str(key)] = nn.Sequential(
+                    nn.Linear(n_channels, OUTPUT_DIM["vision-clip"]),
+                    nn.LayerNorm(OUTPUT_DIM["vision-clip"])
+                )
+            else:
+                stitch_decoder_dict[str(key)] = nn.Sequential(
+                    nn.Linear(n_channels * mult, val),
+                    nn.LayerNorm(val)
+                )
+
         self.stitch_decoder_dict = nn.ModuleDict(stitch_decoder_dict)
         self.N = max_num_neuron if mod == "spike" else val
 

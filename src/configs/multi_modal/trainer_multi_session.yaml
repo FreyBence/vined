@@ -15,24 +15,25 @@ wandb:
 dirs:
   checkpoint_dir: checkpoints 
   log_dir: results 
-  dataset_cache_dir: /projects/bcxj/yzhang39/datasets # will be overwritten by the script
+  dataset_cache_dir: datasets # will be overwritten by the script
   dataset_dir: neurofm123/671c7ea7-6726-4fbe-adeb-f89c2c8e489b_aligned # will be overwritten by the script
   behav_dir:  data/671c7ea7-6726-4fbe-adeb-f89c2c8e489b_aligned # will be overwritten by the script
-  huggingface_org: ibl-repro-ephys
+  huggingface_org: FreyBence
   
 training:
-  num_epochs: 2000
-  train_batch_size: 64
-  test_batch_size: 64  
-  shuffle_test_dataloader: false   
+  num_epochs: 100
+  train_batch_size: 8
+  test_batch_size: 8
+  shuffle_test_dataloader: false
 
-  save_plot_every_n_epochs: 20 
-  save_every: 10 
-  eval_every: 5 
+  save_plot_every_n_epochs: 10
+  save_every: 10
+  eval_every: 1
 
   use_mtm: false
-  mask_type: embd 
-  mask_mode: ["temporal"]
+  mask_type: embd
+  mask_mode:
+    - temporal
 
 model: 
   model_class: null  
@@ -61,7 +62,7 @@ data:
   spike_augmentation: false
 
   include_behav: false 
-  target: whisker-motion-energy # will be overwritten by the script
+  target: vision-clip # will be overwritten by the script
 
   load_meta: true
 

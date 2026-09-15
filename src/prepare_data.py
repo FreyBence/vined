@@ -1,25 +1,23 @@
+import argparse
+import logging
 import os
 import sys
-import logging
-import argparse
-import numpy as np
-import pandas as pd
 from pathlib import Path
 
+import numpy as np
+import pandas as pd
 from one.api import ONE
 
 from datasets import DatasetDict, DatasetInfo
-
+from utils.dataset_utils import create_dataset, upload_dataset
 from utils.ibl_data_utils import (
+    align_data,
+    bin_behaviors,
+    bin_spiking_data,
+    list_brain_regions,
     prepare_data,
     select_brain_regions,
-    list_brain_regions,
-    bin_spiking_data,
-    bin_behaviors,
-    align_data
 )
-from utils.dataset_utils import create_dataset, upload_dataset
-from utils.preprocess_lfp import prepare_lfp, featurize_lfp
 
 logging.basicConfig(level=logging.INFO) 
 
@@ -30,8 +28,8 @@ np.random.seed(42)
 # ------
 ap = argparse.ArgumentParser()
 ap.add_argument("--base_path", type=str, default="EXAMPLE_PATH")
-ap.add_argument("--huggingface_org", type=str, default="ibl-repro-ephys")
-ap.add_argument("--use_lfp", action="store_true")
+ap.add_argument("--huggingface_org", type=str, default="FreyBence")
+ap.add_argument("--use_lfp", action="store_false")
 ap.add_argument("--n_sessions", type=int, default=1)
 ap.add_argument("--n_workers", type=int, default=1)
 ap.add_argument("--eid", type=str)
@@ -56,12 +54,9 @@ params = {
     "fr_thresh": 0.2
 }
 
-beh_names = [
-    "choice", "reward", "block",
-    "wheel-speed", "whisker-motion-energy", 
-]
+beh_names = ["vision-clip"]
 
-DYNAMIC_VARS = list(filter(lambda x: x not in ["choice", "reward", "block"], beh_names))
+DYNAMIC_VARS = ["vision-clip"]
 
 # ---------------
 # PREPROCESS DATA
@@ -130,7 +125,9 @@ for eid_idx, eid in enumerate(eids):
         **params,
     )
 
-    if args.use_lfp:
+    if args.use_lfp == False:
+        from utils.preprocess_lfp import featurize_lfp, prepare_lfp
+
         lfp_prec = prepare_lfp(one, eid, dead_channel_threshold=0., **params)
         all_psd = featurize_lfp(
             lfp_prec, bin_size=int(params["interval_len"]/params["binsize"])
@@ -153,10 +150,6 @@ for eid_idx, eid in enumerate(eids):
         )
     except ValueError as e:
         logging.info(f"Skip EID {eid} due to error: {e}")
-        continue
-
-    if "whisker-motion-energy" not in align_bin_beh:
-        logging.info(f"Skip EID {eid} due to missing whisker data.")
         continue
 
     # Data partition (train: 0.7 val: 0.1 test: 0.2)
