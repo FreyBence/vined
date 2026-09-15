@@ -1,30 +1,39 @@
-# Install PyTorch first using requirements-torch-cu118.txt or requirements-torch-cpu.txt.
+# ViNED checkout runtime: stimulus replay, CLIP extraction, spike/vision datasets,
+# training, fine-tuning and evaluation. Run scripts from the repository root.
+# Install PyTorch first using requirements-torch-cu118.txt or requirements-torch-cpu.txt,
+# then install this file with the matching constraints-<platform>-py310.txt.
+# Optional raw LFP processing: also install requirements-lfp.txt.
+
+# Numerical processing, metrics, plotting and configuration.
 numpy==1.26.4
 pandas
 tqdm
 matplotlib
-seaborn
 scikit-learn
 scipy
+PyYAML
+
+# Multimodal model, training and experiment tracking.
+torch==2.2.1
+einops
+torcheval==0.0.7
+accelerate==0.27.2
+ray[default,tune]==2.10.0
 wandb
+
+# IBL trial metadata and processed spike recordings.
 ONE-api
 iblutil
 iblatlas
 ibllib
-ibl-neuropixel
-spikeinterface
-torch==2.2.1
-torchvision==0.17.1
-ray[default,tune]==2.10.0
-einops
-torcheval==0.0.7
-timm==0.9.16
-datasets==2.17.1
+
+# Synthetic replay videos and frozen CLIP visual features.
 transformers==4.38.2
-accelerate==0.27.2
 opencv-python-headless==4.10.0.84
 Pillow
-PyYAML
+
+# Prepared trial datasets and model/dataset downloads.
+datasets==2.17.1
 huggingface_hub<1
 # Ray 2.10 and Datasets 2.17 use older Arrow APIs.
 pyarrow==14.0.2

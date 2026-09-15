@@ -1,0 +1,5 @@
+# Optional additions to requirements.txt for src/utils/preprocess_lfp.py.
+# Install with the same platform constraints as the core environment.
+# These support the inherited --use_lfp branch, not the spike/vision baseline.
+ibl-neuropixel
+spikeinterface

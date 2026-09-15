@@ -25,6 +25,8 @@ export PYTHON="$VENV_BIN/python"
 [[ -x "$PYTHON" ]] || export PYTHON="$VENV_BIN/python.exe"
 export PATH="$VENV_BIN:$PATH"
 export VINED_REPO_ROOT="$REPO_ROOT"
+# Ray/Slurm workers import project modules directly from the shared checkout.
+export PYTHONPATH="$REPO_ROOT/src${PYTHONPATH:+:$PYTHONPATH}"
 export VINED_DATA_DIR="${VINED_DATA_DIR:-$REPO_ROOT/datasets}"
 export VINED_VISUAL_DIR="${VINED_VISUAL_DIR:-$VINED_DATA_DIR/vis_stim}"
 export VINED_REPLAY_DIR="${VINED_REPLAY_DIR:-$REPO_ROOT/ibl_task_replay}"

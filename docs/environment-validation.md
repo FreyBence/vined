@@ -1,5 +1,10 @@
 # pip/venv migration validation
 
+The migration and rename sections below are historical records. The current
+installation contract is **checkout-only**; see the
+[2026-09-16 validation](#checkout-only-validation-2026-09-16) and current
+[setup instructions](environment.md). Editable installation is no longer used.
+
 Validation performed on 2026-09-15. No Conda-exclusive code dependency was found.
 The repository now uses standalone Python 3.10, pip requirements, and `.venv`.
 The existing machine-wide Conda installation was not removed.
@@ -91,3 +96,37 @@ checks, cached CLIP extraction, and Git Bash launcher checks passed. The old
 environment backup was removed after validation. No stale old-checkout references
 were found in the checked environment variables, shell profiles, or Desktop/Start
 Menu shortcuts. The project naming notes in AGENT.md were updated.
+
+## Checkout-only validation (2026-09-16)
+
+ViNED now runs directly from its checkout. `src/setup.py` and
+`src/pyproject.toml` have been removed; dependencies are installed from the
+requirements files with platform constraints. No NEDS checkout or installed
+project distribution is needed. The checkout retains Python modules, YAML
+configuration and session lists together.
+
+The core requirements no longer install timm, torchvision or SpikeInterface.
+Seaborn remains a dependency of ibllib. Optional raw LFP processing uses
+`requirements-lfp.txt`; `script/check_environment.py --lfp` checks its imports.
+The platform constraints retain optional/transitive dependencies and omit the
+obsolete timm/torchvision pins. The inventory helper excludes both old local
+distribution names (`neds` and `vined`).
+
+| Check | Result |
+| --- | --- |
+| Fresh Linux Python 3.10.21 venv in `python:3.10-slim`, CPU Torch, revised core requirements and Linux constraints | Passed, with no editable/package install |
+| Installed-distribution inventory before optional LFP installation | Confirmed absence of vined, neds, timm, torchvision and SpikeInterface |
+| Linux `pip check`, core/project imports and all six entry-point help commands | Passed |
+| Linux MP4 round trip, `[T,768]` dataset round trip, path/config checks, attention gradients and synthetic multimodal optimizer/evaluation step | Passed |
+| Add optional LFP requirements with the same constraints, then `pip check` and LFP imports | Passed |
+| Frozen Linux inventory after adding LFP | Matches the previous pins except for removed timm/torchvision |
+| Existing Windows Python 3.10.11 / CUDA 11.8 venv: updated checker with `--device cuda --clip --lfp` | Passed, including cached CLIP feature extraction and all six CLI checks |
+| Native Linux Bash and Windows Git Bash launcher checks | Passed, including paths with spaces, preserved `PYTHONPATH`, checkout source exposure and simulated Slurm worker arguments |
+| Freeze helper against the existing Windows environment | Excludes the legacy editable vined distribution and preserves Torch variant-independent pins |
+
+The Windows check reused the existing environment, which still contains packages
+from the earlier setup. The fresh Linux environment establishes independence
+from those packages and from an editable install. No existing Windows environment,
+research data, or checkpoint was removed. Full production training, raw LFP
+processing and real cluster execution were not rerun; the research blockers
+listed above still apply.

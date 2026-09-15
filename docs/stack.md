@@ -10,7 +10,7 @@ This summary reflects the repository's dependency declarations and source code. 
 | --- | --- | --- |
 | Python | 3.10 (validated patch in environment report) | Main language for data preparation, model implementation, training, and evaluation. |
 | venv | Python standard library | Creates a project-local `.venv` from standalone Python; see [setup](environment.md). |
-| pip and setuptools | pip | Install Python dependencies and the local package in editable mode through `src/setup.py`. The distribution is still named `neds`, version `0.0.1`. |
+| pip, setuptools and wheel | [Bootstrap pins](../requirements-bootstrap.txt) | Install third-party dependencies into `.venv`. ViNED runs directly from its checkout and has no Python distribution or editable-install step. |
 | NVIDIA CUDA runtime | 11.8 | Runtime dependencies supplied by the CUDA PyTorch wheels; NVIDIA driver is external. No standalone toolkit is required by current code. |
 
 ## Models and training
@@ -47,8 +47,8 @@ Sources: [model implementation](../src/multi_modal/), [trainer](../src/trainer/b
 | ibllib / Brainbox | — | Loads session data and existing spike-sorting results, and provides spike binning and behavioral utilities. |
 | iblatlas | — | Provides brain-region identifiers and anatomical mappings through `BrainRegions`. |
 | iblutil | — | Provides IBL numerical helpers such as two-dimensional binning and membership matching. |
-| ibl-neuropixel | — | Supports Neuropixels recording formats and signal processing; the LFP utility imports `neuropixel`, `spikeglx`, and `ibldsp`. |
-| SpikeInterface | — | Reads and preprocesses electrophysiology recordings in the LFP utility, including filtering, channel correction, and referencing. |
+| ibl-neuropixel | Optional LFP requirement; also pulled in by ibllib | Supports Neuropixels recording formats and signal processing; the LFP utility imports `neuropixel`, `spikeglx`, and `ibldsp`. |
+| SpikeInterface | Optional LFP requirement | Reads and preprocesses electrophysiology recordings in the LFP utility, including filtering, channel correction, and referencing. |
 
 The main adaptation consumes processed spike counts. The repository also contains local field potential (LFP) preprocessing utilities; these do not constitute a new spike-sorting pipeline. See [IBL data utilities](../src/utils/ibl_data_utils.py) and [LFP preprocessing](../src/utils/preprocess_lfp.py).
 
@@ -76,14 +76,14 @@ Sources: [replay generation](../src/visual_stim_gen.py), [feature extraction](..
 
 Sources: [configuration utilities](../src/utils/config_utils.py), [YAML configurations](../src/configs/multi_modal/), and [multi-GPU launcher](../script/train_multi_gpu.sh).
 
-## Additional declared dependencies
+## Dependency scope
 
-These packages are included in `requirements.txt`, but no direct use was found in the current Python source:
+[requirements.txt](../requirements.txt) covers the current spike/vision application.
+[requirements-lfp.txt](../requirements-lfp.txt) adds the inherited optional raw LFP
+path. `timm` and `torchvision` are not needed by the current source or CLIP
+extractor. Seaborn remains an indirect dependency of ibllib.
 
-| Technology | Declared version | Short explanation |
-| --- | --- | --- |
-| torchvision | 0.17.1 | PyTorch's image datasets, transforms, and vision-model utilities. |
-| timm | 0.9.16 | A collection of PyTorch image models and model-building utilities; also declared in `src/setup.py`. |
-| Seaborn | — | Statistical plotting library built on Matplotlib. |
-
-OpenCV, Pillow, PyYAML, and `huggingface_hub` are explicitly declared. Platform constraints record resolved dependencies. See [environment setup](environment.md) and [validation results](environment-validation.md) for compatibility pins and outstanding checks.
+Platform constraints record resolved versions, including optional/transitive
+packages; a constraint does not cause a package to be installed. See
+[environment setup](environment.md) and [validation results](environment-validation.md)
+for compatibility pins and outstanding checks.

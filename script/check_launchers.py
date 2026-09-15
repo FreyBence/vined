@@ -20,7 +20,11 @@ def main():
         bin_dir.mkdir(parents=True)
         log = tmp / 'args.log'
         python = bin_dir / 'python'
-        python.write_text('#!/usr/bin/env bash\nprintf "%s\\0" "$PWD" "$0" "$@" > "$LAUNCHER_LOG"\n', newline='\n')
+        python.write_text(
+            '#!/usr/bin/env bash\n'
+            'printf "%s\\0" "$PWD" "$0" "$@" > "$LAUNCHER_LOG"\n'
+            'printf "%s\\0" "$VINED_REPO_ROOT/src" "$PYTHONPATH" > "$LAUNCHER_LOG.pythonpath"\n',
+            newline='\n')
         python.chmod(0o755)
         for name, content in {
             'scontrol': '#!/usr/bin/env bash\nprintf "node1\\nnode2\\n"\n',
@@ -33,6 +37,10 @@ def main():
                    VINED_DATA_DIR=(tmp/'data with spaces').as_posix(),
                    VINED_VISUAL_DIR=(tmp/'visual with spaces').as_posix(),
                    VINED_OUTPUT_DIR=(tmp/'output with spaces').as_posix())
+        env['PYTHONPATH'] = (tmp/'extra modules').as_posix()
+        def check_pythonpath():
+            source, exported, _ = Path(str(log) + '.pythonpath').read_bytes().decode().split('\0')
+            assert exported == source + ':' + env['PYTHONPATH'], exported
         env.pop('SLURM_JOB_ID', None)
         env.pop('VINED_REPO_ROOT', None)
         cases = {
@@ -50,6 +58,7 @@ def main():
                 assert 'test-eid' in recorded, (script, recorded)
                 assert 'venv with spaces/bin/python' in recorded[1], recorded
                 assert any(' with spaces' in arg for arg in recorded[2:]), recorded
+                check_pythonpath()
         # Simulate an sbatch-spooled script and verify worker argv without Slurm.
         spooled = tmp/'spooled.sh'
         spooled.write_bytes((ROOT/'script/train_multi_gpu.sh').read_bytes())
@@ -61,7 +70,8 @@ def main():
         assert recorded[2:4] == ['-m', 'torch.distributed.run'], recorded
         assert env['VINED_DATA_DIR'] in recorded and env['VINED_OUTPUT_DIR'] in recorded, recorded
         assert '--mixed_training' in recorded, recorded
-        print('PASS: Bash syntax, root/script invocation, venv/path spaces, spooled Slurm worker argv')
+        check_pythonpath()
+        print('PASS: Bash syntax, root/script invocation, venv/path spaces, checkout PYTHONPATH, spooled Slurm worker argv')
 
 
 if __name__ == '__main__':

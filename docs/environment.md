@@ -1,16 +1,21 @@
 # Python environment and execution
 
-ViNED uses standalone **Python 3.10**, **venv**, and **pip**. The editable
-distribution is `vined`; Conda and pyenv are not needed. Python itself,
-NVIDIA drivers, and Linux Slurm are external prerequisites.
+ViNED is a **checkout-only application** using standalone **Python 3.10**,
+**venv**, and **pip**. Install the dependencies of this repository and execute
+its `src/*.py` entry scripts. The checkout supplies Python modules, YAML
+configuration, and `data/*.txt` session lists; keep those paths together.
+There is no wheel or editable package to install, and no NEDS checkout or
+distribution is required. Python itself, NVIDIA drivers, and Linux Slurm are
+external prerequisites. See the [README prerequisites](../README.md#prerequisites).
 
 ## Install
 
-When upgrading an existing environment that installed this checkout as `neds`,
-uninstall the old editable distribution first
-(`.venv\Scripts\python.exe -m pip uninstall neds` on Windows,
-or `.venv/bin/python -m pip uninstall neds` on Linux),
-then run the editable install below. Python module import names are unchanged.
+For an existing environment with an editable `vined` or `neds` installation,
+uninstall that distribution using its venv Python (`python -m pip uninstall
+vined neds`), then install the requirements below without an editable-install
+step. Recreating the venv is recommended when trimming old dependencies:
+installing a requirements file does not remove packages from earlier setups.
+Python module import names are unchanged.
 
 Run from the checkout root. Use a working 64-bit Python 3.10 interpreter explicitly;
 do not assume `python` on PATH is the right version. Windows was created with
@@ -24,7 +29,6 @@ py -3.10 -m venv .venv
 .venv\Scripts\python.exe -m pip install -r requirements-bootstrap.txt
 .venv\Scripts\python.exe -m pip install --no-deps -r requirements-torch-cu118.txt
 .venv\Scripts\python.exe -m pip install -r requirements.txt -c constraints-windows-py310.txt
-.venv\Scripts\python.exe -m pip install --no-deps -e ./src
 .venv\Scripts\python.exe -m pip check
 .venv\Scripts\python.exe -B script/check_environment.py --device cpu
 .venv\Scripts\python.exe -B script/check_environment.py --device cuda
@@ -37,7 +41,6 @@ python3.10 -m venv .venv
 .venv/bin/python -m pip install -r requirements-bootstrap.txt
 .venv/bin/python -m pip install --no-deps -r requirements-torch-cu118.txt
 .venv/bin/python -m pip install -r requirements.txt -c constraints-linux-py310.txt
-.venv/bin/python -m pip install --no-deps -e ./src
 .venv/bin/python -m pip check
 .venv/bin/python -B script/check_environment.py --device cpu
 .venv/bin/python -B script/check_environment.py --device cuda
@@ -47,9 +50,11 @@ For a CPU environment, replace `requirements-torch-cu118.txt` with
 `requirements-torch-cpu.txt` and omit the CUDA check. Use a separate environment
 when comparing CPU and CUDA wheels. The general requirements preserve Torch
 versions without changing the installed CPU/CUDA variant. Always install Torch
-first. No `torchaudio` dependency is needed by ViNED.
+first. ViNED's CLIP path uses Transformers and Pillow; neither `torchvision`,
+`timm`, nor `torchaudio` is required. Seaborn is an IBL transitive dependency,
+rather than a direct requirement of ViNED's source.
 
-PyTorch 2.2.1/torchvision 0.17.1 CUDA 11.8 wheels supply runtime libraries; a
+PyTorch 2.2.1 CUDA 11.8 wheels supply runtime libraries; a
 separate CUDA toolkit is unnecessary for this repository's current code. An
 NVIDIA driver and compatible GPU are still required. See the
 [official wheel matrix](https://docs.pytorch.org/get-started/previous-versions/)
@@ -59,11 +64,30 @@ In VS Code, select `.venv/Scripts/python.exe` (Windows) or `.venv/bin/python`
 (Linux). Activation is optional because all commands select Python explicitly.
 Do not copy virtual environments between machines or operating systems.
 
+### Optional LFP dependencies
+
+The active spike/vision pipeline uses `requirements.txt`. The inherited raw LFP
+branch additionally needs `requirements-lfp.txt` (SpikeInterface and explicit
+Neuropixels/DSP dependencies). Install it only when using that branch:
+
+```powershell
+.venv\Scripts\python.exe -m pip install -r requirements-lfp.txt -c constraints-windows-py310.txt
+.venv\Scripts\python.exe -B script/check_environment.py --lfp
+```
+
+On Linux use `.venv/bin/python` and `constraints-linux-py310.txt`. `ibllib` also
+pulls in `ibl-neuropixel` for core data access; the optional file makes the LFP
+module's direct dependencies explicit. The `--lfp` check verifies imports, not
+raw recording processing or scientific validity.
+
 ## Paths and workflow
 
 Run direct Python commands from the checkout root because model YAML includes
 still use repository-relative paths. Bash wrappers change to that root themselves
-and work when called from either the root or `script/`.
+and work when called from either the root or `script/`. Direct entry scripts
+automatically put `src/` on Python's import path; Bash wrappers also export it
+through `PYTHONPATH` for Ray/Slurm workers. Interactive Python sessions need the
+checkout's `src/` on their import path explicitly.
 
 | Override | Default | Used by |
 | --- | --- | --- |
@@ -94,7 +118,7 @@ Create replays first with `src/visual_stim_gen.py` after reviewing its session
 list. It writes under `VINED_REPLAY_DIR`; it can download IBL data. CLIP extraction
 downloads the model unless already cached. Preparation's inherited `--use_lfp`
 flag enables the LFP branch despite its `store_false` implementation; the flag
-semantics are unchanged by this migration.
+semantics are unchanged in the current CLI.
 
 Bash equivalents retain their original positional interfaces:
 
@@ -132,12 +156,12 @@ setup; native Windows multi-node parity is not promised. See
 - The offline checker exercises dependency imports, CLI help, MP4 and `[T,768]`
   dataset round trips, path overrides, attention forward/backward, and a small
   full multimodal optimizer step and evaluation. Optional `--clip` checks cached
-  CLIP weights; `--session-cache datasets/ibl_mm/train` uses two trusted prepared
+  CLIP weights; `--lfp` imports the optional LFP module;
+  `--session-cache datasets/ibl_mm/train` uses two trusted prepared
   trials. It does not download data, run dummy GPU loads, or certify model quality.
 - Full CLIP extraction, session training/evaluation, LFP data processing, and
   multi-node execution require their corresponding assets/infrastructure. Existing
   alignment, checkpoint restoration and routing findings remain research blockers.
 
-See [migration validation](environment-validation.md) for actual results and
-remaining blockers. Preserve any old Conda environment for comparison until the
-required workflows pass. This migration does not uninstall Conda from the machine.
+See [environment validation](environment-validation.md) for actual results and
+remaining blockers, including the clean checkout-only installation check.

@@ -15,18 +15,22 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--device', choices=['cpu', 'cuda'], default='cpu')
     parser.add_argument('--clip', action='store_true', help='Check cached CLIP weights without downloading')
+    parser.add_argument('--lfp', action='store_true', help='Check optional requirements-lfp.txt imports')
     parser.add_argument('--session-cache', type=Path, help='Directory of trusted prepared trial .npy files; check two trials')
     args = parser.parse_args()
     assert sys.version_info[:2] == (3, 10), sys.version
     assert sys.prefix != sys.base_prefix, 'Use a virtual environment'
     subprocess.run([sys.executable, '-m', 'pip', 'check'], check=True)
     for name in ['cv2', 'PIL', 'yaml', 'numpy', 'pandas', 'scipy', 'sklearn',
-                 'torchvision', 'timm', 'torcheval.metrics', 'transformers',
+                 'torcheval.metrics', 'transformers',
                  'accelerate', 'ray.tune', 'wandb', 'one.api', 'iblatlas',
-                 'utils.ibl_data_utils', 'utils.preprocess_lfp',
+                 'utils.ibl_data_utils',
                  'loader.make_loader', 'multi_modal.mm', 'trainer.make']:
         importlib.import_module(name)
         print('IMPORT OK:', name, flush=True)
+    if args.lfp:
+        importlib.import_module('utils.preprocess_lfp')
+        print('IMPORT OK: utils.preprocess_lfp', flush=True)
     import cv2
     import numpy as np
     import torch

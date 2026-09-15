@@ -1,3 +1,4 @@
+# Installer tooling for ViNED's Python 3.10 virtual environment.
 pip==26.2.1
 setuptools==75.8.2
 wheel==0.45.1

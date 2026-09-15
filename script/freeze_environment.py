@@ -15,7 +15,8 @@ def main():
     pins = {}
     for dist in distributions():
         name = re.sub(r'[-_.]+', '-', dist.metadata['Name']).lower()
-        if name == 'neds':
+        # Old editable installs are not runtime dependencies of this checkout.
+        if name in ('neds', 'vined'):
             continue
         version = dist.version
         if name in ('torch', 'torchvision'):

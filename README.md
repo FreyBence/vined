@@ -50,18 +50,87 @@ These extensions are research objectives, not completed features.
 | [src/eval.py](src/eval.py) | Evaluation entry point |
 | [script/](script/) | Environment-specific Bash wrappers |
 
-## Environment and execution
+## Requirements and installation
 
-Use **Python 3.10 + pip + a local `.venv`** on Windows or Linux. The Python
-distribution is `vined`. Install PyTorch first using the CPU or CUDA 11.8
-requirements, then the general dependencies and editable package.
+ViNED is a **checkout-only research application**. Clone this repository, install
+its dependencies, and run its scripts from the repository root. Keep `src/`,
+`src/configs/`, and the session lists in `data/` together. No NEDS repository or
+Python package is needed. ViNED does not provide a wheel, package installation,
+or editable-install step.
 
-See [environment setup and workflow commands](docs/environment.md) and
-[validation results and blockers](docs/environment-validation.md).
+### Prerequisites
+
+- Git and **64-bit Python 3.10** with `venv` and pip, on Windows or Linux.
+- A local `.venv` and disk space for IBL recordings, replay videos, CLIP weights,
+  prepared datasets, and checkpoints; usage depends on the sessions selected.
+- Internet access for dependency installation and initial IBL/CLIP downloads.
+- For GPU execution: an NVIDIA GPU and a driver compatible with the CUDA 11.8
+  PyTorch wheel. CPU setup is available for preparation and smoke checks.
+- Bash for the optional shell wrappers (Git Bash on Windows); Linux Slurm for
+  the supplied cluster/search launchers.
+
+The requirements describe this repository's visual–neural workflow:
+
+| Area | Python dependencies |
+| --- | --- |
+| Model, metrics, training and tracking | Torch 2.2.1, Transformers 4.38.2, Accelerate 0.27.2, TorchEval 0.0.7, einops, Ray 2.10.0, wandb |
+| Numerical processing and plots | NumPy 1.26.4, pandas, SciPy, scikit-learn, Matplotlib, tqdm, PyYAML |
+| IBL sessions and processed spikes | ONE-api, ibllib/Brainbox, iblatlas, iblutil |
+| Replay videos and CLIP images | opencv-python-headless 4.10.0.84, Pillow |
+| Dataset storage and downloads | Datasets 2.17.1, PyArrow 14.0.2, huggingface_hub |
+| Optional raw LFP processing | Additional dependencies in [requirements-lfp.txt](requirements-lfp.txt) |
+
+[requirements.txt](requirements.txt) declares the core dependencies;
+`constraints-windows-py310.txt` and `constraints-linux-py310.txt` pin the resolved
+versions for each platform. Constraints alone do not install packages.
+
+### Install after cloning
+
+Run these commands from the cloned `vined` directory. These examples select CPU
+Torch; for an NVIDIA GPU, substitute `requirements-torch-cu118.txt` for
+`requirements-torch-cpu.txt`.
+
+Windows PowerShell:
+
+```powershell
+py -3.10 -m venv .venv
+.venv\Scripts\python.exe -m pip install -r requirements-bootstrap.txt
+.venv\Scripts\python.exe -m pip install --no-deps -r requirements-torch-cpu.txt
+.venv\Scripts\python.exe -m pip install -r requirements.txt -c constraints-windows-py310.txt
+.venv\Scripts\python.exe -B script/check_environment.py --device cpu
+```
+
+Linux Bash:
+
+```bash
+python3.10 -m venv .venv
+.venv/bin/python -m pip install -r requirements-bootstrap.txt
+.venv/bin/python -m pip install --no-deps -r requirements-torch-cpu.txt
+.venv/bin/python -m pip install -r requirements.txt -c constraints-linux-py310.txt
+.venv/bin/python -B script/check_environment.py --device cpu
+```
+
+The checker runs `pip check`, imports, CLI help, video/dataset round trips, and a
+small synthetic model step without downloading research assets. For CUDA, also
+run it with `--device cuda`. Existing editable installations and optional LFP
+setup are covered in [environment setup and workflow commands](docs/environment.md).
+See [validation results and blockers](docs/environment-validation.md) for the
+limits of these checks.
+
+## Execution
+
+Run entry points as `.venv/bin/python src/<script>.py` on Linux or
+`.venv\Scripts\python.exe src/<script>.py` on Windows, from the checkout root.
+Visual replay generation and CLIP extraction precede data preparation. Session
+recordings, visual features, prepared caches, and trained checkpoints must be
+obtained or generated for the workflow being run; cloning supplies source,
+configuration, and session selections.
 
 Bash wrappers resolve the checkout automatically and support `VENV_DIR` and
 `VINED_*` path overrides. Linux Slurm account/partition settings remain
-site-specific. Visual replay generation and CLIP extraction precede data preparation.
+site-specific. Training enables W&B logging by default; configure your own
+account/project or set `WANDB_MODE=offline` for local runs. Follow the
+[workflow commands](docs/environment.md#paths-and-workflow) for each stage.
 
 ## Research documents
 

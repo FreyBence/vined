@@ -98,6 +98,6 @@ First validate a single-session experiment, then test multi-session pretraining 
 
 ## Naming and migration status
 
-Use **ViNED** in project-facing documentation and **`vined`** as the repository slug, checkout folder name, and Python distribution name. The environment is now project-local `.venv`, created with standalone Python 3.10 and pip.
+Use **ViNED** in project-facing documentation and **`vined`** as the repository slug and checkout folder name. ViNED is a **checkout-only application**, with no installable Python distribution. Install its dependencies into a project-local `.venv` with standalone Python 3.10 and pip, then run the entry scripts from the checkout root. No NEDS checkout or package is required; preserve its attribution for the inherited code and ideas.
 
 Runtime checkout paths are repository-relative or configurable through `VINED_DATA_DIR`, `VINED_VISUAL_DIR`, `VINED_REPLAY_DIR`, and launcher output overrides. Run direct Python commands from the checkout root because model YAML includes still use relative paths. Recreate `.venv` after moving the checkout. Machine-wide Conda removal is a separate task; preserve NEDS attribution and the licensing scope in LICENSING.md.
