@@ -80,3 +80,14 @@ To refresh constraints after an intentional dependency change, first install and
 validate in a fresh environment, then run `script/freeze_environment.py` with the
 appropriate platform constraint filename. Preserve the opposite platform file;
 do not copy a Windows package inventory into a Linux lock.
+
+## Checkout rename validation (2026-09-15)
+
+After renaming the Windows checkout to vined, the local .venv was recreated
+with Python 3.10.11, the pinned Windows dependencies, and CUDA 11.8 wheels.
+The editable vined distribution and pip executable resolve to the new checkout.
+Dependency checks, all CLI checks, CPU synthetic model checks, CUDA prepared-session
+checks, cached CLIP extraction, and Git Bash launcher checks passed. The old
+environment backup was removed after validation. No stale old-checkout references
+were found in the checked environment variables, shell profiles, or Desktop/Start
+Menu shortcuts. The project naming notes in AGENT.md were updated.

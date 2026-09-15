@@ -98,6 +98,6 @@ First validate a single-session experiment, then test multi-session pretraining 
 
 ## Naming and migration status
 
-Use **ViNED** in project-facing documentation and **`vined`** as the repository slug. The working directory is still `NEDS_new`; the Python distribution remains `neds`. The environment is now project-local `.venv`, created with standalone Python 3.10 and pip.
+Use **ViNED** in project-facing documentation and **`vined`** as the repository slug, checkout folder name, and Python distribution name. The environment is now project-local `.venv`, created with standalone Python 3.10 and pip.
 
-Runtime checkout paths are repository-relative or configurable through `VINED_DATA_DIR`, `VINED_VISUAL_DIR`, `VINED_REPLAY_DIR`, and launcher output overrides. Run direct Python commands from the checkout root because model YAML includes still use relative paths. Recreate `.venv` after moving the checkout. Package renaming and machine-wide Conda removal are separate tasks; preserve NEDS attribution.
+Runtime checkout paths are repository-relative or configurable through `VINED_DATA_DIR`, `VINED_VISUAL_DIR`, `VINED_REPLAY_DIR`, and launcher output overrides. Run direct Python commands from the checkout root because model YAML includes still use relative paths. Recreate `.venv` after moving the checkout. Machine-wide Conda removal is a separate task; preserve NEDS attribution and the licensing scope in LICENSING.md.
