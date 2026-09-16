@@ -2,6 +2,8 @@
 
 Research date: **2026-09-15**. Scope: the visual stimulus used by **ViNED**, its IBL source data, synthetic replay, CLIP features, and alignment with spikes.
 
+**Renderer update (2026-09-16):** Sections 3 and 5 describe the originally inspected renderer; see section 5.1 below for the corrected implementation. The extraction/alignment update below supersedes the historical findings in sections 6 and 7.
+
 This reference distinguishes **documented IBL behavior**, **current project implementation**, and **recommended requirements**. Web documentation and local source were inspected; session files were not downloaded or replay fidelity experimentally validated for this document.
 
 ## 1. Which IBL data does this project use?
@@ -114,6 +116,28 @@ The following are findings from source inspection, not measured reconstruction e
 6. **Patch geometry and phase are approximations.** The code has no measured conversion from pixels to visual degrees, session sigma, random trial phase, or display calibration.
 
 Evidence: [renderer](../src/visual_stim_gen.py). Physical interpretation: [behavior methods][S3], [IBL movement model][S4], [raw stimulus fields][S7].
+
+### 5.1 Corrected renderer (2026-09-16)
+
+The renderer now applies fractional contrast (zero gives uniform intensity 128), uses the same negative wheel-to-azimuth sign on both sides, permits outward movement, and clips partially visible patches to the canvas, including its right edge. The empirical successful-trial gain fit and go-cue-trigger loading have been removed.
+
+The configurable defaults are 31 mm wheel radius, 4 degrees/mm gain, initial azimuth +/-35 degrees, and a **linear approximate** mapping of 102 degrees onto 720 pixels. The carrier uses 0.1 cycles/degree. Sigma remains an explicitly approximate 30 pixels, and phase is a reproducible synthetic uniform draw in radians keyed by seed, EID, and original trial row. These are not recovered session parameters. CLI options expose the parameters, including `--gain-deg-per-mm`, `--horizontal-fov-deg`, `--sigma-px`, and `--phase-seed`. Raw Bonsai parameter loading still requires verified units and synchronization.
+
+Videos cover `[stimOn, stimOff)` at queries `stimOn + frame_index/30`, with no one-second minimum or invented offset. Encoded duration rounds up by less than one frame. Motion references onset and freezes at finite `stimFreeze_times`, falling back to `response_times`; feedback is never used as a response substitute. Missing/invalid required events or contrast sides skip the trial with a recorded reason. Invalid session wheel arrays fail validation; wheel coverage is required from onset through freeze, beyond which no wheel observations are needed. No pre-onset or post-offset frames are generated: those intervals remain unavailable in these artifacts.
+
+Each `trial_XXXX.mp4` has a matching `.npz` containing float64 session `frame_times`, `relative_times`, a boolean per-frame `valid` array, `trial_id`, and `eid` (no pickle needed). `replay_metadata.json` records every original row, including invalid trials without videos, rendering configuration, synthetic phase, freeze source, renderer source hash, and assumptions. Dataset revision and session calibration remain explicitly unverified. This is partial provenance, not completion of all section 8 requirements.
+
+The entry point reads `data/eids.txt` by default (`--eids-file` override). Use a fresh `VINED_REPLAY_DIR`; existing trial artifacts are rejected to prevent mixing generations or retaining stale videos for invalid trials. Original row positions determine filenames even if the input table has custom index labels.
+
+Historical synthetic regression checks performed before the no-test-writing rule covered contrast on both sides, physical movement signs, outward motion, edge clipping, missing events/wheel coverage, short trials, freeze precedence, original row IDs, deterministic phase, timestamps, and MP4 decoding. Those checks are not retained in the repository and do not establish real-session fidelity. The CLIP extractor now consumes these sidecars under the schema-v2 contract below.
+
+### Extraction/alignment update (2026-09-16)
+
+Sections 6 and 7 below retain the original audit description. The current feature writer instead saves a numeric **schema_version=2** archive with scalar `eid` and `clock="session_seconds"`, unique int64 `trial_ids[K]`, int64 `offsets[K+1]`, float64 `times[F]`, float32 `features[F,768]`, and boolean `valid[F]`. Offsets delimit each trial in the flattened arrays. No pickle is required. Videos must match the completed replay manifest, filenames, and timestamp sidecars; incomplete decoding is rejected.
+
+Visual sampling uses original session timestamps. Alignment queries neural-bin centers, preserves original trial IDs, and renormalizes linear feature interpolation. Bins outside sampled coverage or spanning invalid source samples are unavailable, represented by zero placeholders and a separate boolean `vision-clip_valid` mask. This does not infer a blank image before onset or after offset. Trials with no valid visual bins are excluded; partial trials retain their time masks through datasets, caches, model inputs, losses, and visual metrics. Dataset rows also retain `trial_id` and session `intervals` through splits.
+
+Missing feature files skip sessions with no visual coverage; malformed or legacy archives fail explicitly. Re-extract features and rebuild aligned datasets and caches in fresh directories before training. Existing evaluation-routing, last-batch collection, and prediction-export issues in the repository audit remain separate limitations.
 
 ## 6. CLIP representation and output schema
 
