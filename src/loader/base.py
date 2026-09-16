@@ -408,25 +408,6 @@ class BaseDataset(torch.utils.data.Dataset):
             self.load_meta = load_meta
             self.dataset_name = dataset_name
             self.stitching = stitching
-            self.vision_cache = {}
-
-            self.visual_dir = str(visual_dir())
-
-            if self.visual_dir is not None:
-
-                for eid in eids:
-
-                    visual_path = os.path.join(
-                        self.visual_dir,
-                        f"{eid}_visual_clip.npz"
-                    )
-
-                    if os.path.exists(visual_path):
-
-                        self.vision_cache[eid] = np.load(
-                            visual_path,
-                            allow_pickle=True
-                        )
 
     def _preprocess_h5_data(self, data, idx):
         spike_data, rates, _, _ = data
@@ -526,6 +507,8 @@ class BaseDataset(torch.utils.data.Dataset):
             "neuron_depths": neuron_depths,
             "neuron_regions": list(neuron_regions),
             "eid": data['eid'],
+            "trial_id": data['trial_id'],
+            "intervals": np.asarray(data['intervals'], dtype=np.float64),
             **target_behavior_dict,
         }
     
@@ -545,6 +528,15 @@ class BaseDataset(torch.utils.data.Dataset):
                 data[beh_name],
                 dtype=np.float32
             )
+
+            valid = np.asarray(data.get(beh_name + "_valid"), dtype=bool)
+            if valid.shape != (len(beh),) or not np.isfinite(beh).all():
+                raise ValueError("Missing/invalid visual validity metadata; rebuild aligned data and caches")
+            if len(beh) > self.max_time_length:
+                raise ValueError("Visual sequence exceeds configured maximum length")
+            beh[~valid] = 0
+            valid = np.pad(valid, (0, self.max_time_length-len(valid)), constant_values=False)
+            target_behavior_dict[beh_name + "_valid"] = valid
 
             # Pad temporal dimension
             beh, _ = self._pad_data(
@@ -601,6 +593,15 @@ class BaseDataset(torch.utils.data.Dataset):
     def __getitem__(self, idx):
         if self.data_paths is not None:
             data = np.load(self.data_paths[idx], allow_pickle=True).item()
+            required = {"trial_id", "intervals", "vision-clip_valid"}
+            if not required.issubset(data):
+                raise ValueError("Legacy visual cache; rebuild from schema-v2 aligned data")
+            valid = np.asarray(data["vision-clip_valid"])
+            vision = np.asarray(data["vision-clip"])
+            if (valid.dtype.kind != "b" or valid.shape != vision.shape[:1]
+                    or vision.ndim != 2 or vision.shape[1] != 768
+                    or not np.isfinite(vision).all()):
+                raise ValueError("Malformed cached visual data or validity mask")
             return data
         elif "ibl" in self.dataset_name:
             return self._preprocess_ibl_data(self.dataset[idx])

@@ -60,7 +60,9 @@ def create_dataset(
     params,
     meta_data=None,
     binned_behaviors=None,
-    binned_lfp=None
+    binned_lfp=None,
+    trial_ids=None,
+    intervals=None
 ):
     # Scipy sparse matrices can't be directly loaded into HuggingFace Datasets so they are converted to lists
     sparse_binned_spikes, spikes_sparse_data_list, spikes_sparse_indices_list, \
@@ -73,6 +75,17 @@ def create_dataset(
         'spikes_sparse_shape': spikes_sparse_shape_list,
     }
 
+    if trial_ids is not None:
+        from utils.visual_data import validate_ids
+        trial_ids = validate_ids(trial_ids)
+        if len(trial_ids) != len(binned_spikes):
+            raise ValueError("Trial IDs must match dataset rows")
+        data_dict["trial_id"] = trial_ids
+    if intervals is not None:
+        if np.asarray(intervals).shape != (len(binned_spikes), 2):
+            raise ValueError("Intervals must match dataset rows")
+        data_dict["intervals"] = intervals
+
     if binned_behaviors is not None:
         # Store choice behaviors more efficiently (save this option for later)
         # binned_behaviors["choice"] = np.where(binned_behaviors["choice"] > 0, 0, 1).astype(bool)
@@ -81,7 +94,7 @@ def create_dataset(
         for beh_name, beh_data in binned_behaviors.items():
 
             processed_behaviors[beh_name] = [
-                np.asarray(trial, dtype=np.float32)
+                np.asarray(trial, dtype=bool if beh_name.endswith("_valid") else np.float32)
                 for trial in beh_data
             ]
 

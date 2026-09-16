@@ -124,7 +124,7 @@ class MultiModalTrainer():
 
         sim = (gt * pred).sum(dim=-1)
 
-        return sim.mean().item()
+        return torch.nanmean(sim).item()
     
     def _forward_model_inputs(self, batch, training_mode, enc_task_var=None):
         
@@ -148,6 +148,8 @@ class MultiModalTrainer():
             mod_dict[mod]["inputs_modality"] = torch.tensor(mod_idx).to(self.accelerator.device)
             mod_dict[mod]["targets_modality"] = torch.tensor(mod_idx).to(self.accelerator.device)
             mod_dict[mod]["inputs_attn_mask"] = batch["time_attn_mask"]
+            if mod in self.DYNAMIC_VARS:
+                mod_dict[mod]["inputs_attn_mask"] = batch["time_attn_mask"] & batch[mod + "_valid"].to(torch.int64)
             mod_dict[mod]["inputs_timestamp"] = batch["spikes_timestamps"]
             mod_dict[mod]["targets_timestamp"] = batch["spikes_timestamps"]
             # Each batch contains samples from different sessions
@@ -366,17 +368,15 @@ class MultiModalTrainer():
                             mod_loss_dict[f"eval_{mod}_loss"] += outputs.mod_loss[mod]     
                             unique_eids = np.unique(eid)
                             for group_eid in unique_eids:
-                                mask = np.argwhere(eid == group_eid).squeeze()
-                                if mask.size == 0 or mask.ndim == 0:  
-                                    continue
-                                else: 
-                                    _gt = outputs.mod_targets[mod][mask]
-                                    _pred = outputs.mod_preds[mod][mask]
-                                    if len(mask) == 1:
-                                        _gt = _gt.unsqueeze(0)
-                                        _pred = _pred.unsqueeze(0)
+                                indices = np.flatnonzero(eid == group_eid)
+                                valid = (batch[mod + "_valid"][indices].bool()
+                                         & batch["time_attn_mask"][indices].bool())
+                                _gt = outputs.mod_targets[mod][indices].masked_fill(~valid.unsqueeze(-1), float("nan"))
+                                _pred = outputs.mod_preds[mod][indices].masked_fill(~valid.unsqueeze(-1), float("nan"))
+                                if len(_gt):
                                     session_results[group_eid][mod]["gt"].append(_gt)
                                     session_results[group_eid][mod]["preds"].append(_pred)
+
 
         return session_results, eval_loss, mod_loss_dict
     
@@ -474,6 +474,7 @@ class MultiModalTrainer():
                         _gt = F.normalize(_gt, dim=-1)
                 except:
                     print(f"Missing EID {idx}: {eid} Modality: {mod}")
+                    continue
                 if mod == "spike" and "spike" in self.modal_filter["output"]:
                     _preds = torch.exp(_preds)
                 gt[idx][mod], preds[idx][mod] = _gt, _preds
@@ -482,6 +483,8 @@ class MultiModalTrainer():
                 self.session_active_neurons[eid] = {}
                 
             for mod in self.modal_filter["output"]:
+                if mod not in gt[idx]:
+                    continue
                 if mod == "spike":
                     self.session_active_neurons[eid][mod] = np.arange(gt[idx][mod].shape[-1]).tolist()
                     results = metrics_list(
@@ -501,7 +504,7 @@ class MultiModalTrainer():
                             preds[idx][mod]
                         ),
 
-                        "mse": torch.mean(
+                        "mse": torch.nanmean(
                             (gt[idx][mod] - preds[idx][mod]) ** 2
                         ).item()
                     }
@@ -545,15 +548,15 @@ class MultiModalTrainer():
         
         if modality == "spike":
             gt_pred_fig = plot_gt_pred(
-                gt = gt.mean(0).T.cpu().numpy(),
-                pred = preds.mean(0).T.detach().cpu().numpy(),
+                gt = gt.nanmean(0).T.cpu().numpy(),
+                pred = preds.nanmean(0).T.detach().cpu().numpy(),
                 epoch = epoch,
                 modality = modality
             )
         elif modality in self.DYNAMIC_VARS:
             gt_pred_fig = plot_gt_pred(
-                gt = gt.mean(0).T.cpu().numpy(),
-                pred = preds.mean(0).T.detach().cpu().numpy(),
+                gt = gt.nanmean(0).T.cpu().numpy(),
+                pred = preds.nanmean(0).T.detach().cpu().numpy(),
                 epoch = epoch,
                 modality=modality
             )

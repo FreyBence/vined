@@ -357,8 +357,8 @@ class MultiModal(nn.Module):
 
             if mod_dict[mod]["training_mode"] == "mixed":
                 mask_list = []
-                for scheme in selected_schemes:
-                    tmp = mask_map[mod][scheme][0,:,0].to(torch.int64) & mod_dict[mod]["inputs_attn_mask"][0]
+                for sample_idx, scheme in enumerate(selected_schemes):
+                    tmp = mask_map[mod][scheme][sample_idx,:,0].to(torch.int64) & mod_dict[mod]["inputs_attn_mask"][sample_idx]
                     mask_list.append(tmp.unsqueeze(0))
                 mask = torch.cat(mask_list, dim=0)
             
@@ -367,6 +367,9 @@ class MultiModal(nn.Module):
                 mod_dict[mod]["inputs_mask"] = mod_dict[mod]["inputs_token_mask"][...,0]
             else:
                 mod_dict[mod]["inputs_mask"] = mask
+            mod_dict[mod]["inputs_mask"] = (
+                mod_dict[mod]["inputs_mask"].bool() | ~mod_dict[mod]["inputs_attn_mask"].bool()
+            ).to(torch.int64)
             mod_dict[mod]["targets_mask"] = mask
 
         encoder_mod_dict = {

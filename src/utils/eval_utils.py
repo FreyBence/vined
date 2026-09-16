@@ -334,6 +334,8 @@ def co_smoothing_eval(
                         mod_dict[mod]["inputs_modality"] = torch.tensor(mod_idx).to(accelerator.device)
                         mod_dict[mod]["targets_modality"] = torch.tensor(mod_idx).to(accelerator.device)
                         mod_dict[mod]["inputs_attn_mask"] = batch["time_attn_mask"]
+                        if mod in DYNAMIC_VARS:
+                            mod_dict[mod]["inputs_attn_mask"] = batch["time_attn_mask"] & batch[mod + "_valid"].to(torch.int64)
                         mod_dict[mod]["inputs_timestamp"] = batch["spikes_timestamps"]
                         mod_dict[mod]["targets_timestamp"] = batch["spikes_timestamps"]
                         # Each batch contains samples from different sessions
@@ -446,6 +448,8 @@ def co_smoothing_eval(
                         mod_dict[mod]["inputs_modality"] = torch.tensor(mod_idx).to(accelerator.device)
                         mod_dict[mod]["targets_modality"] = torch.tensor(mod_idx).to(accelerator.device)
                         mod_dict[mod]["inputs_attn_mask"] = batch["time_attn_mask"]
+                        if mod in DYNAMIC_VARS:
+                            mod_dict[mod]["inputs_attn_mask"] = batch["time_attn_mask"] & batch[mod + "_valid"].to(torch.int64)
                         mod_dict[mod]["inputs_timestamp"] = batch["spikes_timestamps"]
                         mod_dict[mod]["targets_timestamp"] = batch["spikes_timestamps"]
                         # Each batch contains samples from different sessions
@@ -516,7 +520,9 @@ def co_smoothing_eval(
                 dim=-1
             )
 
-            mean_cosine = cosine_sim.mean().item()
+            visual_valid = (batch["vision-clip_valid"].bool() & batch["time_attn_mask"].bool()).cpu()
+            cosine_sim = cosine_sim.masked_fill(~visual_valid, float("nan"))
+            mean_cosine = torch.nanmean(cosine_sim).item()
 
             gt_held_out = gt[:,target_t_i][...,target_n_i]
             pred_held_out = preds[:,target_t_i][...,target_n_i]
@@ -541,7 +547,9 @@ def co_smoothing_eval(
                     f"{kwargs['save_path']}/{beh_name}_data.npy",
                     {
                         "gt": y,
-                        "pred": y_pred
+                        "pred": y_pred,
+                        "valid": visual_valid.numpy()[:, target_t_i],
+                        "trial_ids": batch["trial_id"].detach().cpu().numpy(),
                     }
                 )
 

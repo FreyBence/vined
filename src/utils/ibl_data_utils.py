@@ -16,6 +16,8 @@ from iblutil.numerical import bincount2D, ismember
 from scipy.interpolate import interp1d
 from tqdm import *
 
+from utils.visual_data import load_archive, resample_features, validate_ids
+
 DYNAMIC_VARS = ["vision-clip"]
 
 def globalize(func):
@@ -393,76 +395,40 @@ def bin_behaviors(
     n_workers=os.cpu_count(),
     **kwargs
 ):
-    behave_dict, mask_dict = {}, {}
-
+    if trials_df is None:
+        raise ValueError("Visual alignment requires trial IDs and session event timestamps")
     if mask is not None:
-        trials_df = trials_df[mask]
-
-    if trials_df is not None:
-        n_trials = len(trials_df)
-        behave_mask = np.ones(n_trials, dtype=bool)
-    else:
-        assert intervals is not None, \
-            "Require intervals to segment the recording into chunks including trials and non-trials."
-        n_trials = len(intervals)
-        behave_mask = np.ones(n_trials, dtype=bool)
-
+        trials_df = trials_df.loc[mask]
+    ids = validate_ids(trials_df["original_trial_id"].to_numpy()
+                       if "original_trial_id" in trials_df else trials_df.index.to_numpy())
+    origins = trials_df[kwargs["align_time"]].to_numpy(dtype=float)
+    start, stop = kwargs["time_window"]
+    binsize = kwargs["binsize"]
+    if not np.isfinite([start, stop, binsize]).all() or stop <= start or binsize <= 0:
+        raise ValueError("Invalid alignment window or bin size")
+    count = (stop-start)/binsize
+    if not np.isclose(count, round(count)):
+        raise ValueError("Alignment window must contain a whole number of bins")
+    centers = start + (np.arange(round(count)) + .5) * binsize
+    behave_dict, mask_dict = {}, {}
     for beh in behaviors:
-        target_dict = load_visual_stimulus(eid, target="vision-clip")
-
-        if target_dict["skip"] is False:
-            trial_ids = np.asarray(target_dict["trial_ids"], dtype=int)
-            target_times_list = target_dict["times"]
-            target_vals_list = target_dict["values"]
-
-            n_bins = int(np.ceil(
-                (kwargs["time_window"][1] - kwargs["time_window"][0]) / kwargs["binsize"]
-            ))
-
-            full_vals = [None] * n_trials
-            beh_mask = np.zeros(n_trials, dtype=bool)
-
-            for tid, trial_times, trial_vals in zip(trial_ids, target_times_list, target_vals_list):
-                tid = int(tid)
-
-                if tid >= n_trials:
+        if beh != "vision-clip":
+            raise ValueError(f"Unsupported visual modality: {beh}")
+        archive = load_visual_stimulus(eid, beh)
+        values = np.zeros((len(ids), len(centers), 768), dtype=np.float32)
+        validity = np.zeros((len(ids), len(centers)), dtype=bool)
+        if not archive["skip"]:
+            lookup = {int(tid): i for i, tid in enumerate(archive["trial_ids"])}
+            for row, tid in enumerate(ids):
+                index = lookup.get(int(tid))
+                if index is None or not np.isfinite(origins[row]):
                     continue
-
-                if trial_times is None or trial_vals is None:
-                    continue
-
-                trial_times = np.asarray(trial_times)
-                trial_vals = np.asarray(trial_vals)
-
-                if len(trial_times) < 2:
-                    continue
-
-                x_interp = np.linspace(trial_times[0], trial_times[-1], n_bins)
-
-                y_interp_tmps = []
-                for n in range(trial_vals.shape[1]):
-                    y_interp_tmps.append(
-                        interp1d(
-                            trial_times,
-                            trial_vals[:, n],
-                            kind="linear",
-                            fill_value="extrapolate"
-                        )(x_interp)
-                    )
-
-                y_interp = np.stack(y_interp_tmps, axis=-1).astype(np.float32)
-
-                full_vals[tid] = y_interp
-                beh_mask[tid] = True
-
-            behave_dict[beh] = np.array(full_vals, dtype=object)
-            mask_dict[beh] = beh_mask
-            behave_mask = np.logical_and(behave_mask, beh_mask)
-
-    if not allow_nans:
-        for k, v in behave_dict.items():
-            behave_dict[k] = behave_dict[k][behave_mask]
-
+                values[row], validity[row] = resample_features(
+                    archive["times"][index], archive["values"][index],
+                    archive["valid"][index], origins[row] + centers)
+        if not allow_nans and not validity.all():
+            raise ValueError("Incomplete visual coverage; retain validity masks with allow_nans=True")
+        behave_dict[beh], mask_dict[beh] = values, validity
     return behave_dict, mask_dict
 
 
@@ -490,7 +456,8 @@ def prepare_data(one, eid, params, n_workers=os.cpu_count()):
         one=one, eid=eid, min_rt=0., max_rt=10., 
     )
         
-    behave_dict = load_anytime_behaviors(one, eid, n_workers=n_workers)
+    trials_df["original_trial_id"] = np.arange(len(trials_df), dtype=np.int64)
+    behave_dict = {}  # Visual data are loaded and validated once during binning.
     
     neural_dict = {
         "spike_times": spikes["times"],
@@ -545,98 +512,69 @@ def align_data(
     ], 
     trials_mask=None,
     nan_thresh=0.3,
+    behavior_masks=None,
+    trial_index=None,
 ):
     num_trials = len(binned_spikes)
-    
-    target_mask = np.ones(num_trials, dtype=bool)
-
+    if not beh_names:
+        raise ValueError("No visual modalities supplied for alignment")
+    target_mask = np.isfinite(binned_spikes).all(axis=(1, 2))
+    prepared, validity = {}, {}
     for beh in beh_names:
-        beh_mask = np.array([x is not None for x in binned_behaviors[beh]], dtype=bool)
-        nan_ratio = 1 - beh_mask.mean()
-        print(f"{beh} has {nan_ratio*100:.1f}% NaN trials.")
-        if nan_ratio >= nan_thresh:
-            print(f"Remove {beh} due to too many NaN trials!")
-        else:
-            target_mask &= beh_mask
-
+        if beh not in binned_behaviors or len(binned_behaviors[beh]) != num_trials:
+            raise ValueError(f"Missing or mismatched modality: {beh}")
+        rows = binned_behaviors[beh]
+        shape = (binned_spikes.shape[1], 768)
+        values = np.zeros((num_trials, *shape), dtype=np.float32)
+        valid = np.zeros((num_trials, shape[0]), dtype=bool)
+        for row, value in enumerate(rows):
+            if value is None:
+                continue
+            value = np.asarray(value, dtype=np.float32)
+            if value.shape != shape:
+                raise ValueError(f"Invalid {beh} shape in trial row {row}: {value.shape}")
+            valid[row] = np.isfinite(value).all(axis=-1)
+            values[row] = np.where(valid[row, :, None], value, 0)
+        if behavior_masks is not None:
+            supplied = np.asarray(behavior_masks[beh])
+            if supplied.shape != valid.shape or supplied.dtype.kind != "b":
+                raise ValueError(f"Invalid time validity mask for {beh}")
+            valid &= supplied
+        values[~valid] = 0
+        prepared[beh], validity[beh] = values, valid
+        target_mask &= valid.any(axis=1)
     if trials_mask is not None:
-        trials_mask = list(trials_mask.to_numpy().astype(int))
-        target_mask = np.logical_and(
-            target_mask,
-            beh_mask
-        )
-
-    bad_trial_idxs = np.argwhere(np.array(target_mask) == 0)
-
-    aligned_binned_spikes = np.delete(binned_spikes, bad_trial_idxs, axis=0)
+        if (trial_index is not None and hasattr(trials_mask, "index")
+                and not np.array_equal(np.asarray(trials_mask.index), np.asarray(trial_index))):
+            raise ValueError("Trial validity mask index does not match neural trial row order")
+        supplied = np.asarray(trials_mask)
+        if supplied.shape != (num_trials,) or not np.isin(supplied, [0, 1]).all():
+            raise ValueError("Trial validity mask must contain one boolean/0/1 per original row")
+        target_mask &= supplied.astype(bool)
     if binned_lfp is not None:
-        aligned_binned_lfp, means, stds = standardize_lfp_data(
-            np.delete(binned_lfp, bad_trial_idxs, axis=0)
-        )
-    else:
-        aligned_binned_lfp = None
-
-    num_trials = len(aligned_binned_spikes)
-    aligned_binned_behaviors = {}
+        if len(binned_lfp) != num_trials:
+            raise ValueError("LFP trial count mismatch")
+        target_mask &= np.isfinite(binned_lfp).all(axis=(1, 2))
+    if not target_mask.any():
+        raise ValueError("No valid trials with visual coverage remain")
+    aligned = {}
     for beh in beh_names:
-        beh_trials = np.delete(np.array(binned_behaviors[beh], dtype=object), bad_trial_idxs, axis=0)
-
-        if beh in DYNAMIC_VARS:
-            aligned_binned_behaviors[beh] = np.stack(
-                [np.asarray(y, dtype=np.float32) for y in beh_trials],
-                axis=0
-            )
-        else:
-            aligned_binned_behaviors[beh] = np.array(beh_trials)
-
-    return (
-        aligned_binned_spikes, 
-        aligned_binned_behaviors,
-        aligned_binned_lfp, 
-        target_mask, 
-        bad_trial_idxs
-    )
+        aligned[beh] = prepared[beh][target_mask]
+        aligned[beh + "_valid"] = validity[beh][target_mask]
+    lfp = (standardize_lfp_data(binned_lfp[target_mask])[0]
+           if binned_lfp is not None else None)
+    return binned_spikes[target_mask], aligned, lfp, target_mask, np.flatnonzero(~target_mask)
 
 
 def load_visual_stimulus(
     eid,
     target="vision-clip"
 ):
-    """
-    Load precomputed CLIP visual embeddings.
-
-    Expected file format:
-        {visual_dir}/{eid}_visual_clip.npz
-
-    Required arrays:
-        - times: [N_frames]
-        - features: [N_frames, clip_dim]
-    """
-    visual_dir = str(get_visual_dir())
+    """Missing files skip the session; malformed files fail explicitly."""
+    if target != "vision-clip":
+        raise ValueError(f"Unsupported visual modality: {target}")
+    path = get_visual_dir() / f"{eid}_visual_clip.npz"
     try:
-        visual_path = os.path.join(
-            visual_dir,
-            f"{eid}_visual_clip.npz"
-        )
-
-        data = np.load(visual_path, allow_pickle=True)
-
-        beh_dict = {
-            "trial_ids": data["trial_ids"],
-            "times": data["times"],
-            "values": data["features"],
-            "skip": False,
-        }
-
-    except BaseException as e:
-        print(f"Error loading visual stimulus for {eid}")
-        print(e)
-
-        beh_dict = {
-            "times": None,
-            "values": None,
-            "skip": True
-        }
-
-    return beh_dict
-    
+        return load_archive(path, eid)
+    except FileNotFoundError:
+        return dict(trial_ids=[], times=[], values=[], valid=[], skip=True)
