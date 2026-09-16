@@ -92,7 +92,7 @@ First validate a single-session experiment, then test multi-session pretraining 
 - Preserve NEDS attribution, its citation, and the existing license; identify ViNED-specific changes separately.
 - Keep the goal, implemented behavior, and proposed extensions distinct in documentation and experiment reports.
 - Keep modality names and tensor dimensions consistent across preprocessing, loaders, embeddings, heads, training, and evaluation. A different CLIP checkpoint may require coordinated dimension changes.
-- Verify alignment and checkpoint loading before spending time on long training runs. For relevant code changes, use small checks covering trial identity, temporal alignment, padding, cross-modal masking, and checkpoint round trips.
+- Follow the repository-wide no-test-writing rule in [AGENTS.md](AGENTS.md). Verify alignment and checkpoint loading before spending time on long training runs through code inspection, existing checks, or manual verification; do not write tests.
 - Bash wrappers resolve the checkout and use `.venv` (`VENV_DIR` override); they do not source user shell initialization. Slurm wrappers remain Linux/site-specific. Read [environment setup](docs/environment.md) and [validation status](docs/environment-validation.md) before running them. The archived NEDS README is historical, not active setup guidance.
 - Keep datasets, replay videos, checkpoints, logs, bytecode, and generated package metadata out of source changes. Existing tracked generated files require a separate cleanup.
 
