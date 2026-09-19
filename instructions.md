@@ -89,6 +89,7 @@ First validate a single-session experiment, then test multi-session pretraining 
 
 ## Guidance for future work
 
+- Follow the no-CI/CD-automation rule in [AGENTS.md](AGENTS.md); use local checks and manual dependency review.
 - Preserve NEDS attribution, its citation, and the existing license; identify ViNED-specific changes separately.
 - Keep the goal, implemented behavior, and proposed extensions distinct in documentation and experiment reports.
 - Keep modality names and tensor dimensions consistent across preprocessing, loaders, embeddings, heads, training, and evaluation. A different CLIP checkpoint may require coordinated dimension changes.
