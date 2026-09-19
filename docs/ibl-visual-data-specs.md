@@ -131,6 +131,43 @@ The entry point reads `data/eids.txt` by default (`--eids-file` override). Use a
 
 Historical synthetic regression checks performed before the no-test-writing rule covered contrast on both sides, physical movement signs, outward motion, edge clipping, missing events/wheel coverage, short trials, freeze precedence, original row IDs, deterministic phase, timestamps, and MP4 decoding. Those checks are not retained in the repository and do not establish real-session fidelity. The CLIP extractor now consumes these sidecars under the schema-v2 contract below.
 
+### Session stimulus parameters (D05, 2026-09-19)
+
+Pass `--stimulus-parameters path/to/parameters.json` to use externally recovered, unit-normalized session/trial parameters. Add `--require-parameters` to reject incomplete parameters rather than falling back to approximations. This flag means parameter completeness, **not validated reconstruction fidelity**. The loader does not automatically download or reinterpret raw Bonsai records.
+
+The JSON contract is illustrated below with placeholder evidence and illustrative numbers, **not measured calibration**:
+
+```json
+{
+  "schema_version": 1,
+  "sessions": {
+    "<EID>": {
+      "source": "Identify source dataset, revision/hash and task/rig version",
+      "conversion_notes": "Document original units, conversions and mapping to zero-based ALF rows",
+      "session": {
+        "wheel_radius_mm": 31.0,
+        "gain_deg_per_mm": 4.0,
+        "horizontal_fov_deg": 102.0
+      },
+      "defaults": {
+        "spatial_frequency_cpd": 0.1,
+        "sigma_deg": 4.0,
+        "orientation_deg": 0.0
+      },
+      "trials": {
+        "0": {"initial_azimuth_deg": -35.0, "contrast": 0.25, "phase_rad": 1.2}
+      }
+    }
+  }
+}
+```
+
+Supply an entry for every original trial row, including rows with invalid events. Per-trial values override `defaults`; missing fields use the renderer configuration only outside strict mode. The three `session` fields and all six trial fields shown above are required in strict mode. Manifest values override CLI approximations. Initial azimuth is signed (left negative); sigma is the Gaussian standard deviation in visual degrees, frequency is cycles/degree, phase is radians in the renderer's sine convention, and orientation is degrees with zero giving vertical bars. Screen mapping remains linear. Normalize raw gain units and phase convention only after checking the task version; raw timestamps are not accepted as ALF times.
+
+Duplicate/unknown keys, nonfinite values, missing selected sessions/trials, unknown trial IDs, and side/contrast disagreements with ALF fail explicitly. Patches extend to at least four sigma per side; excessive sizes fail with a units diagnostic. Per-trial effective configuration and parameter sources, the supplied session entry, and manifest SHA-256 are recorded in replay metadata. `session_calibration_verified` remains false and `reconstruction_fidelity` remains unverified: input provenance alone cannot establish physical display accuracy, gamma calibration, synchronization, or agreement with recorded stimuli.
+
+Validation for this change used Python compilation and code inspection; no tests were written. No measured session parameter manifest was available or real session replayed, so the empirical part of D05 remains outstanding.
+
 ### Extraction/alignment update (2026-09-16)
 
 Sections 6 and 7 below retain the original audit description. The current feature writer instead saves a numeric **schema_version=2** archive with scalar `eid` and `clock="session_seconds"`, unique int64 `trial_ids[K]`, int64 `offsets[K+1]`, float64 `times[F]`, float32 `features[F,768]`, and boolean `valid[F]`. Offsets delimit each trial in the flattened arrays. No pickle is required. Videos must match the completed replay manifest, filenames, and timestamp sidecars; incomplete decoding is rejected.
@@ -138,6 +175,18 @@ Sections 6 and 7 below retain the original audit description. The current featur
 Visual sampling uses original session timestamps. Alignment queries neural-bin centers, preserves original trial IDs, and renormalizes linear feature interpolation. Bins outside sampled coverage or spanning invalid source samples are unavailable, represented by zero placeholders and a separate boolean `vision-clip_valid` mask. This does not infer a blank image before onset or after offset. Trials with no valid visual bins are excluded; partial trials retain their time masks through datasets, caches, model inputs, losses, and visual metrics. Dataset rows also retain `trial_id` and session `intervals` through splits.
 
 Missing feature files skip sessions with no visual coverage; malformed or legacy archives fail explicitly. Re-extract features and rebuild aligned datasets and caches in fresh directories before training. Existing evaluation-routing, last-batch collection, and prediction-export issues in the repository audit remain separate limitations.
+
+### Shared session selection and output publication (D06/D07)
+
+Generation, feature extraction, and aligned-data preparation accept the same selection options:
+
+- `--eids-file data/eids.txt`: ordered manifest; defaults to `VINED_EIDS_FILE` if set, otherwise the repository's `data/eids.txt`. Relative manifest paths resolve against the repository root.
+- `--n-sessions N` (also `--n_sessions N`): first N entries, including N=1. Without this option, all entries are selected. Counts beyond the manifest length fail explicitly.
+- `--eid UUID`: select one explicit session, with no count or a count of 1.
+
+Blank lines and comments are accepted; invalid UUIDs, duplicates, and empty selections are rejected. `script/run_create_dataset.sh` accepts these same named options and now defaults to the full manifest. The preparation Bash wrappers accept optional positional `count`, `EID`, and `manifest` arguments; no arguments selects the full manifest. For example, `bash script/prepare_visual_stim.sh 2` and `bash script/run_create_dataset.sh --n-sessions 2` select the same first two sessions. Export `VINED_EIDS_FILE` to share a custom manifest across all stages.
+
+Each stage prints a final JSON report of requested, completed, skipped, failed, and unprocessed sessions. Ordinary failures allow later sessions to run but produce a nonzero final exit. Interrupts propagate. Replay output is staged under the replay root, decoded to check frame count/FPS/dimensions, and published as a complete session directory; an existing session directory is rejected. Feature extraction checks videos against both sidecars and manifest counts/FPS, validates its completed archive, and replaces the final archive from a unique temporary file. Downstream aligned-dataset/cache versioning remains separate work under D13.
 
 ## 6. CLIP representation and output schema
 

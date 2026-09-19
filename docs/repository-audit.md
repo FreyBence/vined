@@ -47,9 +47,9 @@ Status labels beneath each numbered finding describe the current implementation.
 
 | Status | Findings |
 | --- | --- |
-| **Fixed** | D01, D02, D03, D04, D11, M03, P02 |
-| **Partially fixed** | D05, D06, D07, D12, D13, M05, M06, M09, T05, T06, P05, S01, S02, F02, F05, F06 |
-| **Policy changed; CI still open** | P01 |
+| **Fixed** | D01, D02, D03, D04, D06, D07, D11, D12, D13, M03, P02, P05, F06 |
+| **Partially fixed** | D05, M05, M06, M09, T05, T06, S01, S02, F02, F05 |
+| **Superseded by repository policy** | P01 |
 | **Open** | All other numbered findings |
 
 ### Suggested order
@@ -118,6 +118,8 @@ For a right stimulus at zero wheel displacement, `x1 == VIDEO_WIDTH`. The strict
 
 ### D05 — Replay omits stimulus contrast and constrains movement
 
+**Follow-up (2026-09-19):** Added an explicit unit-normalized session/trial parameter manifest and strict completeness mode. Rendering now accepts supplied phase, angular sigma, frequency, orientation, signed starting position, wheel radius/gain and field of view; checks side/contrast against ALF; records effective parameters, source evidence and manifest hash; and scales patch support with sigma. Unknown/missing IDs and malformed parameters fail rather than silently mispairing trials. Python compilation and code inspection passed; no tests were written. **Empirical validation remains open:** no measured session manifest was available, raw-unit/phase/clock conversions are not inferred, and replay fidelity is still explicitly unverified. See the D05 manifest contract in the stimulus specification.
+
 **Status (2026-09-16): PARTIALLY FIXED** - Contrast, outward motion, physical-reference gain, and recorded replay parameters are implemented. Session-specific calibration and reconstruction fidelity remain unverified.
 
 **P1 · Confirmed implementation; research impact needs validation.** [Grating creation](../src/visual_stim_gen.py#L126), [movement clamp](../src/visual_stim_gen.py#L219), [trial rendering](../src/visual_stim_gen.py#L283).
@@ -128,7 +130,9 @@ Contrast values select the side but never scale the patch, so zero/low/high cont
 
 ### D06 — Replay timing, invalid trials, and output handling are fragile
 
-**Status (2026-09-16): PARTIALLY FIXED** - Fixed frame timing, required-event validation, parent directories, writer cleanup, extraction argument validation, and incomplete-decoding detection. Generator-side verification/publication of completed outputs remains open.
+**Follow-up (2026-09-19):** Reviewed the existing staged replay and atomic feature-output changes. Extraction now also checks decoded dimensions against the manifest canvas and session timestamps against stimulus onset/offset, rejects unsupported sample rates before model initialization, and requires positive integer batch sizes. Python compilation and code inspection passed; no tests were written. Video/CLIP execution was not repeated: the local `.venv` points to an unavailable Python interpreter.
+
+**Status (2026-09-16): FIXED** - Replay sessions are staged and published by directory rename after MP4 decoding verifies FPS, dimensions, and frame count. Input-invalid trials are distinguished from output failures. Offset-equal frames caused by floating-point rounding are excluded. Extraction checks manifest frame counts/FPS against sidecars and decoded videos, and validates feature archives before replacement using unique temporary files with cleanup. Python compilation, CLI help, code inspection, and manual short-video rendering/decoding were used; no tests were written. Full production regeneration was not run.
 
 **P1 · Confirmed.** [Video generation](../src/visual_stim_gen.py#L294); [output directory](../src/visual_stim_gen.py#L399); [frame sampling](../src/prepare_visual_stim.py#L21).
 
@@ -138,7 +142,9 @@ Frame count uses `max(stim_off - stim_on, 1.0)`, while frame contents use `linsp
 
 ### D07 — Session selection differs across preparation stages
 
-**Status (2026-09-16): PARTIALLY FIXED** - Replay reads the EID file. Extraction still slices [9:n_sessions]; shared selection and stage-completion reporting remain open.
+**Follow-up (2026-09-19):** Preparation wrappers now accept the shared named selection arguments directly while preserving their positional count/EID/manifest interface. The reporting helper materializes iterable EID selections before processing so reporting cannot consume them. Selection CLI checks confirmed first-N selection and rejection of zero counts; Python compilation and wrapper Bash syntax checks passed. No production sessions were processed.
+
+**Status (2026-09-16): FIXED** - Generation, extraction, aligned preparation, and batch caching use `utils.sessions`: `--eid`, `--eids-file` (or `VINED_EIDS_FILE`), and `--n-sessions`/`--n_sessions`. Defaults select all of `data/eids.txt`; count 1 without an EID selects its first entry. Empty/duplicate/invalid EIDs and invalid counts are rejected. Each stage reports requested, completed, skipped, failed, and unprocessed EIDs. Ordinary failures continue to the next EID and yield a nonzero final exit; interrupts propagate. The cache wrapper no longer defaults to test sessions. Manifest selection, CLI help, and Bash syntax were checked; full multi-session production was not run.
 
 **P1 · Confirmed.** [Extraction selection](../src/prepare_visual_stim.py#L236); [data selection](../src/prepare_data.py#L37); [replay selection](../src/visual_stim_gen.py#L455); [cache wrapper](../script/run_create_dataset.sh#L11).
 
@@ -188,7 +194,7 @@ Loading catches `BaseException`, including interrupts, and returns `skip=True`. 
 
 ### D12 — Trial provenance and split reproducibility are incomplete
 
-**Status (2026-09-16): PARTIALLY FIXED** - Original trial IDs and session intervals now survive dataset splits and caches. Stable per-session split generation and independence checks remain open.
+**Status (2026-09-19): FIXED (implementation)** - Splits use an EID-derived seed and keep connected overlapping physical intervals together. Aligned rows retain split membership and provenance IDs; provenance records parameters, original IDs/intervals, rejection IDs, neuron ordering, feature hashes, and source hashes. `split_independence.json` reports configured train/test session and subject overlap, with missing sessions explicitly unverified. Block/subject independence is not claimed for within-session trial splits. Real-session regeneration remains pending.
 
 **P1 · Confirmed; independence is a research risk.** [Partitioning](../src/prepare_data.py#L155); [dataset schema](../src/utils/dataset_utils.py#L57).
 
@@ -198,7 +204,7 @@ Original trial IDs and the computed `intervals` are not saved. A single process-
 
 ### D13 — Cache reruns can retain stale samples and mix preprocessing versions
 
-**Status (2026-09-16): PARTIALLY FIXED** - Legacy visual caches lacking identity/validity metadata are rejected. Full preprocessing hashes, exact-file manifests, and stale-cache-safe publication remain open.
+**Status (2026-09-19): FIXED (implementation)** - Cache generation writes immutable generation directories and atomically publishes each session manifest after checking complete split membership. Readers load only manifest-listed files and validate schema, preprocessing source/package versions, options, aligned-file hashes, sample hashes, identities, and shapes. Old/unreferenced files are ignored; legacy caches must be rebuilt. Publication is atomic per session, not across a multi-session run.
 
 **P1 · Confirmed mechanism.** [Cache writes](../src/create_dataset.py#L123); [cache discovery](../src/loader/base.py#L356); [cached item loading](../src/loader/base.py#L601).
 
@@ -536,15 +542,13 @@ The `--use_lfp` flag activates an optional expensive preprocessing path through 
 
 ## 6. Pipeline, packaging, operational and security risks
 
-### P01 — No checked-in CI or focused correctness regression suite
+### P01 ? Validation policy
 
-**Status (2026-09-16): POLICY CHANGED / CI OPEN** - The repository prohibits writing tests. Use code inspection, existing checks, and manual verification; the historical recommendation to add a test suite is superseded by [AGENTS.md](../AGENTS.md). CI remains open.
+**Status (2026-09-19): SUPERSEDED BY REPOSITORY POLICY** - The repository prohibits writing tests and adding CI/CD automation; see [AGENTS.md](../AGENTS.md). Validation uses code inspection, existing local checks, and manual verification.
 
-**P1 · Confirmed repository gap.** [Environment checks](../script/check_environment.py), [launcher checks](../script/check_launchers.py), [existing validation](environment-validation.md).
+Existing [environment checks](../script/check_environment.py), [launcher checks](../script/check_launchers.py), and [validation notes](environment-validation.md) remain available. Their passes do not establish production trainer, checkpoint, or real-session correctness.
 
-The tracked tree contains no GitHub Actions, GitLab CI, Jenkins, or Azure pipeline definition, and no dedicated correctness test suite. Existing scripts provide useful environment, codec, CLI, launcher, and small model checks, but do not exercise the production trainer, checkpoint restoration, temporal pairing, singleton batches, or complete evaluation. Their synthetic model example uses two same-session samples and explicit masks, which misses several defects above. External CI could exist; it was not inspected.
-
-**Action:** automate lightweight offline checks and add focused regression cases from section 9. Keep optional dataset/GPU/Slurm checks separate, with explicit prerequisites and timeouts.
+**Action:** use the existing local checks and manually verify relevant behavior without creating tests or automated pipelines.
 
 ### P02 — Package installation is incomplete without the checkout workflow
 
@@ -576,17 +580,15 @@ Slurm account/partition values remain site-specific. Ray startup relies on fixed
 
 **Action:** validate argument counts/types, use a site configuration, check service readiness, propagate worker failures, and clean up background services. Exercise one short real allocation before a search or long distributed run.
 
-### P05 — Dependency reproducibility exists but is not enforced automatically
+### P05 ? Dependency and model reproducibility
 
-**Status (2026-09-16): PARTIALLY FIXED** - The existing freeze-helper fix remains resolved, and feature archives record the CLIP model name. Artifact revisions and automated dependency controls remain open.
+**Status (2026-09-19): IMPLEMENTED WITH MANUAL DEPENDENCY REVIEW** - CLIP model and processor load from one immutable Hub snapshot. Feature archives record its SHA, artifact hashes, processor configuration, sampling/normalization, package versions, and source/replay hashes. Dependency installation and upgrades use the documented platform constraints and local checks. Automated dependency management is excluded by repository policy.
 
-**P2 · Confirmed process gap.** [Requirements](../requirements.txt), [Windows constraints](../constraints-windows-py310.txt), [Linux constraints](../constraints-linux-py310.txt), [freeze helper](../script/freeze_environment.py#L10).
+**P2 ? Reproducibility controls.** [Requirements](../requirements.txt), [Windows constraints](../constraints-windows-py310.txt), [Linux constraints](../constraints-linux-py310.txt), [freeze helper](../script/freeze_environment.py), [provenance documentation](data-provenance.md).
 
-Platform constraints and documented installation checks are useful existing controls. Installing only `requirements.txt` leaves numerous versions unconstrained, and there is no automated compatibility/advisory review or hash-verified installation policy in the tracked pipeline. The freeze helper excludes the old `neds` distribution name rather than the current `vined` name, so future inventories can include the local project. CLIP model revisions and preprocessing versions are not recorded alongside features.
+The freeze helper excludes both legacy local distribution names, `neds` and `vined`. Installing only `requirements.txt` leaves some versions unconstrained; use the matching constraints file. Real-model extraction remains unverified, and version pinning does not establish a vulnerability-free environment or fully hash-locked installation.
 
-**P02 follow-up (2026-09-16):** the freeze helper now excludes both legacy local distribution names, `neds` and `vined`. The remaining process and model-revision findings above are unchanged.
-
-**Action:** enforce the documented constraints in CI, review intentional upgrades, distinguish local project metadata from dependency locks, and pin/record the actual CLIP artifact revision. This audit does not assert specific dependency CVEs or recommend blind upgrades.
+**Action:** review intentional upgrades manually, keep constraints consistent, run the existing local environment checks, and supply the recorded CLIP commit SHA when reproducing extraction.
 
 ### S01 — Dataset and checkpoint deserialization assumes trusted artifacts
 
@@ -725,7 +727,7 @@ Each interval scans the full spike-time array. Visual binning constructs 768 sep
 
 ### F06 — CLIP extraction repeatedly initializes models and materializes videos
 
-**Status (2026-09-16): PARTIALLY FIXED** - Sampling handles non-divisible FPS and verifies decoded frame counts. Encoder reuse, streaming, and avoiding the lossy video intermediate remain open.
+**Status (2026-09-19): FIXED (implementation); real-session benchmarking pending** - One pinned CLIP model/processor is reused across sessions. Extraction yields bounded image batches, spools numeric features/times/masks to disk, and streams them into the existing schema-v2 NPZ archive before atomic publication. The optional `--frame-source render` path reconstructs only sampled frames from current-renderer parameters and saved wheel deltas, bypassing MP4; generation supports `--no-video`. Video input remains the default and retains full decode validation. Both paths use the same sampling grid and CLIP preprocessing, but lossless-rendered and lossy-decoded pixels/features are not expected to be identical. See [F06 usage](visual-extraction.md). No measured speedup or real-session equivalence is claimed.
 
 **P2 · Confirmed.** [Extractor lifecycle](../src/prepare_visual_stim.py#L112); [outer session loop](../src/prepare_visual_stim.py#L249); [frame buffering](../src/prepare_visual_stim.py#L34).
 

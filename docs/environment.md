@@ -10,6 +10,8 @@ external prerequisites. See the [README prerequisites](../README.md#prerequisite
 
 ## Install
 
+See [data and model provenance](data-provenance.md) for revision-pinned CLIP extraction, dataset migration, and cache compatibility checks. Install with the matching platform constraints file and run the local checks below. Dependency updates are reviewed manually.
+
 For an existing environment with an editable `vined` or `neds` installation,
 uninstall that distribution using its venv Python (`python -m pip uninstall
 vined neds`), then install the requirements below without an editable-install
