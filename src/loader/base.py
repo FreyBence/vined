@@ -1,5 +1,7 @@
 import os
 from utils.paths import visual_dir
+from utils.cache_manifest import cache_records
+from utils.provenance import file_hash
 import pickle
 from typing import Dict, List, Optional, Tuple
 
@@ -354,18 +356,7 @@ class LengthStitchGroupedSampler(Sampler):
 
 
 def get_npy_files(data_dir, mode, eids):
-    assert type(eids) == list
-    # get all the npy files in the data directory
-    data_dir = os.path.join(data_dir, mode)
-    data_paths = [os.path.join(data_dir, f) for f in os.listdir(data_dir)]
-    # only remain files with .npy extension
-    data_paths = [f for f in data_paths if f.endswith('.npy')]
-    # Sort the data paths first by eid then by sample index
-    data_paths.sort(key=lambda x: (os.path.basename(x).split('_')[0], int(os.path.basename(x).split('_')[1].split('.')[0])))
-    # filter by eid
-    # the path contains one of the eids
-    data_paths = [f for f in data_paths if any([eid in f for eid in eids])]
-    return data_paths
+    return [record["path"] for record in cache_records(data_dir, mode, eids)]
 
 
 class BaseDataset(torch.utils.data.Dataset):
@@ -391,7 +382,14 @@ class BaseDataset(torch.utils.data.Dataset):
     ) -> None:
 
         if data_dir is not None:
-            self.data_paths = get_npy_files(data_dir, mode, eids)
+            options = dict(target=target, pad_value=pad_value, max_time_length=max_time_length,
+                           max_space_length=max_space_length, bin_size=bin_size,
+                           pad_to_right=pad_to_right, sort_by_depth=sort_by_depth,
+                           sort_by_region=sort_by_region, load_meta=load_meta,
+                           brain_region=brain_region, dataset_name=dataset_name, stitching=stitching)
+            self.cache_records = cache_records(data_dir, mode, eids, options)
+            self.data_paths = [record["path"] for record in self.cache_records]
+            self.verified_cache = set()
         else:
             self.data_paths = None
             self.dataset = dataset
@@ -592,7 +590,17 @@ class BaseDataset(torch.utils.data.Dataset):
         
     def __getitem__(self, idx):
         if self.data_paths is not None:
+            record = self.cache_records[idx]
+            if idx not in self.verified_cache:
+                if file_hash(record["path"]) != record["sha256"]:
+                    raise ValueError("Cache file hash mismatch; rebuild caches")
+                self.verified_cache.add(idx)
             data = np.load(self.data_paths[idx], allow_pickle=True).item()
+            if (data["eid"] != record["eid"] or int(data["trial_id"]) != record["trial_id"]
+                    or data.get("split") != record["split"]
+                    or data.get("provenance_id") != record["provenance_id"]
+                    or {key: list(np.asarray(value).shape) for key, value in data.items()} != record["shapes"]):
+                raise ValueError("Cached identity/shape differs from manifest")
             required = {"trial_id", "intervals", "vision-clip_valid"}
             if not required.issubset(data):
                 raise ValueError("Legacy visual cache; rebuild from schema-v2 aligned data")
@@ -606,5 +614,4 @@ class BaseDataset(torch.utils.data.Dataset):
         elif "ibl" in self.dataset_name:
             return self._preprocess_ibl_data(self.dataset[idx])
         else:
-            return self._preprocess_h5_data(self.dataset, idx)  
- 
+            return self._preprocess_h5_data(self.dataset, idx)

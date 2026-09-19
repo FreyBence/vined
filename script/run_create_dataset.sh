@@ -8,8 +8,5 @@ if [[ -n "${SLURM_JOB_ID:-}" ]]; then
 else
     source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/environment.sh"
 fi
-while IFS= read -r eid || [[ -n "$eid" ]]; do
-    eid="${eid%$'\r'}"
-    [[ -z "$eid" ]] && continue
-    bash "$REPO_ROOT/script/create_dataset.sh" 1 "$eid"
-done < "$REPO_ROOT/data/test_eids.txt"
+# Shared --eid / --eids-file / --n-sessions arguments; defaults to data/eids.txt.
+"$PYTHON" -m utils.sessions --cache "$@"

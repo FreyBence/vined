@@ -2,7 +2,12 @@ import argparse
 import logging
 import os
 import sys
+import json
+import tempfile
 from pathlib import Path
+from utils.paths import visual_dir, REPO_ROOT
+from utils.provenance import file_hash, fingerprint, source_hashes, split_trials, write_json
+from utils.sessions import add_session_arguments, select_sessions, run_sessions, SkipSession
 
 import numpy as np
 import pandas as pd
@@ -21,7 +26,6 @@ from utils.ibl_data_utils import (
 
 logging.basicConfig(level=logging.INFO)
 
-np.random.seed(42)
 
 # ------
 # SET UP
@@ -30,20 +34,12 @@ ap = argparse.ArgumentParser()
 ap.add_argument("--base_path", type=str, default="EXAMPLE_PATH")
 ap.add_argument("--huggingface_org", type=str, default="FreyBence")
 ap.add_argument("--use_lfp", action="store_false")
-ap.add_argument("--n_sessions", type=int, default=1)
+add_session_arguments(ap)
 ap.add_argument("--n_workers", type=int, default=1)
-ap.add_argument("--eid", type=str)
+ap.add_argument("--split-seed", type=int, default=42)
 args = ap.parse_args()
 
-if args.n_sessions == 1:
-    if args.eid is None:
-        raise ValueError("Session EID is required.")
-    else:
-        eids = [args.eid]
-else:
-    PROJ_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    with open(f"{PROJ_DIR}/data/eids.txt") as file:
-        eids = [line.rstrip() for line in file][:args.n_sessions]
+eids = select_sessions(args.eid, args.eids_file, args.n_sessions)
 
 params = {
     "interval_len": 2,
@@ -68,8 +64,16 @@ one = ONE(
     cache_dir=args.base_path
 )
 
-final_eids = []
-for eid_idx, eid in enumerate(eids):
+def prepare_session(eid):
+    destination = Path(args.base_path) / f"{eid}_aligned"
+    if destination.exists():
+        raise FileExistsError(f"Use a fresh data root; aligned dataset exists: {destination}")
+    feature_path = visual_dir() / f"{eid}_visual_clip.npz"
+    feature_sha256 = file_hash(feature_path)
+    with np.load(feature_path, allow_pickle=False) as features:
+        if "provenance" not in features.files:
+            raise ValueError("Regenerate CLIP features with revision provenance before preparing data")
+        visual_provenance = json.loads(features["provenance"].item())
 
     # if os.path.exists(f"{args.base_path}/{eid}_aligned"):
     #     logging.info(f"The dataset {eid}_aligned already exists.")
@@ -82,8 +86,7 @@ for eid_idx, eid in enumerate(eids):
     )
 
     if neural_dict is None:
-        logging.info(f"Skip EID {eid} Due to Missing Spike Data!")
-        continue
+        raise SkipSession("Missing spike data")
 
     regions, beryl_reg = list_brain_regions(neural_dict, **params)
     region_cluster_ids = select_brain_regions(neural_dict, beryl_reg, regions, **params)
@@ -151,14 +154,14 @@ for eid_idx, eid in enumerate(eids):
             trial_index=trials_dict["trials_df"].index,
         )
     except ValueError as e:
-        logging.info(f"Skip EID {eid} due to error: {e}")
-        continue
+        raise ValueError(f"Alignment failed for {eid}: {e}") from e
 
     # Data partition (train: 0.7 val: 0.1 test: 0.2)
     num_trials = len(align_bin_spikes)
-    trial_idxs = np.random.choice(np.arange(num_trials), num_trials, replace=False)
 
     trial_mask = np.array(target_mask).astype(bool).tolist()
+    rejected_trial_ids = trials_dict["trials_df"].loc[
+        ~np.asarray(trial_mask), "original_trial_id"].to_numpy(dtype=np.int64).tolist()
     trials_dict['trials_df'] = trials_dict['trials_df'][trial_mask]
     intervals = np.vstack([
         trials_dict['trials_df'][params["align_time"]] + params["time_window"][0],
@@ -166,9 +169,29 @@ for eid_idx, eid in enumerate(eids):
     ]).T
     original_trial_ids = trials_dict["trials_df"]["original_trial_id"].to_numpy(dtype=np.int64)
 
-    train_idxs = trial_idxs[:int(0.7*num_trials)]
-    val_idxs = trial_idxs[int(0.7*num_trials):int(0.8*num_trials)]
-    test_idxs = trial_idxs[int(0.8*num_trials):]
+    splits, split_metadata = split_trials(eid, original_trial_ids, intervals, args.split_seed)
+    train_idxs, val_idxs, test_idxs = (splits[name] for name in ("train", "val", "test"))
+    if file_hash(feature_path) != feature_sha256:
+        raise ValueError("Visual features changed during alignment; retry with stable inputs")
+    provenance = dict(schema_version=1, eid=eid, subject=str(meta_dict["subject"]),
+                      params=params, split=split_metadata,
+                      visual_sha256=feature_sha256, visual=visual_provenance,
+                      sources=source_hashes("src/prepare_data.py", "src/utils/ibl_data_utils.py",
+                                            "src/utils/dataset_utils.py", "src/utils/visual_data.py",
+                                            "src/utils/provenance.py"),
+                      selection=dict(valid_trial_ids=original_trial_ids.tolist(),
+                                     rejected_trial_ids=rejected_trial_ids,
+                                     intervals=intervals.tolist(),
+                                     reaction_time_seconds=[0., 10.], exclude_nochoice=True,
+                                     max_trial_length_seconds=10.,
+                                     missing_events_excluded=["stimOn_times", "choice", "feedback_times",
+                                                              "probabilityLeft", "firstMovement_times", "feedbackType"],
+                                     visual_policy="at least one valid aligned visual bin",
+                                     firing_rate_policy="session-level QC before splitting",
+                                     firing_rate_threshold_hz=1/params["fr_thresh"]),
+                      neuron_order={key: [str(value) for value in meta_dict[key]] for key in
+                                    ("uuids", "cluster_regions")})
+    provenance["fingerprint"] = fingerprint(provenance)
 
     train_beh, val_beh, test_beh = {}, {}, {}
     for beh in align_bin_beh.keys():
@@ -215,14 +238,34 @@ for eid_idx, eid in enumerate(eids):
     logging.info(dataset)
 
     # upload_dataset(dataset, org=args.huggingface_org, eid=f"{eid}_aligned")
-    dataset.save_to_disk(f"{args.base_path}/{eid}_aligned")
+    for name in dataset:
+        dataset[name] = dataset[name].add_column("split", [name] * len(dataset[name]))
+        dataset[name] = dataset[name].add_column("provenance_id", [provenance["fingerprint"]] * len(dataset[name]))
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix=f".{eid}-", dir=destination.parent) as temporary:
+        staging = Path(temporary) / "dataset"
+        dataset.save_to_disk(str(staging))
+        write_json(staging / "provenance.json", provenance)
+        staging.rename(destination)
 
     logging.info(f"Downloaded EID: {eid}")
-    logging.info(f"Progress: {eid_idx+1} / {len(eids)} sessions downloaded")
 
-    final_eids.append(eid)
 
-logging.info(f"Successfully downloaded EIDs: ")
+run_sessions(eids, prepare_session, "aligned-data")
 
-for eid in final_eids:
-    print(eid)
+# Report session and subject overlap separately from within-session trial splits.
+groups = {}
+for name in ("train", "test"):
+    selected = select_sessions(eids_file=REPO_ROOT / f"data/{name}_eids.txt")
+    subjects, unknown = set(), []
+    for eid in selected:
+        path = Path(args.base_path) / f"{eid}_aligned" / "provenance.json"
+        if path.exists():
+            subjects.add(json.loads(path.read_text(encoding="utf-8"))["subject"])
+        else:
+            unknown.append(eid)
+    groups[name] = dict(eids=selected, subjects=sorted(subjects), unverified_eids=unknown)
+write_json(Path(args.base_path) / "split_independence.json", dict(
+    groups=groups, shared_sessions=sorted(set(groups["train"]["eids"]) & set(groups["test"]["eids"])),
+    shared_subjects=sorted(set(groups["train"]["subjects"]) & set(groups["test"]["subjects"])),
+    complete=not any(g["unverified_eids"] for g in groups.values())))

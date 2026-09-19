@@ -18,32 +18,14 @@ else
     source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/environment.sh"
 fi
 
-echo "${TMPDIR:-}"
-
-num_sessions=${1:-20}  # Default to 20 if not provided
-eid=${2:-"None"}      # Default to "None" if not provided
-
-user_name=$(whoami)
-video_path=${VINED_REPLAY_DIR}
-base_path=${VINED_VISUAL_DIR}
-
-if ! [[ "$num_sessions" =~ ^[0-9]+$ ]]; then
-    echo "Error: num_sessions must be an integer"
-    exit 1
-fi
-
-if [ "$num_sessions" -eq 1 ]; then
-    echo "Download data for single session"
-    if [ "$eid" = "None" ]; then
-        echo "Error: eid must be provided for single session"
-        exit 1
-    fi
+# Optional positional arguments: count, EID, manifest. Defaults select all EIDs.
+selection=()
+if [[ "${1:-}" == --* ]]; then
+    selection=("$@")
 else
-    echo "Download data for multiple sessions"
-    eid="None"
+[[ -n "${1:-}" ]] && selection+=(--n-sessions "$1")
+[[ -n "${2:-}" && "$2" != "None" ]] && selection+=(--eid "$2")
+[[ -n "${3:-}" ]] && selection+=(--eids-file "$3")
 fi
 
-"$PYTHON" src/prepare_visual_stim.py --n_sessions $num_sessions \
-                           --eid $eid \
-                           --video_dir "${video_path}" \
-                           --output_dir "${base_path}"
+"$PYTHON" src/prepare_visual_stim.py "${selection[@]}" --video_dir "${VINED_REPLAY_DIR}" --output_dir "${VINED_VISUAL_DIR}"
