@@ -19,13 +19,16 @@ from tqdm import tqdm
 from transformers import CLIPModel, CLIPProcessor
 from huggingface_hub import HfApi, snapshot_download
 from utils.provenance import file_hash, source_hashes, package_versions
+from utils.replay_contract import (validate_manifest, validate_contract, validate_record,
+                                   validate_sidecar, validate_legacy_adapter)
 
 
 def iter_frame_batches(
     video_path,
     sample_fps=5,
     *, eid=None, trial_id=None, expected_frames=None, expected_fps=None,
-    expected_canvas=None, stim_on=None, stim_off=None, batch_size=32, render_record=None
+    expected_canvas=None, stim_on=None, stim_off=None, batch_size=32, render_record=None,
+    replay_contract=None, trial_record=None
 ):
     """
     Yield bounded image batches with their original timestamps and validity.
@@ -35,7 +38,14 @@ def iter_frame_batches(
         raise ValueError("batch_size must be a positive integer")
     if not np.isfinite(sample_fps) or sample_fps <= 0:
         raise ValueError("sample_fps must be positive")
+    validate_contract(replay_contract, direct=render_record is not None,
+                      check_dependencies=render_record is not None)
+    validate_legacy_adapter(replay_contract)
+    validate_record(trial_record, replay_contract)
+    if render_record is not None and render_record != trial_record:
+        raise ValueError("Direct-render parameters differ from the validated trial record")
     with np.load(Path(video_path).with_suffix(".npz"), allow_pickle=False) as data:
+        validate_sidecar(data, replay_contract, trial_record, eid)
         times = data["frame_times"].copy()
         valid = data["valid"].copy()
         wheel_delta = data["wheel_delta"].copy() if render_record is not None else None
@@ -214,6 +224,8 @@ def main(args, encoder=None):
     video_paths = sorted(video_dir.glob("*.mp4" if frame_source == "video" else "trial_*.npz"))
 
     manifest = json.loads((video_dir / "replay_metadata.json").read_text(encoding="utf-8"))
+    contract = validate_manifest(manifest, direct=frame_source == "render")
+    validate_legacy_adapter(contract)
     if manifest["eid"] != args.eid:
         raise ValueError("Replay manifest EID mismatch")
     if not np.isfinite(manifest["fps"]) or not 0 < args.sample_fps <= manifest["fps"]:
@@ -234,9 +246,6 @@ def main(args, encoder=None):
         raise ValueError("Replay inputs do not match completed manifest")
     if not len(expected_ids):
         raise SkipSession("Replay manifest contains no valid trials")
-    if frame_source == "render":
-        if manifest.get("renderer_sha256") != file_hash(Path(__file__).with_name("visual_stim_gen.py")):
-            raise ValueError("Direct rendering requires replay metadata from the current renderer")
     trial_records = {r["trial_id"]: r for r in manifest["trials"] if r["valid"]}
     if encoder is None:
         encoder = load_encoder(args)
@@ -244,6 +253,9 @@ def main(args, encoder=None):
     provenance = dict(encoder_provenance,
         replay_manifest_sha256=file_hash(video_dir / "replay_metadata.json"),
         frame_source=frame_source,
+        replay_contract_fingerprint=contract["fingerprint"],
+        backend=contract["backend"], scene_profile=contract["scene_profile"],
+        output_space=contract["output_space"], source_time_kind=contract["source_time_kind"],
         renderer_sha256=manifest.get("renderer_sha256"))
     started = perf_counter()
     output_dir = Path(args.output_dir)
@@ -261,6 +273,7 @@ def main(args, encoder=None):
                     expected_frames=record["frame_count"], expected_fps=manifest["fps"],
                     expected_canvas=canvas, stim_on=record["stim_on"], stim_off=record["stim_off"],
                     batch_size=args.batch_size,
+                    replay_contract=contract, trial_record=record,
                     render_record=record if frame_source == "render" else None)
                 count = 0
                 with closing(batches):

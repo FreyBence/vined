@@ -16,7 +16,10 @@ import numpy as np
 
 from utils.paths import dataset_dir, replay_dir
 from utils.sessions import add_session_arguments, select_sessions, run_sessions
-from utils.stimulus_parameters import load_stimulus_parameters, resolve_parameters
+from utils.stimulus_parameters import (load_stimulus_parameters, resolve_parameters,
+                                      resolved_evidence, alf_table_fingerprint, UNITS)
+from utils.replay_contract import (legacy_contract, legacy_sidecar, record_fingerprint,
+                                   validate_manifest, validate_legacy_adapter)
 
 FPS = 30
 VIDEO_WIDTH = VIDEO_HEIGHT = 720
@@ -40,11 +43,13 @@ class ReplayConfig:
     phase_seed: int = 0
 
     def __post_init__(self):
-        for name in ("wheel_radius_mm", "gain_deg_per_mm", "horizontal_fov_deg",
+        for name in ("wheel_radius_mm", "horizontal_fov_deg",
                      "initial_azimuth_deg", "spatial_frequency_cpd", "sigma_px"):
             value = getattr(self, name)
             if not np.isfinite(value) or value <= 0:
                 raise ValueError(f"{name} must be finite and positive")
+        if not np.isfinite(self.gain_deg_per_mm) or self.gain_deg_per_mm == 0:
+            raise ValueError("gain_deg_per_mm must be finite and nonzero")
         if not np.isfinite(self.orientation_deg):
             raise ValueError("orientation_deg must be finite")
 
@@ -58,13 +63,26 @@ class ReplayConfig:
 
 
 def validate_wheel(timestamps, positions):
+    """Normalize equal-time samples to their last recorded position.
+
+    Equal timestamps cannot resolve within-timestamp motion. Preserve acquisition
+    order and retain the final position; never sort backward timestamps or invent
+    time offsets to make them increasing.
+    """
     timestamps = np.asarray(timestamps, dtype=float)
     positions = np.asarray(positions, dtype=float)
     if (timestamps.ndim != 1 or positions.shape != timestamps.shape
             or len(timestamps) < 2 or not np.all(np.isfinite(timestamps))
-            or not np.all(np.isfinite(positions))
-            or not np.all(np.diff(timestamps) > 0)):
-        raise ValueError("Wheel arrays must be finite, matching 1-D arrays with increasing timestamps")
+            or not np.all(np.isfinite(positions))):
+        raise ValueError("Wheel arrays must be finite, matching 1-D arrays with at least two samples")
+    differences = np.diff(timestamps)
+    if np.any(differences < 0):
+        raise ValueError("Wheel timestamps go backward; cannot safely reorder samples")
+    if np.any(differences == 0):
+        keep = np.r_[differences != 0, True]
+        timestamps, positions = timestamps[keep], positions[keep]
+    if len(timestamps) < 2:
+        raise ValueError("Wheel requires at least two distinct timestamps")
     return timestamps, positions
 
 
@@ -134,7 +152,7 @@ def trial_parameters(trial, stim_off):
 
 def generate_trial_video(out_dir, trial_index, trial, wheel_timestamps,
                          wheel_position, stim_off, *, config=ReplayConfig(), eid="",
-                         parameters=None, write_video=True):
+                         parameters=None, parameter_evidence=None, write_video=True, replay_contract=None):
     """Write onset-to-offset video and exact session timestamps (offset excluded).
 
     Invalid input raises ValueError before any video is written. Phase is a
@@ -147,6 +165,11 @@ def generate_trial_video(out_dir, trial_index, trial, wheel_timestamps,
     except ValueError as exc:
         raise InvalidTrial(str(exc)) from exc
     parameters = parameters or {}
+    contract = replay_contract if replay_contract is not None else legacy_contract(FPS)
+    validate_legacy_adapter(contract)
+    if contract["video_mapping"]["fps"] != FPS:
+        raise ValueError("Legacy renderer FPS differs from its replay contract")
+    input_config = config
     if "contrast" in parameters and not np.isclose(parameters["contrast"], contrast, rtol=0, atol=1e-6):
         raise ValueError(f"Trial {trial_index}: manifest contrast disagrees with ALF")
     azimuth = parameters.get("initial_azimuth_deg", config.initial_azimuth_deg * (-1 if side == "left" else 1))
@@ -156,6 +179,7 @@ def generate_trial_video(out_dir, trial_index, trial, wheel_timestamps,
         initial_azimuth_deg=abs(azimuth),
         spatial_frequency_cpd=parameters.get("spatial_frequency_cpd", config.spatial_frequency_cpd),
         sigma_px=parameters.get("sigma_deg", config.sigma_px / config.pixels_per_degree) * config.pixels_per_degree,
+        gain_deg_per_mm=parameters.get("gain_deg_per_mm", config.gain_deg_per_mm),
         orientation_deg=parameters.get("orientation_deg", config.orientation_deg))
     relative_times = np.arange(int(np.ceil((stim_off - stim_on) * FPS))) / FPS
     relative_times = relative_times[stim_on + relative_times < stim_off]
@@ -163,7 +187,8 @@ def generate_trial_video(out_dir, trial_index, trial, wheel_timestamps,
     wheel_delta = interpolate_wheel(wheel_timestamps, wheel_position,
                                     np.minimum(frame_times, freeze)) - endpoints[0]
     seed = hashlib.sha256(f"{config.phase_seed}:{eid}:{trial_index}".encode()).digest()
-    phase = parameters.get("phase_rad", float(np.random.default_rng(int.from_bytes(seed[:8], "little")).uniform(0, 2*np.pi)))
+    phase = (parameters["phase_rad"] if "phase_rad" in parameters else
+             float(np.random.default_rng(int.from_bytes(seed[:8], "little")).uniform(0, 2*np.pi)))
     # Retain four sigma on each side rather than truncating larger measured patches.
     patch_size = max(STIM_RADIUS * 2, 2 * int(np.ceil(4 * config.sigma_px)))
     if patch_size > 4 * max(VIDEO_WIDTH, VIDEO_HEIGHT):
@@ -189,20 +214,62 @@ def generate_trial_video(out_dir, trial_index, trial, wheel_timestamps,
         finally:
             writer.release()
         verify_video(output_path, len(frame_times))
-    np.savez_compressed(output_path.with_suffix(".npz"),
-                        frame_times=frame_times, relative_times=relative_times,
-                        wheel_delta=wheel_delta,
-                        valid=np.ones(len(frame_times), dtype=bool),
-                        trial_id=trial_index, eid=eid)
-    return dict(trial_id=trial_index, valid=True, side=side, contrast=contrast,
+    effective = dict(wheel_radius_mm=config.wheel_radius_mm, gain_deg_per_mm=config.gain_deg_per_mm,
+                     horizontal_fov_deg=config.horizontal_fov_deg, initial_azimuth_deg=azimuth,
+                     spatial_frequency_cpd=config.spatial_frequency_cpd,
+                     sigma_deg=config.sigma_px / config.pixels_per_degree,
+                     orientation_deg=config.orientation_deg, phase_rad=phase, contrast=contrast)
+    fallback_reasons = {
+        "wheel_radius_mm": "CLI/config radius; session rig calibration unavailable",
+        "gain_deg_per_mm": "CLI/config signed gain; session contingency not recovered",
+        "horizontal_fov_deg": "CLI/config linear field of view; session display mapping unverified",
+        "initial_azimuth_deg": "CLI/config magnitude with observed ALF side; initial angle not recovered",
+        "spatial_frequency_cpd": "CLI/config nominal frequency; no session applicability evidence",
+        "orientation_deg": "CLI/config orientation; no session applicability evidence",
+        "sigma_deg": "Legacy pixel sigma converted by approximate linear pixels/degree; not source sigma",
+        "phase_rad": "Observed task phase unavailable; deterministic synthetic phase",
+    }
+    provenance = {}
+    for field, value in effective.items():
+        origin = (parameter_evidence or {}).get(field)
+        if origin is None:
+            supplied = field in parameters
+            origin = dict(source_kind="session" if field == "contrast" or supplied else
+                          "synthetic" if field == "phase_rad" else "project_assumption",
+                          source="ALF original trial row" if field == "contrast" else
+                          "caller normalized parameters" if supplied else "ReplayConfig/CLI",
+                          original_value=value, original_unit=UNITS[field], normalized_unit=UNITS[field],
+                          conversion="identity", applicability="Legacy approximate renderer only",
+                          fallback_reason=None if field == "contrast" or supplied else fallback_reasons[field])
+            if field == "sigma_deg" and not supplied:
+                origin.update(original_value=input_config.sigma_px, original_unit="px",
+                              conversion="sigma_px / (720 / horizontal_fov_deg)")
+        provenance[field] = dict(origin, effective_value=value)
+    if "phase_rad" not in parameters:
+        provenance["phase_rad"]["synthetic_identity"] = dict(
+            phase_seed=config.phase_seed, eid=eid, original_trial_id=trial_index,
+            seed_input=f"{config.phase_seed}:{eid}:{trial_index}", sha256=seed.hex(),
+            algorithm="NumPy default_rng(first 8 SHA256 bytes, little endian).uniform(0, 2*pi)",
+            numpy_version=np.__version__)
+    record = dict(trial_id=trial_index, valid=True, side=side, contrast=contrast,
                 stim_on=stim_on, stim_off=float(stim_off), freeze=freeze,
                 freeze_source=freeze_source, phase_rad=phase, frame_count=len(frame_times),
                 effective_config=asdict(config), initial_azimuth_deg=azimuth,
-                parameter_sources={name: ("manifest" if name in parameters else "renderer_approximation")
-                                   for name in ("initial_azimuth_deg", "sigma_deg", "phase_rad",
-                                                "spatial_frequency_cpd", "orientation_deg")},
+                parameter_sources={name: item["source_kind"] for name, item in provenance.items()},
+                parameter_provenance=provenance,
+                backend_parameter_interpretation={
+                    "backend": "legacy_approximate_gabor",
+                    "phase": "Task phase used as +phase_rad in sine; not the pinned dynamic Bonsai shader conversion",
+                    "sigma": "sigma_deg mapped linearly to Gaussian pixels; not pinned aperture/blending semantics",
+                    "orientation": "orientation_deg rotates carrier; pinned reference logs but ignores task angle",
+                    "wheel": "Signed gain applied once; ALF sign and onset reference remain unverified against raw encoder"},
                 contrast_source="ALF (manifest cross-checked)" if "contrast" in parameters else "ALF",
                 patch_size_px=patch_size, video_written=write_video)
+    record.update(resolved_parameters=effective, contract_fingerprint=contract["fingerprint"])
+    record["record_fingerprint"] = record_fingerprint(record)
+    arrays = legacy_sidecar(contract, record, frame_times, relative_times, wheel_delta, eid)
+    np.savez_compressed(output_path.with_suffix(".npz"), **arrays)
+    return record
 
 
 def verify_video(path, expected_frames):
@@ -231,6 +298,9 @@ def _generate_session(one, eid, out_dir, config, parameter_session=None,
         return one.load_dataset(eid, dataset=name, collection="alf")
     trials = load("_ibl_trials.table.pqt")
     if parameter_session is not None:
+        identity = parameter_session.get("recovery", {}).get("alf_table_fingerprint")
+        if identity is not None and identity != alf_table_fingerprint(trials):
+            raise ValueError("Recovered parameter rows belong to a different ALF table; recover against this revision")
         unknown = set(parameter_session["trials"]) - {str(i) for i in range(len(trials))}
         if unknown:
             raise ValueError(f"Parameter manifest contains unknown trial IDs: {sorted(unknown)}")
@@ -240,24 +310,43 @@ def _generate_session(one, eid, out_dir, config, parameter_session=None,
                       else load("_ibl_trials.stimOff_times.npy"))
     if np.asarray(stim_off_times).shape != (len(trials),):
         raise ValueError("Stimulus offsets must match original trial rows")
-    wheel_timestamps, wheel_position = validate_wheel(
-        load("_ibl_wheel.timestamps.npy"), load("_ibl_wheel.position.npy"))
+    raw_timestamps = load("_ibl_wheel.timestamps.npy")
+    raw_positions = load("_ibl_wheel.position.npy")
+    wheel_timestamps, wheel_position = validate_wheel(raw_timestamps, raw_positions)
+    removed_samples = len(raw_timestamps) - len(wheel_timestamps)
+    if removed_samples:
+        print(f"{eid}: collapsed {removed_samples} duplicate wheel timestamps "
+              "by retaining the last recorded position at each timestamp")
     records = []
+    contract = legacy_contract(FPS)
     for row, (_, trial) in enumerate(trials.iterrows()):
         try:
             records.append(generate_trial_video(
                 out_dir, row, trial, wheel_timestamps, wheel_position,
                 stim_off_times[row], config=replace(config, **resolved[row][0]), eid=eid,
-                parameters=resolved[row][1], write_video=write_video))
+                parameters=resolved[row][1], parameter_evidence=resolved_evidence(parameter_session, row)[1],
+                write_video=write_video, replay_contract=contract))
         except InvalidTrial as exc:
-            records.append(dict(trial_id=row, valid=False, reason=str(exc)))
+            record = dict(trial_id=row, valid=False, reason=str(exc),
+                                resolved_parameters=dict(resolved[row][0], **resolved[row][1]),
+                                parameter_provenance=resolved_evidence(parameter_session, row)[1],
+                                contract_fingerprint=contract["fingerprint"])
+            record["record_fingerprint"] = record_fingerprint(record)
+            records.append(record)
             print(f"{eid} trial {row}: skipped ({exc})")
     metadata = dict(
-        eid=eid, collection="alf", clock="ALF synchronized session seconds (assumed)",
+        eid=eid, replay_contract=contract, collection="alf", clock="ALF synchronized session seconds (assumed)",
+        wheel_preprocessing=dict(
+            duplicate_timestamp_policy="last recorded position in acquisition order",
+            input_samples=len(raw_timestamps), output_samples=len(wheel_timestamps),
+            removed_duplicate_samples=removed_samples,
+            within_timestamp_motion="unresolved where duplicate timestamps occur"),
         dataset_revision=None, session_calibration_verified=False,
         reconstruction_fidelity="unverified",
         parameter_manifest_sha256=parameter_hash,
         parameter_manifest_entry=parameter_session,
+        parameter_loader_sha256=hashlib.sha256(
+            (Path(__file__).parent / "utils" / "stimulus_parameters.py").read_bytes()).hexdigest(),
         require_parameters=require_parameters,
         renderer_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         config=asdict(config), fps=FPS, canvas=[VIDEO_WIDTH, VIDEO_HEIGHT],
@@ -267,6 +356,7 @@ def _generate_session(one, eid, out_dir, config, parameter_session=None,
                      "Wheel coupling starts at stimulus onset",
                      "No pre-onset or post-offset observations generated"],
         trials=records)
+    validate_manifest(metadata)
     (out_dir / "replay_metadata.json").write_text(
         json.dumps(metadata, indent=2, allow_nan=False), encoding="utf-8")
 
@@ -288,16 +378,32 @@ def generate_visual_stimulus_for_session(one, eids, *, config=ReplayConfig(),
         destination = root / eid
         if destination.exists():
             raise FileExistsError(f"Use a fresh VINED_REPLAY_DIR; session exists: {destination}")
-        # The temporary tree is inside the replay root; only it is cleaned up.
-        with tempfile.TemporaryDirectory(prefix=".replay-", dir=root) as temporary:
-            staging = Path(temporary).resolve()
-            if staging.parent != root:
-                raise RuntimeError("Replay staging directory escaped the output root")
-            session = staging / eid
+        # Do not automatically delete generated trials on failure or interruption.
+        # Only complete sessions are published; unfinished work stays recoverable.
+        staging = Path(tempfile.mkdtemp(prefix=".replay-", dir=root)).resolve()
+        if staging.parent != root:
+            raise RuntimeError("Replay staging directory escaped the output root")
+        session = staging / eid
+        print(f"{eid}: generating in {session}; final output: {destination}", flush=True)
+        try:
             session.mkdir()
             _generate_session(one, eid, session, config, parameter_sessions.get(eid),
                               parameter_hash, require_parameters, write_video)
+            if destination.exists():
+                raise FileExistsError(f"Session appeared during generation: {destination}")
             session.rename(destination)
+        except BaseException:
+            # Include KeyboardInterrupt/SystemExit, but always propagate them.
+            print(f"{eid}: replay did not publish; unfinished files preserved at {session}",
+                  flush=True)
+            raise
+        # This removes only the now-empty staging parent, never trial files.
+        try:
+            staging.rmdir()
+        except OSError as exc:
+            print(f"{eid}: output published at {destination}; could not remove empty "
+                  f"staging directory {staging}: {exc}", flush=True)
+        print(f"{eid}: published replay at {destination}", flush=True)
     return run_sessions(eids, generate, "replay")
 
 
