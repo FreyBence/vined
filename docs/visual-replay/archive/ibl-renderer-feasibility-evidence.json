@@ -1,0 +1,668 @@
+{
+    "schema_version":  1,
+    "date":  "2026-09-19",
+    "task":  "VR02",
+    "decision":  "python_production_path",
+    "decision_scope":  "Current local hardware-free environment; original reference capture not demonstrated",
+    "source_lock_sha256":  "1b67c68b5ff7e2b65bd2e72dae2b4e645c38035ac5804cdc05616a361d2ad722",
+    "artifact_root":  "tmp/vr02-feasibility",
+    "runtime_executed":  true,
+    "workflow_graph_modified":  false,
+    "restored_configured_packages":  55,
+    "omitted_package":  "Bonsai.PointGrey 2.2.0-ivo2",
+    "configured_version_changes":  [
+
+                                   ],
+    "native_component_versions_verified":  false,
+    "environment":  {
+                        "dotnet_release":  533509,
+                        "dotnet_version":  "4.8.09221",
+                        "gpu":  [
+                                    "Intel Iris Xe Graphics / driver 31.0.101.4502",
+                                    "NVIDIA GeForce RTX 3060 Laptop GPU / driver 32.0.15.9597"
+                                ],
+                        "detected_screens":  1,
+                        "primary_reported_pixels":  [
+                                                        1920,
+                                                        1080
+                                                    ],
+                        "forms_screen_bounds":  [
+                                                    1536,
+                                                    864
+                                                ],
+                        "graphics_context_device":  "not measured",
+                        "serial_ports":  [
+
+                                         ]
+                    },
+    "attempts":  [
+                     {
+                         "id":  "original-config-restore",
+                         "result":  "failed",
+                         "diagnostic":  "The package \u0027Bonsai.PointGrey 2.2.0-ivo2\u0027 could not be found."
+                     },
+                     {
+                         "id":  "restore-without-unused-camera",
+                         "result":  "completed",
+                         "diagnostic":  "All 55 retained configured package versions restored; no stderr."
+                     },
+                     {
+                         "id":  "workflow-launch",
+                         "result":  "failed",
+                         "diagnostic":  "System.IO.IOException opening absent COM7 in Bonsai.Bpod.Encoder.Generate; OpenTK disposal subsequently raised System.NullReferenceException.",
+                         "exit_code":  null,
+                         "exit_code_note":  "Process exit observed; numeric code was not retained."
+                     }
+                 ],
+    "input_delivery":  "OSC interface inspected; no controlled packets sent because launch failed",
+    "captured_frames":  0,
+    "observed_frame_dimensions":  null,
+    "frame_completeness":  "not demonstrated",
+    "state_to_frame_correspondence":  "not demonstrated",
+    "reference_capture":  "not demonstrated; remains required for VR10",
+    "evidence_files":  [
+                           {
+                               "path":  "Bonsai.config",
+                               "sha256":  "1c512f98980c4f1a5a5bce44d5efe20c5c47cdb6a3ddda49215b0269e275392d",
+                               "size_bytes":  17545
+                           },
+                           {
+                               "path":  "Bonsai-no-camera.config",
+                               "sha256":  "792358c69bc7ff918b01fdc9da65e4356e1d8a558b57acaaf574e5af6479c5ec",
+                               "size_bytes":  16674
+                           },
+                           {
+                               "path":  "runtime/Bonsai.config",
+                               "sha256":  "792358c69bc7ff918b01fdc9da65e4356e1d8a558b57acaaf574e5af6479c5ec",
+                               "size_bytes":  16674
+                           },
+                           {
+                               "path":  "Gabor2D.bonsai",
+                               "sha256":  "cafb15b0f3254521454a77f4c62d760c78dc83175cfde70bc9d6f4eeb0ff98fc",
+                               "size_bytes":  91181
+                           },
+                           {
+                               "path":  "Osc.config",
+                               "sha256":  "f9b5ba303ce0d5c7e760b54096d00c517259506160491f67065e72c512f7fecd",
+                               "size_bytes":  412
+                           },
+                           {
+                               "path":  "Bonsai-Program.cs",
+                               "sha256":  "a347632f142758849fd19d6843828d679c22798893afa1aea6489c875a104bb8",
+                               "size_bytes":  12899
+                           },
+                           {
+                               "path":  "ReadPixels.cs",
+                               "sha256":  "205c66b9a66358b8b3d948298836c8f27cd2b615c816d537cc3f2b656330e999",
+                               "size_bytes":  2303
+                           },
+                           {
+                               "path":  "ShaderWindow.cs",
+                               "sha256":  "bd31e5cfe3aaa30bed1b5f728aecb42262047b09d28e29107ca362c44f7a0e88",
+                               "size_bytes":  10581
+                           },
+                           {
+                               "path":  "bootstrap.stdout.log",
+                               "sha256":  "b60be826596684ebd3e75be7a8a15f0bff6302ac4ba06404e1695585d06699cf",
+                               "size_bytes":  10192
+                           },
+                           {
+                               "path":  "bootstrap.stderr.log",
+                               "sha256":  "d03c92fe0a3086252d1104a40a5d1d5ae048dac727f956d8c5f44e280d893069",
+                               "size_bytes":  63
+                           },
+                           {
+                               "path":  "restore-no-camera.stdout.log",
+                               "sha256":  "aea7fa255581bfbe0aa7432a660d1f2eacff9edea509ae70e8ee5177b6de36d3",
+                               "size_bytes":  16451
+                           },
+                           {
+                               "path":  "restore-no-camera.stderr.log",
+                               "sha256":  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                               "size_bytes":  0
+                           },
+                           {
+                               "path":  "original-launch.stdout.log",
+                               "sha256":  "5f6c0d0170181cd2982b4ae6c829f00a8502b70e9220dd71756f47e0e708f980",
+                               "size_bytes":  636
+                           },
+                           {
+                               "path":  "original-launch.stderr.log",
+                               "sha256":  "a63b81c6124dbc50ec984e296a1e1fd3582315f1fa6ed9f90ea81d1d30ea66af",
+                               "size_bytes":  360
+                           }
+                       ],
+    "restored_package_artifacts":  [
+                                       {
+                                           "id":  "AForge",
+                                           "version":  "2.2.5",
+                                           "sha256":  "c23ceaa65b29083f327e1116fcac93bffc4c5a5bc18f1c4acac7dc3f1c465509",
+                                           "size_bytes":  18095,
+                                           "license_url":  "http://www.aforgenet.com/framework/license.html",
+                                           "license":  "",
+                                           "copyright":  ""
+                                       },
+                                       {
+                                           "id":  "AForge.Video",
+                                           "version":  "2.2.5",
+                                           "sha256":  "51559f6cc8f21670a61972f9a728f82b98f3ba8bbb035589c09d45f9f4fdf8fc",
+                                           "size_bytes":  19053,
+                                           "license_url":  "http://www.aforgenet.com/framework/license.html",
+                                           "license":  "",
+                                           "copyright":  ""
+                                       },
+                                       {
+                                           "id":  "AForge.Video.DirectShow",
+                                           "version":  "2.2.5",
+                                           "sha256":  "71e4375bca2a73d99b0cf44300fbad40b9a10a560877acda5a8e3b614518c807",
+                                           "size_bytes":  59688,
+                                           "license_url":  "http://www.aforgenet.com/framework/license.html",
+                                           "license":  "",
+                                           "copyright":  ""
+                                       },
+                                       {
+                                           "id":  "AssimpNet",
+                                           "version":  "4.1.0",
+                                           "sha256":  "48d2bf1d4b32dbbdd320981bc4a7feae5f0bed8d431bb673fbb07c8cd3f7692a",
+                                           "size_bytes":  11872523,
+                                           "license_url":  "http://opensource.org/licenses/mit-license.php",
+                                           "license":  "",
+                                           "copyright":  "Copyright © 2012-2018 Nicholas Woodfield"
+                                       },
+                                       {
+                                           "id":  "Bonsai",
+                                           "version":  "2.6.3",
+                                           "sha256":  "851627af179d05f8332ab482db9e5e564e87cdc7253146a3a56c29cbef327e2d",
+                                           "size_bytes":  944983,
+                                           "license_url":  "https://bonsai-rx.org/license",
+                                           "license":  "",
+                                           "copyright":  "Copyright © Gonçalo Lopes 2011-2021"
+                                       },
+                                       {
+                                           "id":  "Bonsai.Arduino",
+                                           "version":  "2.5.1",
+                                           "sha256":  "04163b359374419db25e0aab9b11c7ad4ae9ccbb54f91ff6ce79e65b826f1d44",
+                                           "size_bytes":  17133,
+                                           "license_url":  "https://bonsai-rx.org/license",
+                                           "license":  "",
+                                           "copyright":  "Copyright © Gonçalo Lopes 2011-2021"
+                                       },
+                                       {
+                                           "id":  "Bonsai.Audio",
+                                           "version":  "2.6.0",
+                                           "sha256":  "5b32cedfaf9178d76adadee0ab93fcfee456f3c3a369add7327e7802d42a61fd",
+                                           "size_bytes":  21873,
+                                           "license_url":  "https://bonsai-rx.org/license",
+                                           "license":  "",
+                                           "copyright":  "Copyright © Gonçalo Lopes 2011-2020"
+                                       },
+                                       {
+                                           "id":  "Bonsai.Bpod",
+                                           "version":  "0.1.0-ctp1",
+                                           "sha256":  "05d352bc00dadd18645aa2ef292acc4f47631d7c6cf91316d75cb1b5bec0d305",
+                                           "size_bytes":  6964,
+                                           "license_url":  "https://bitbucket.org/glopes/bonsai.bpod/raw/dee5c44259f71b2d3001ad1b87fd68c126ab1691/LICENSE",
+                                           "license":  "",
+                                           "copyright":  "Gonçalo Lopes © 2018"
+                                       },
+                                       {
+                                           "id":  "Bonsai.Core",
+                                           "version":  "2.6.2",
+                                           "sha256":  "9db6041628329de5479f55f86e2ee58d2bbcb32fa941c79ee0f585d4af622495",
+                                           "size_bytes":  175352,
+                                           "license_url":  "https://bonsai-rx.org/license",
+                                           "license":  "",
+                                           "copyright":  "Copyright © Gonçalo Lopes 2011-2021"
+                                       },
+                                       {
+                                           "id":  "Bonsai.DAQmx",
+                                           "version":  "0.1.0",
+                                           "sha256":  "c873e4033a6288fbea595f3c3bd07d6b743a4d7e4659f5235860c54174682aaf",
+                                           "size_bytes":  756794,
+                                           "license_url":  "https://bitbucket.org/horizongir/bonsai.daqmx/raw/12ea97e9f54f7abaea4653ee864d3dc8e7c30798/LICENSE",
+                                           "license":  "",
+                                           "copyright":  "Gonçalo Lopes © 2019"
+                                       },
+                                       {
+                                           "id":  "Bonsai.Design",
+                                           "version":  "2.6.1",
+                                           "sha256":  "c9f7ee9f5e387240bcf6d61fd8c5e966f84870442be8d530fb6feb67ea1b68a9",
+                                           "size_bytes":  38171,
+                                           "license_url":  "https://bonsai-rx.org/license",
+                                           "license":  "",
+                                           "copyright":  "Copyright © Gonçalo Lopes 2011-2021"
+                                       },
+                                       {
+                                           "id":  "Bonsai.Design.Visualizers",
+                                           "version":  "2.6.2",
+                                           "sha256":  "8e49fdf6db6d20e2410c6995e778c88de6b822e185a6ef401aede35d7850c99f",
+                                           "size_bytes":  30524,
+                                           "license_url":  "https://bonsai-rx.org/license",
+                                           "license":  "",
+                                           "copyright":  "Copyright © Gonçalo Lopes 2011-2021"
+                                       },
+                                       {
+                                           "id":  "Bonsai.Dsp",
+                                           "version":  "2.6.1",
+                                           "sha256":  "cbfbe56519a7ebd09c09d5f70336ae72bba4416cf14c6c804c2eaa91e9646229",
+                                           "size_bytes":  59587,
+                                           "license_url":  "https://bonsai-rx.org/license",
+                                           "license":  "",
+                                           "copyright":  "Copyright © Gonçalo Lopes 2011-2021"
+                                       },
+                                       {
+                                           "id":  "Bonsai.Dsp.Design",
+                                           "version":  "2.6.1",
+                                           "sha256":  "a4c17b5053bbb1bb2206995a65690825d7d0efe2f39c417329ecf5bfb036767b",
+                                           "size_bytes":  28640,
+                                           "license_url":  "https://bonsai-rx.org/license",
+                                           "license":  "",
+                                           "copyright":  "Copyright © Gonçalo Lopes 2011-2021"
+                                       },
+                                       {
+                                           "id":  "Bonsai.Editor",
+                                           "version":  "2.6.3",
+                                           "sha256":  "aeb173d1150eff8963e362fb8d077f834aecb3bb44b00569d0dbfa90bc3e0dcc",
+                                           "size_bytes":  229185,
+                                           "license_url":  "https://bonsai-rx.org/license",
+                                           "license":  "",
+                                           "copyright":  "Copyright © Gonçalo Lopes 2011-2021"
+                                       },
+                                       {
+                                           "id":  "Bonsai.Ephys",
+                                           "version":  "2.5.0",
+                                           "sha256":  "d2e9ff147f3ddf8910cb1d48a6073c9d6322ced396859e700453be5ec2ca86c2",
+                                           "size_bytes":  16894,
+                                           "license_url":  "https://bonsai-rx.org/license",
+                                           "license":  "",
+                                           "copyright":  "Copyright © Gonçalo Lopes 2012-2020"
+                                       },
+                                       {
+                                           "id":  "Bonsai.Ephys.Design",
+                                           "version":  "2.5.0",
+                                           "sha256":  "d3892b7780cdea81fa8ae3868482fd0f6647d99b12751fc79c836a81cc3460e7",
+                                           "size_bytes":  7180,
+                                           "license_url":  "https://bonsai-rx.org/license",
+                                           "license":  "",
+                                           "copyright":  "Copyright © Gonçalo Lopes 2012-2020"
+                                       },
+                                       {
+                                           "id":  "Bonsai.Harp",
+                                           "version":  "3.3.0",
+                                           "sha256":  "58af0fa513330258e6e3583d170f568f568a168f57f22968e3e962304411a953",
+                                           "size_bytes":  54348,
+                                           "license_url":  "https://github.com/bonsai-rx/harp/blob/master/LICENSE",
+                                           "license":  "",
+                                           "copyright":  "Copyright © Filipe Carvalho, Gonçalo Lopes 2017-2020"
+                                       },
+                                       {
+                                           "id":  "Bonsai.Harp.CF",
+                                           "version":  "1.6.0",
+                                           "sha256":  "8988c58803c007d6f82dd3342526898dc750183e20881f3309492ab3de74285e",
+                                           "size_bytes":  47719,
+                                           "license_url":  "https://bitbucket.org/horizongir/bonsai.harp.cf/raw/e52e845f24fa999c3f24b1192ed72b7b59f19a5e/LICENSE",
+                                           "license":  "",
+                                           "copyright":  "Filipe Carvalho, Gonçalo Lopes © 2017"
+                                       },
+                                       {
+                                           "id":  "Bonsai.Numerics",
+                                           "version":  "0.6.0",
+                                           "sha256":  "472467a8259eb39380d1bd38c2df0cfee93342928d3ba3c5d44973a037ad5f3e",
+                                           "size_bytes":  16606,
+                                           "license_url":  "https://bonsai-rx.org/license",
+                                           "license":  "",
+                                           "copyright":  "Copyright © Gonçalo Lopes 2020"
+                                       },
+                                       {
+                                           "id":  "Bonsai.Osc",
+                                           "version":  "2.6.1",
+                                           "sha256":  "51c682f7d87966691cd467032a3bb2cf68edc1c7b670b4c39015f2958ac01eaf",
+                                           "size_bytes":  26209,
+                                           "license_url":  "https://bonsai-rx.org/license",
+                                           "license":  "",
+                                           "copyright":  "Copyright © Gonçalo Lopes 2011-2021"
+                                       },
+                                       {
+                                           "id":  "Bonsai.Physics",
+                                           "version":  "0.2.0",
+                                           "sha256":  "57adce1c01c9a519e45d32f83d894eac90c8bb61cb940ebde4a07b4ee43d76b1",
+                                           "size_bytes":  26545,
+                                           "license_url":  "https://bitbucket.org/horizongir/bonsai.physics/raw/17a95ccf8a540fffd1b81f69e661d0c6d03b25f9/LICENSE",
+                                           "license":  "",
+                                           "copyright":  "Gonçalo Lopes © 2016"
+                                       },
+                                       {
+                                           "id":  "Bonsai.Player",
+                                           "version":  "2.6.3",
+                                           "sha256":  "cf68649eb2c12cd97cb2c14a4e786da8512732f39aa2c5ead04db12e9bb59f1e",
+                                           "size_bytes":  32446,
+                                           "license_url":  "https://bonsai-rx.org/license",
+                                           "license":  "",
+                                           "copyright":  "Copyright © Gonçalo Lopes 2011-2021"
+                                       },
+                                       {
+                                           "id":  "Bonsai.Scripting",
+                                           "version":  "2.6.1",
+                                           "sha256":  "5d54d7f6ed57a535397f7f9832ca692bd00ea42fd43c2f63ecd207367d28977c",
+                                           "size_bytes":  17883,
+                                           "license_url":  "https://bonsai-rx.org/license",
+                                           "license":  "",
+                                           "copyright":  "Copyright © Gonçalo Lopes 2011-2021"
+                                       },
+                                       {
+                                           "id":  "Bonsai.Shaders",
+                                           "version":  "0.25.0",
+                                           "sha256":  "1f8e0fcc30cf2708208fcc9da397447512653e2cca42b4d979ad4f5b786f546b",
+                                           "size_bytes":  94434,
+                                           "license_url":  "https://bonsai-rx.org/license",
+                                           "license":  "",
+                                           "copyright":  "Copyright © Gonçalo Lopes 2011-2021"
+                                       },
+                                       {
+                                           "id":  "Bonsai.Shaders.Design",
+                                           "version":  "0.25.0",
+                                           "sha256":  "50d75545feef7499601e9712caa3695e3024137d026934f9f4001a126882b14e",
+                                           "size_bytes":  37855,
+                                           "license_url":  "https://bonsai-rx.org/license",
+                                           "license":  "",
+                                           "copyright":  "Copyright © Gonçalo Lopes 2011-2021"
+                                       },
+                                       {
+                                           "id":  "Bonsai.Shaders.Rendering",
+                                           "version":  "0.2.1",
+                                           "sha256":  "98daf683ee735c9968a34d7c896b4ec087877a605492f846125c4029ce26efb9",
+                                           "size_bytes":  17381,
+                                           "license_url":  "https://bonsai-rx.org/license",
+                                           "license":  "",
+                                           "copyright":  "Copyright © Gonçalo Lopes 2011-2021"
+                                       },
+                                       {
+                                           "id":  "Bonsai.Spinnaker",
+                                           "version":  "0.7.0",
+                                           "sha256":  "fe161e1119117034dee6a37a2e70cce750bd5737b2f3a31d71136b8230b86351",
+                                           "size_bytes":  574239,
+                                           "license_url":  "https://github.com/bonsai-rx/spinnaker/blob/master/LICENSE",
+                                           "license":  "",
+                                           "copyright":  "Copyright © Gonçalo Lopes 2021"
+                                       },
+                                       {
+                                           "id":  "Bonsai.StarterPack",
+                                           "version":  "2.6.4",
+                                           "sha256":  "6ce8f7592985a67d4a60c034b3b2a5425a92c40b8f72f2d57803b6a2b9a6af53",
+                                           "size_bytes":  3050,
+                                           "license_url":  "https://bonsai-rx.org/license",
+                                           "license":  "",
+                                           "copyright":  "Copyright © Gonçalo Lopes 2011-2021"
+                                       },
+                                       {
+                                           "id":  "Bonsai.System",
+                                           "version":  "2.6.0",
+                                           "sha256":  "0205488424f3fd1e8f76e3f89c3315d22720cc7b25d440b335885835bb464cc4",
+                                           "size_bytes":  34723,
+                                           "license_url":  "https://bonsai-rx.org/license",
+                                           "license":  "",
+                                           "copyright":  "Copyright © Gonçalo Lopes 2011-2020"
+                                       },
+                                       {
+                                           "id":  "Bonsai.System.Design",
+                                           "version":  "2.6.1",
+                                           "sha256":  "11dc59e2b74c1b6a3fa58e52dfcc52381623556825c1315631ea92d70e2532a0",
+                                           "size_bytes":  18057,
+                                           "license_url":  "https://bonsai-rx.org/license",
+                                           "license":  "",
+                                           "copyright":  "Copyright © Gonçalo Lopes 2011-2021"
+                                       },
+                                       {
+                                           "id":  "Bonsai.Video",
+                                           "version":  "2.4.0",
+                                           "sha256":  "a8dd4d44a21bc48dc1ac68d984d0429504f1c2b69c307e398da12126fe3461f4",
+                                           "size_bytes":  15872,
+                                           "license_url":  "https://bonsai-rx.org/license",
+                                           "license":  "",
+                                           "copyright":  "Copyright © Gonçalo Lopes 2011-2020"
+                                       },
+                                       {
+                                           "id":  "Bonsai.Video.Design",
+                                           "version":  "2.4.0",
+                                           "sha256":  "7825a7e53de68d7a8aa903bfc5b05cc032c37ce62b0e14d9aa37ae6130841365",
+                                           "size_bytes":  4295,
+                                           "license_url":  "https://bonsai-rx.org/license",
+                                           "license":  "",
+                                           "copyright":  "Copyright © Gonçalo Lopes 2011-2020"
+                                       },
+                                       {
+                                           "id":  "Bonsai.Vision",
+                                           "version":  "2.6.1",
+                                           "sha256":  "95341104c8c2c6f70ed409903bd9e7a246112551cd386148220d3ee5c81406e6",
+                                           "size_bytes":  72052,
+                                           "license_url":  "https://bonsai-rx.org/license",
+                                           "license":  "",
+                                           "copyright":  "Copyright © Gonçalo Lopes 2011-2021"
+                                       },
+                                       {
+                                           "id":  "Bonsai.Vision.Design",
+                                           "version":  "2.6.1",
+                                           "sha256":  "0a3c8d3738324782ae2bc2aaa8837ed88d9dada5b10c367fe05f344b6e6dd6fc",
+                                           "size_bytes":  59505,
+                                           "license_url":  "https://bonsai-rx.org/license",
+                                           "license":  "",
+                                           "copyright":  "Copyright © Gonçalo Lopes 2011-2021"
+                                       },
+                                       {
+                                           "id":  "Bonsai.VR",
+                                           "version":  "0.6.0",
+                                           "sha256":  "08a4641ec69e964f3b52f4ec4dae3293a0ae653c11785dd7463126f22d8bfa7f",
+                                           "size_bytes":  651438,
+                                           "license_url":  "https://bonsai-rx.org/license",
+                                           "license":  "",
+                                           "copyright":  "Gonçalo Lopes © 2019"
+                                       },
+                                       {
+                                           "id":  "Bonsai.Windows.Input",
+                                           "version":  "2.6.0",
+                                           "sha256":  "6e84e57f4056d66b41304d6d56c4c5a7f1a51fc449ff3ecd841133575e689466",
+                                           "size_bytes":  10398,
+                                           "license_url":  "https://bonsai-rx.org/license",
+                                           "license":  "",
+                                           "copyright":  "Copyright © Gonçalo Lopes 2011-2020"
+                                       },
+                                       {
+                                           "id":  "BonVision",
+                                           "version":  "0.9.0",
+                                           "sha256":  "2a0396ba4c78d07df965ab1a32b9d571788fd790116cc20ec134ea04ebc9f9f6",
+                                           "size_bytes":  46942,
+                                           "license_url":  "https://raw.githubusercontent.com/bonvision/BonVision/master/LICENSE",
+                                           "license":  "",
+                                           "copyright":  "Copyright © Aman Saleem 2020"
+                                       },
+                                       {
+                                           "id":  "FTD2XX_NET",
+                                           "version":  "1.0.14",
+                                           "sha256":  "dc788d04c318117bef15072130f0557713b7b9ef1a25b8ac88c066bf5f2b5a19",
+                                           "size_bytes":  118076,
+                                           "license_url":  "",
+                                           "license":  "",
+                                           "copyright":  "Copyright © 2009-2012 Future Technology Devices International Limited"
+                                       },
+                                       {
+                                           "id":  "IronPython",
+                                           "version":  "2.7.5",
+                                           "sha256":  "07fe886b8e50640eb82703b9e0cea0f5c54b64500a3ac1f0c135cc9f055a0e25",
+                                           "size_bytes":  7933464,
+                                           "license_url":  "http://ironpython.codeplex.com/license",
+                                           "license":  "",
+                                           "copyright":  ""
+                                       },
+                                       {
+                                           "id":  "IronPython.StdLib",
+                                           "version":  "2.7.5",
+                                           "sha256":  "9efd8d89b8ec5f436898a1de9caaad924e8f69efebe7a49583a5f3ed0fdadd6d",
+                                           "size_bytes":  3626553,
+                                           "license_url":  "http://docs.python.org/license.html",
+                                           "license":  "",
+                                           "copyright":  ""
+                                       },
+                                       {
+                                           "id":  "jacobslusser.ScintillaNET",
+                                           "version":  "3.6.3",
+                                           "sha256":  "9c07e3e14dcb737867dbb1a97860a7f884644fc6858f5fdf743828ac73b7809b",
+                                           "size_bytes":  1296484,
+                                           "license_url":  "",
+                                           "license":  "",
+                                           "copyright":  "Copyright (c) 2017, Jacob Slusser. All rights reserved."
+                                       },
+                                       {
+                                           "id":  "MathNet.Numerics",
+                                           "version":  "4.5.1",
+                                           "sha256":  "bc682e3dcb7bce931b98ed42b503e910425fefbc1cb682f3303751da1109ca9c",
+                                           "size_bytes":  3044688,
+                                           "license_url":  "https://numerics.mathdotnet.com/License.html",
+                                           "license":  "",
+                                           "copyright":  "Copyright Math.NET Project"
+                                       },
+                                       {
+                                           "id":  "openal.redist",
+                                           "version":  "2.0.7.0",
+                                           "sha256":  "09a703a578b25c2f2bcaccb3308154e4890391c12e455398cc90607b12c71284",
+                                           "size_bytes":  508011,
+                                           "license_url":  "http://connect.creativelabs.com/openal/Documentation/The%20OpenAL%20Utility%20Toolkit.htm",
+                                           "license":  "",
+                                           "copyright":  "© Copyright 2009, Creative Labs Inc."
+                                       },
+                                       {
+                                           "id":  "OpenCV.ffmpeg.overlay-Win32_v110",
+                                           "version":  "2.4.8",
+                                           "sha256":  "de91db403c3c87b748962ef0232fc7609df64ee32a8187e94a0b13b827925eca",
+                                           "size_bytes":  3836318,
+                                           "license_url":  "http://opensource.org/licenses/bsd-license.php",
+                                           "license":  "",
+                                           "copyright":  "© Copyright 2013, Itseez"
+                                       },
+                                       {
+                                           "id":  "OpenCV.ffmpeg.overlay-x64_v110",
+                                           "version":  "2.4.8",
+                                           "sha256":  "093770e320dd76ca141b966a883816ec1e6fc287470d9180533af22fc99aa6d5",
+                                           "size_bytes":  3851754,
+                                           "license_url":  "http://opensource.org/licenses/bsd-license.php",
+                                           "license":  "",
+                                           "copyright":  "© Copyright 2013, Itseez"
+                                       },
+                                       {
+                                           "id":  "OpenCV.Net",
+                                           "version":  "3.3.1",
+                                           "sha256":  "ccc1ad237065ff6f94948c02b652224afa19b76cf9c96d8f362a754bfc85b58b",
+                                           "size_bytes":  457434,
+                                           "license_url":  "http://bitbucket.org/horizongir/opencv.net/raw/49e2d06d594f859f7c7712cb052eb2b340a73f17/COPYING",
+                                           "license":  "",
+                                           "copyright":  "Gonçalo Lopes © 2014"
+                                       },
+                                       {
+                                           "id":  "OpenCV.overlay-Win32_v110_Release",
+                                           "version":  "2.4.8",
+                                           "sha256":  "59e5c896932fb8d6434d9ee889719676097afc1b8dd7c2dc989826a19b06761f",
+                                           "size_bytes":  8362176,
+                                           "license_url":  "http://opensource.org/licenses/bsd-license.php",
+                                           "license":  "",
+                                           "copyright":  "© Copyright 2013, Itseez"
+                                       },
+                                       {
+                                           "id":  "OpenCV.overlay-x64_v110_Release",
+                                           "version":  "2.4.8",
+                                           "sha256":  "c0d89e33d9540943390cf2f6cfc6f8a409a33a85c0cc9d635d696408a503da44",
+                                           "size_bytes":  10025179,
+                                           "license_url":  "http://opensource.org/licenses/bsd-license.php",
+                                           "license":  "",
+                                           "copyright":  "© Copyright 2013, Itseez"
+                                       },
+                                       {
+                                           "id":  "OpenTK",
+                                           "version":  "3.1.0",
+                                           "sha256":  "e9be14118daf612417b5c0ff67a1d343099501a611d4740cb53d65f6f19f10d8",
+                                           "size_bytes":  4407221,
+                                           "license_url":  "http://github.com/opentk/opentk/blob/master/License.txt",
+                                           "license":  "",
+                                           "copyright":  "Copyright (c) 2006 - 2019 Stefanos Apostolopoulos \u003cstapostol@gmail.com\u003e for the Open Toolkit library."
+                                       },
+                                       {
+                                           "id":  "OpenTK.GLControl",
+                                           "version":  "3.1.0",
+                                           "sha256":  "ffe16054c714d2cabaf2eb514eaf1659fb4a2308844638fd930f77191cdb3d5f",
+                                           "size_bytes":  38594,
+                                           "license_url":  "http://github.com/opentk/opentk/blob/master/License.txt",
+                                           "license":  "",
+                                           "copyright":  "Copyright (c) 2006 - 2019 Stefanos Apostolopoulos \u003cstapostol@gmail.com\u003e for the Open Toolkit library."
+                                       },
+                                       {
+                                           "id":  "Rhythm.Net",
+                                           "version":  "1.5.0",
+                                           "sha256":  "e6c54d04cd64cccc30f2831e229fd2bcd9924845227987a24bf6f80d124c62e5",
+                                           "size_bytes":  199128,
+                                           "license_url":  "https://bitbucket.org/horizongir/rhythm.net/raw/5e700dfe66d2f5322505bd655df3beb3ee9f3f1c/LICENSE",
+                                           "license":  "",
+                                           "copyright":  "Gonçalo Lopes © 2017"
+                                       },
+                                       {
+                                           "id":  "Rx-Core",
+                                           "version":  "2.2.5",
+                                           "sha256":  "b8afb67d99ac6640ee9be37d0299ca8bee1adf7c481ce743b566e5c4007b12a0",
+                                           "size_bytes":  707666,
+                                           "license_url":  "http://go.microsoft.com/fwlink/?LinkID=261272",
+                                           "license":  "",
+                                           "copyright":  "Copyright (C) Microsoft Corporation"
+                                       },
+                                       {
+                                           "id":  "Rx-Interfaces",
+                                           "version":  "2.2.5",
+                                           "sha256":  "db5fd8ff3c701ca415abaea8895e95e3c340acab2570eb200a7956380345aacf",
+                                           "size_bytes":  173865,
+                                           "license_url":  "http://go.microsoft.com/fwlink/?LinkID=261272",
+                                           "license":  "",
+                                           "copyright":  "Copyright (C) Microsoft Corporation"
+                                       },
+                                       {
+                                           "id":  "Rx-Linq",
+                                           "version":  "2.2.5",
+                                           "sha256":  "d549b1bcee930c13da40df6db6737f8c71325f2fd278255ab1a2d2003cda7e27",
+                                           "size_bytes":  2668209,
+                                           "license_url":  "http://go.microsoft.com/fwlink/?LinkID=261272",
+                                           "license":  "",
+                                           "copyright":  "Copyright (C) Microsoft Corporation"
+                                       },
+                                       {
+                                           "id":  "Rx-PlatformServices",
+                                           "version":  "2.2.5",
+                                           "sha256":  "c084eb50e7af3ea526cbdf4da683cefe42ace8bcea4f584e5e67b9e200ecff5d",
+                                           "size_bytes":  244898,
+                                           "license_url":  "http://go.microsoft.com/fwlink/?LinkID=261272",
+                                           "license":  "",
+                                           "copyright":  "Copyright (C) Microsoft Corporation"
+                                       },
+                                       {
+                                           "id":  "SvgNet",
+                                           "version":  "2.0.1",
+                                           "sha256":  "efe4b844ee810f2e72861bc90fa74bfd131bc0f2458f67df4b962d65d291381b",
+                                           "size_bytes":  109768,
+                                           "license_url":  "https://cdn.rawgit.com/managed-commons/SvgNet/master/LICENSE",
+                                           "license":  "",
+                                           "copyright":  "2003, 2010, 2015-2019 RiskCare Ltd, SvgNet and SvgGdi Bridge Project, Rafael Teixeira, Mojmír Němeček"
+                                       },
+                                       {
+                                           "id":  "System.Linq.Dynamic",
+                                           "version":  "1.0.7",
+                                           "sha256":  "4766eb0fff5c583952bee9b4157ca120a088efb8a6adec0b5b030bc930a3a066",
+                                           "size_bytes":  498723,
+                                           "license_url":  "http://www.opensource.org/licenses/ms-pl",
+                                           "license":  "",
+                                           "copyright":  ""
+                                       },
+                                       {
+                                           "id":  "ZedGraph",
+                                           "version":  "5.1.7",
+                                           "sha256":  "d3b49c40e4abe272ac6172f6fe8a7433a455cfbb752c4977117ff9f6cb8bd504",
+                                           "size_bytes":  328263,
+                                           "license_url":  "http://www.gnu.org/licenses/lgpl-2.1.txt",
+                                           "license":  "",
+                                           "copyright":  "Copyright © 2003-2007 John Champion"
+                                       }
+                                   ]
+}

@@ -1,0 +1,650 @@
+{
+    "schema_version":  1,
+    "audit_date":  "2026-09-19",
+    "scope":  "Source inventory and historical configured package versions; not a complete restored binary environment",
+    "selected_workflow":  "visual_stim/GaborIBLTask/Gabor2D.bonsai",
+    "workflow_builder_version":  "2.6.2",
+    "runtime_verified":  false,
+    "session_revision_match":  "unknown; reconcile per EID in VR04",
+    "sources":  [
+                    {
+                        "id":  "iblrig",
+                        "repository":  "https://github.com/int-brain-lab/iblrig",
+                        "discovery_ref":  "iblrigv8",
+                        "commit":  "a0a031e2f9969c192767a255781920028034b7b0",
+                        "license":  "MIT",
+                        "inventory":  [
+                                          {
+                                              "path":  "Bonsai/Bonsai.config",
+                                              "git_blob_sha1":  "d5d3983cc25cd3b8d2c7b88f372fe221d470aff4"
+                                          },
+                                          {
+                                              "path":  "Bonsai/install.ps1",
+                                              "git_blob_sha1":  "4d19688994dd5707e3cbfea83ce325f86dedd246"
+                                          },
+                                          {
+                                              "path":  "LICENSE",
+                                              "git_blob_sha1":  "73262d3365eff5ab4d2536073b26b39d5e5b5286"
+                                          },
+                                          {
+                                              "path":  "docs/source/installation.rst",
+                                              "git_blob_sha1":  "5d6642d0c00ed148fb05ca9631a02bdb85c2d0f0"
+                                          },
+                                          {
+                                              "path":  "iblrig/base_choice_world.py",
+                                              "git_blob_sha1":  "d8e9c0472810ef55324da56d0e0f7173b090d219"
+                                          },
+                                          {
+                                              "path":  "iblrig/base_choice_world_params.yaml",
+                                              "git_blob_sha1":  "053716b27a1739ca33d06bd86be0efc0889da51a"
+                                          },
+                                          {
+                                              "path":  "visual_stim/GaborIBLTask/Gabor2D.bonsai",
+                                              "git_blob_sha1":  "3e30bc675cbf84c41b6ce1db3ed4739eaa66f96a"
+                                          },
+                                          {
+                                              "path":  "visual_stim/GaborIBLTask/Gabor2D.bonsai.layout",
+                                              "git_blob_sha1":  "ef5cfc2b949c90957bab54b6a8a3d5931f8e81f7"
+                                          },
+                                          {
+                                              "path":  "visual_stim/GaborIBLTask/Gabor2D_clean.bonsai",
+                                              "git_blob_sha1":  "51eb612df580bb3f258fb7de78a11301d6989539"
+                                          },
+                                          {
+                                              "path":  "visual_stim/GaborIBLTask/Gabor2D_clean.bonsai.layout",
+                                              "git_blob_sha1":  "933ec68bcaf315372f4632ef9174fe42a42bfd44"
+                                          },
+                                          {
+                                              "path":  "visual_stim/GaborIBLTask/Gabor2D_clean2.5.bonsai",
+                                              "git_blob_sha1":  "e385ee60098adfa74fc749059728f826a4100345"
+                                          },
+                                          {
+                                              "path":  "visual_stim/GaborIBLTask/Gabor2D_clean2.5.bonsai.layout",
+                                              "git_blob_sha1":  "8c6750df1066fe721be53cfcbd2f86fa52b6bec4"
+                                          },
+                                          {
+                                              "path":  "visual_stim/GaborIBLTask/Osc.config",
+                                              "git_blob_sha1":  "cfd684930d36ffb069166043fef6c521ca91cc3a"
+                                          }
+                                      ]
+                    },
+                    {
+                        "id":  "bonvision",
+                        "repository":  "https://github.com/bonvision/BonVision",
+                        "discovery_ref":  "v0.9.0",
+                        "commit":  "85992cb492998bfa83e0e6d12d2b37d67df6f2c6",
+                        "license":  "MIT",
+                        "inventory":  [
+                                          {
+                                              "path":  "BonVision/AngleProperty.cs",
+                                              "git_blob_sha1":  "38a7bf54f0cfeabab894337346ec29aa6934e1ab"
+                                          },
+                                          {
+                                              "path":  "BonVision/BonVision.csproj",
+                                              "git_blob_sha1":  "19b7a6ef3885c98a3362c7d5250295e02a75dec1"
+                                          },
+                                          {
+                                              "path":  "BonVision/BonVision.svg",
+                                              "git_blob_sha1":  "71f3ab15e758db63b90f558f80c549dd2dad6e8a"
+                                          },
+                                          {
+                                              "path":  "BonVision/Collections/CreateGratingTrial.cs",
+                                              "git_blob_sha1":  "474bb418d21443e1fca3aa91a6cd72f849524da6"
+                                          },
+                                          {
+                                              "path":  "BonVision/Collections/GratingSequence.bonsai",
+                                              "git_blob_sha1":  "dea907295218776df4dd0be760aafd67f95aad1d"
+                                          },
+                                          {
+                                              "path":  "BonVision/Collections/GratingsSpecification.cs",
+                                              "git_blob_sha1":  "f4389bb977ec63fcfffcc47056187c1c14775a71"
+                                          },
+                                          {
+                                              "path":  "BonVision/Collections/SparseNoise.bonsai",
+                                              "git_blob_sha1":  "49b0ee7a83d6ccafd363007106235408c336e2c4"
+                                          },
+                                          {
+                                              "path":  "BonVision/CreateSparseNoiseGrid.cs",
+                                              "git_blob_sha1":  "45413c33fe4e45a64631baacd8814789e2017175"
+                                          },
+                                          {
+                                              "path":  "BonVision/CreateSphereGrid.cs",
+                                              "git_blob_sha1":  "51120c7cc3d5c961257cdebea8fd884ffc13636f"
+                                          },
+                                          {
+                                              "path":  "BonVision/CreateTextureScale.cs",
+                                              "git_blob_sha1":  "88a0e51eaee64c8443b7708749f4d258d4c9d027"
+                                          },
+                                          {
+                                              "path":  "BonVision/CreateTextureShift.cs",
+                                              "git_blob_sha1":  "58d348d37322cd7faabba6ec78cc0ebae5c734af"
+                                          },
+                                          {
+                                              "path":  "BonVision/CreateVertexGrid.cs",
+                                              "git_blob_sha1":  "6ca769128b6459edfdebaff17676c3830dc3aaf3"
+                                          },
+                                          {
+                                              "path":  "BonVision/DegreeConverter.cs",
+                                              "git_blob_sha1":  "0d4d69e2e658f884d4bbd644762fb6b3dfee62c3"
+                                          },
+                                          {
+                                              "path":  "BonVision/Environment/CubemapView.bonsai",
+                                              "git_blob_sha1":  "477e3da0f098cab852db5747a404f7a20ea2cab2"
+                                          },
+                                          {
+                                              "path":  "BonVision/Environment/DrawViewport.bonsai",
+                                              "git_blob_sha1":  "be137d824c1255e2cbb24e4d164767a8e4d6e14f"
+                                          },
+                                          {
+                                              "path":  "BonVision/Environment/GammaCorrection.bonsai",
+                                              "git_blob_sha1":  "89dca63f2bd55f80070d919e516e7f25575d0cce"
+                                          },
+                                          {
+                                              "path":  "BonVision/Environment/HmdView.bonsai",
+                                              "git_blob_sha1":  "180e94a70631a6a661c5fb8262cdda9583d46059"
+                                          },
+                                          {
+                                              "path":  "BonVision/Environment/MeshMapping.bonsai",
+                                              "git_blob_sha1":  "3f0fb27f7d91399a6e826e2906b0df4e3deb5ad2"
+                                          },
+                                          {
+                                              "path":  "BonVision/Environment/NormalizedView.bonsai",
+                                              "git_blob_sha1":  "9439dd73daa3214044de6100323e9dcb863e44ee"
+                                          },
+                                          {
+                                              "path":  "BonVision/Environment/OrthographicView.bonsai",
+                                              "git_blob_sha1":  "cd2668cdd06a67fd2a4adcca95749cfc0ffb3172"
+                                          },
+                                          {
+                                              "path":  "BonVision/Environment/PerspectiveMapping.bonsai",
+                                              "git_blob_sha1":  "77a38663479b6c9f216e64b40e986a8000861c7e"
+                                          },
+                                          {
+                                              "path":  "BonVision/Environment/PerspectiveView.bonsai",
+                                              "git_blob_sha1":  "1086ae02b987592766a562843ef3e46ce435aaff"
+                                          },
+                                          {
+                                              "path":  "BonVision/Environment/RenderHmd.bonsai",
+                                              "git_blob_sha1":  "dd3ca2b99d59bbf0eaf9e8e26f86798244e70176"
+                                          },
+                                          {
+                                              "path":  "BonVision/Environment/SphereMapping.bonsai",
+                                              "git_blob_sha1":  "3094746b87647824b091eb70a2291c93084f2016"
+                                          },
+                                          {
+                                              "path":  "BonVision/Environment/ViewWindow.bonsai",
+                                              "git_blob_sha1":  "9b1623de78d3b7a1b1ce3f1e7cfb1df8ec4f336a"
+                                          },
+                                          {
+                                              "path":  "BonVision/FieldOfViewProperty.cs",
+                                              "git_blob_sha1":  "c304e981e1c2f0b5e5b5240ab6a36f62d2e00f2a"
+                                          },
+                                          {
+                                              "path":  "BonVision/Logging/EventLogger.bonsai",
+                                              "git_blob_sha1":  "ce389ab119b042c2821856c93ffdd6f8db3106c2"
+                                          },
+                                          {
+                                              "path":  "BonVision/Logging/FrameEventLogger.bonsai",
+                                              "git_blob_sha1":  "8427f5536b9f482fee44110f7b3bfd43a9a70092"
+                                          },
+                                          {
+                                              "path":  "BonVision/Logging/LogEvent.bonsai",
+                                              "git_blob_sha1":  "37a0d14b25f12c783acb3473ef66982339e93713"
+                                          },
+                                          {
+                                              "path":  "BonVision/Models/Plane.obj",
+                                              "git_blob_sha1":  "306af7a6f80aabd0e4acd828d00c4bc9c280a734"
+                                          },
+                                          {
+                                              "path":  "BonVision/Models/Quad.obj",
+                                              "git_blob_sha1":  "03683aa260517e11804f41dd2f3833e7ce98240b"
+                                          },
+                                          {
+                                              "path":  "BonVision/OptionalFloatProperty.cs",
+                                              "git_blob_sha1":  "3c786fa62e7e1999842379ab9582b422a56443a5"
+                                          },
+                                          {
+                                              "path":  "BonVision/Primitives/BonVisionResources.bonsai",
+                                              "git_blob_sha1":  "8ece30923b97bc106bfd72d3efa290505da9d89a"
+                                          },
+                                          {
+                                              "path":  "BonVision/Primitives/DrawCheckerboard.bonsai",
+                                              "git_blob_sha1":  "aada1c63da789cfae704454b33f6a13e70646748"
+                                          },
+                                          {
+                                              "path":  "BonVision/Primitives/DrawCircle.bonsai",
+                                              "git_blob_sha1":  "93939fd0c1a7f3c72aa65409eb486fb650abb86e"
+                                          },
+                                          {
+                                              "path":  "BonVision/Primitives/DrawCircleArray.bonsai",
+                                              "git_blob_sha1":  "0bf8fb3627fd960c3955d70dfb8484535c4bfc05"
+                                          },
+                                          {
+                                              "path":  "BonVision/Primitives/DrawGratings.bonsai",
+                                              "git_blob_sha1":  "3baa22083518edb9dbac9bdfbf3e66ebd3bf851b"
+                                          },
+                                          {
+                                              "path":  "BonVision/Primitives/DrawImage.bonsai",
+                                              "git_blob_sha1":  "da3884b7d394fbea911720846ab56c8b999b4b83"
+                                          },
+                                          {
+                                              "path":  "BonVision/Primitives/DrawModel.bonsai",
+                                              "git_blob_sha1":  "2aa29567d9a7477756eff91e59edbb3d569b6f94"
+                                          },
+                                          {
+                                              "path":  "BonVision/Primitives/DrawQuad.bonsai",
+                                              "git_blob_sha1":  "bca409299f80747ecd9aa28867bbb4cc9a6f73b9"
+                                          },
+                                          {
+                                              "path":  "BonVision/Primitives/DrawSceneModel.bonsai",
+                                              "git_blob_sha1":  "438453209c9c24cc54f27807d6ec16fcde331894"
+                                          },
+                                          {
+                                              "path":  "BonVision/Primitives/DrawText.bonsai",
+                                              "git_blob_sha1":  "fc809cf89b02cb1c6bf2b09dee5dba4fa834752c"
+                                          },
+                                          {
+                                              "path":  "BonVision/Primitives/DrawTexturedModel.bonsai",
+                                              "git_blob_sha1":  "8b62a4fbe45c77e720edd453471d291c1af69499"
+                                          },
+                                          {
+                                              "path":  "BonVision/Primitives/DrawVideo.bonsai",
+                                              "git_blob_sha1":  "4c921d44cb8518320bf14782147b861d87b991ec"
+                                          },
+                                          {
+                                              "path":  "BonVision/Primitives/ParameterRange.bonsai",
+                                              "git_blob_sha1":  "ddee06d35fe7d3aa3e3b15acb42995f7c83fc9b7"
+                                          },
+                                          {
+                                              "path":  "BonVision/Primitives/RangeAnimation.bonsai",
+                                              "git_blob_sha1":  "24472c4dd3da49298c3c1138d28ebab143ab067d"
+                                          },
+                                          {
+                                              "path":  "BonVision/Properties/AssemblyInfo.cs",
+                                              "git_blob_sha1":  "36c8bca0d9c1f56467f3448d184abe4e62662f2a"
+                                          },
+                                          {
+                                              "path":  "BonVision/Properties/launchSettings.json",
+                                              "git_blob_sha1":  "ee1d35e2925e48b28ff5fbe1e7b7c7de6f6f5714"
+                                          },
+                                          {
+                                              "path":  "BonVision/RotationConverter.cs",
+                                              "git_blob_sha1":  "42c83ad25d2dfd8527f7b19612212bdd49836ed0"
+                                          },
+                                          {
+                                              "path":  "BonVision/RotationProperty.cs",
+                                              "git_blob_sha1":  "72702daa6a817d1bde163d3e0c90a4e72bb69ff9"
+                                          },
+                                          {
+                                              "path":  "BonVision/SampleMany.cs",
+                                              "git_blob_sha1":  "cedee3afd90cd85ac5df02f1a7e0f17cf0229c00"
+                                          },
+                                          {
+                                              "path":  "BonVision/Shaders/Checkerboard.frag",
+                                              "git_blob_sha1":  "96cf052fe38b76f50cdaf5d941f0a197003ce2f4"
+                                          },
+                                          {
+                                              "path":  "BonVision/Shaders/Circle.frag",
+                                              "git_blob_sha1":  "f746f87ceee786e05857b729426d098aad62bb65"
+                                          },
+                                          {
+                                              "path":  "BonVision/Shaders/Color.frag",
+                                              "git_blob_sha1":  "d3df782ffb51494027ff3f07dd7a957b320dcaae"
+                                          },
+                                          {
+                                              "path":  "BonVision/Shaders/Gamma.frag",
+                                              "git_blob_sha1":  "d1847c2ba08bfa6eff758daa6b78b14e25a8de88"
+                                          },
+                                          {
+                                              "path":  "BonVision/Shaders/Gratings.frag",
+                                              "git_blob_sha1":  "cf1827ee6a3335ca1ea0dd975f265a4508e0b028"
+                                          },
+                                          {
+                                              "path":  "BonVision/Shaders/Gratings.vert",
+                                              "git_blob_sha1":  "248dabf262e810990ea4da5c95e95d44a7bc13b0"
+                                          },
+                                          {
+                                              "path":  "BonVision/Shaders/Image.frag",
+                                              "git_blob_sha1":  "6eeee0c8314cf76b9957427d0f47433844afb197"
+                                          },
+                                          {
+                                              "path":  "BonVision/Shaders/MeshMap.frag",
+                                              "git_blob_sha1":  "d3c14b821635095a1814886da85b08966d07239d"
+                                          },
+                                          {
+                                              "path":  "BonVision/Shaders/MeshMap.vert",
+                                              "git_blob_sha1":  "ac02111ddfc9141eb87b9565641b4f0f6d3f54bf"
+                                          },
+                                          {
+                                              "path":  "BonVision/Shaders/Model.frag",
+                                              "git_blob_sha1":  "ba1675d6945d9b644a9fd376dec5ebc1660532c3"
+                                          },
+                                          {
+                                              "path":  "BonVision/Shaders/Model.vert",
+                                              "git_blob_sha1":  "b1e3d3e39be664cfaa3f57a225592d3a45d456b2"
+                                          },
+                                          {
+                                              "path":  "BonVision/Shaders/PerspectiveMap.frag",
+                                              "git_blob_sha1":  "b348c6359a3682d6c01f849c04596990482aa0a3"
+                                          },
+                                          {
+                                              "path":  "BonVision/Shaders/PerspectiveMap.vert",
+                                              "git_blob_sha1":  "d916e7b1492e295ee0f2c04e293c920832191adb"
+                                          },
+                                          {
+                                              "path":  "BonVision/Shaders/Quad.vert",
+                                              "git_blob_sha1":  "248dabf262e810990ea4da5c95e95d44a7bc13b0"
+                                          },
+                                          {
+                                              "path":  "BonVision/Shaders/QuadArray.vert",
+                                              "git_blob_sha1":  "d12732e0ce30c3b2711047dea5e1c3d807b5ca0f"
+                                          },
+                                          {
+                                              "path":  "BonVision/Shaders/SphereMap.frag",
+                                              "git_blob_sha1":  "38e304a1de18bd20f98687dfd82b877bccf39bc0"
+                                          },
+                                          {
+                                              "path":  "BonVision/Shaders/SphereMap.vert",
+                                              "git_blob_sha1":  "1a2d7c308c65287bff595769fdfb8a6dae20f452"
+                                          },
+                                          {
+                                              "path":  "BonVision/Shaders/TexturedModel.frag",
+                                              "git_blob_sha1":  "f1949b4c21a7c668bb5965714145b6147279b578"
+                                          },
+                                          {
+                                              "path":  "BonVision/Shaders/TexturedModel.vert",
+                                              "git_blob_sha1":  "9265f81ad43dd37d83952b32fdc8b2557a7acdcd"
+                                          },
+                                          {
+                                              "path":  "Extensions.csproj",
+                                              "git_blob_sha1":  "ccb564d36701281c428ba83d4e2c58f4cfe1f0b4"
+                                          },
+                                          {
+                                              "path":  "LICENSE",
+                                              "git_blob_sha1":  "cc10555136331b0e2c854747ea74d9a9ec7dbdfe"
+                                          }
+                                      ]
+                    },
+                    {
+                        "id":  "bonsai",
+                        "repository":  "https://github.com/bonsai-rx/bonsai",
+                        "discovery_ref":  "2.6.3",
+                        "commit":  "68f44e7a53c5553631f4d87981a3c748352d4abf",
+                        "license":  "MIT",
+                        "inventory":  [
+                                          {
+                                              "path":  "Bonsai.Core/Bonsai.Core.csproj",
+                                              "git_blob_sha1":  "632cf418a217684be32502640bcded77bbeea676"
+                                          },
+                                          {
+                                              "path":  "Bonsai.Osc/Bonsai.Osc.csproj",
+                                              "git_blob_sha1":  "307234fbbeebd2bf7486b99b7df6de3786ffad0f"
+                                          },
+                                          {
+                                              "path":  "Bonsai.Shaders/Bonsai.Shaders.csproj",
+                                              "git_blob_sha1":  "909fc239cd02976053972ecc3ada1224534179c1"
+                                          },
+                                          {
+                                              "path":  "Bonsai.Shaders/CreateWindow.cs",
+                                              "git_blob_sha1":  "27be158b076d7035ee79d47af916899ba4f974e2"
+                                          },
+                                          {
+                                              "path":  "Bonsai.Shaders/ShaderWindow.cs",
+                                              "git_blob_sha1":  "cecf20b7fa260f8f03e6f20716fde44e3071179b"
+                                          },
+                                          {
+                                              "path":  "Bonsai/Bonsai.csproj",
+                                              "git_blob_sha1":  "110ba7a6d31a2cf40430002ac152bb10f702449a"
+                                          },
+                                          {
+                                              "path":  "LICENSE",
+                                              "git_blob_sha1":  "8c3ace89369631253d5f314af33451f74b9b82aa"
+                                          },
+                                          {
+                                              "path":  "NuGet.config",
+                                              "git_blob_sha1":  "f249c7767c2b7ec1e252ec0c0fc27a6de8d4ccfd"
+                                          }
+                                      ]
+                    }
+                ],
+    "configured_packages":  [
+                                {
+                                    "id":  "AForge",
+                                    "version":  "2.2.5"
+                                },
+                                {
+                                    "id":  "AForge.Video",
+                                    "version":  "2.2.5"
+                                },
+                                {
+                                    "id":  "AForge.Video.DirectShow",
+                                    "version":  "2.2.5"
+                                },
+                                {
+                                    "id":  "AssimpNet",
+                                    "version":  "4.1.0"
+                                },
+                                {
+                                    "id":  "Bonsai",
+                                    "version":  "2.6.3"
+                                },
+                                {
+                                    "id":  "Bonsai.Arduino",
+                                    "version":  "2.5.1"
+                                },
+                                {
+                                    "id":  "Bonsai.Audio",
+                                    "version":  "2.6.0"
+                                },
+                                {
+                                    "id":  "Bonsai.Bpod",
+                                    "version":  "0.1.0-ctp1"
+                                },
+                                {
+                                    "id":  "Bonsai.Core",
+                                    "version":  "2.6.2"
+                                },
+                                {
+                                    "id":  "Bonsai.DAQmx",
+                                    "version":  "0.1.0"
+                                },
+                                {
+                                    "id":  "Bonsai.Design",
+                                    "version":  "2.6.1"
+                                },
+                                {
+                                    "id":  "Bonsai.Design.Visualizers",
+                                    "version":  "2.6.2"
+                                },
+                                {
+                                    "id":  "Bonsai.Dsp",
+                                    "version":  "2.6.1"
+                                },
+                                {
+                                    "id":  "Bonsai.Dsp.Design",
+                                    "version":  "2.6.1"
+                                },
+                                {
+                                    "id":  "Bonsai.Editor",
+                                    "version":  "2.6.3"
+                                },
+                                {
+                                    "id":  "Bonsai.Ephys",
+                                    "version":  "2.5.0"
+                                },
+                                {
+                                    "id":  "Bonsai.Ephys.Design",
+                                    "version":  "2.5.0"
+                                },
+                                {
+                                    "id":  "Bonsai.Harp",
+                                    "version":  "3.3.0"
+                                },
+                                {
+                                    "id":  "Bonsai.Harp.CF",
+                                    "version":  "1.6.0"
+                                },
+                                {
+                                    "id":  "Bonsai.Numerics",
+                                    "version":  "0.6.0"
+                                },
+                                {
+                                    "id":  "Bonsai.Osc",
+                                    "version":  "2.6.1"
+                                },
+                                {
+                                    "id":  "Bonsai.Physics",
+                                    "version":  "0.2.0"
+                                },
+                                {
+                                    "id":  "Bonsai.Player",
+                                    "version":  "2.6.3"
+                                },
+                                {
+                                    "id":  "Bonsai.PointGrey",
+                                    "version":  "2.2.0-ivo2"
+                                },
+                                {
+                                    "id":  "Bonsai.Scripting",
+                                    "version":  "2.6.1"
+                                },
+                                {
+                                    "id":  "Bonsai.Shaders",
+                                    "version":  "0.25.0"
+                                },
+                                {
+                                    "id":  "Bonsai.Shaders.Design",
+                                    "version":  "0.25.0"
+                                },
+                                {
+                                    "id":  "Bonsai.Shaders.Rendering",
+                                    "version":  "0.2.1"
+                                },
+                                {
+                                    "id":  "Bonsai.Spinnaker",
+                                    "version":  "0.7.0"
+                                },
+                                {
+                                    "id":  "Bonsai.StarterPack",
+                                    "version":  "2.6.4"
+                                },
+                                {
+                                    "id":  "Bonsai.System",
+                                    "version":  "2.6.0"
+                                },
+                                {
+                                    "id":  "Bonsai.System.Design",
+                                    "version":  "2.6.1"
+                                },
+                                {
+                                    "id":  "Bonsai.Video",
+                                    "version":  "2.4.0"
+                                },
+                                {
+                                    "id":  "Bonsai.Video.Design",
+                                    "version":  "2.4.0"
+                                },
+                                {
+                                    "id":  "Bonsai.Vision",
+                                    "version":  "2.6.1"
+                                },
+                                {
+                                    "id":  "Bonsai.Vision.Design",
+                                    "version":  "2.6.1"
+                                },
+                                {
+                                    "id":  "Bonsai.VR",
+                                    "version":  "0.6.0"
+                                },
+                                {
+                                    "id":  "Bonsai.Windows.Input",
+                                    "version":  "2.6.0"
+                                },
+                                {
+                                    "id":  "BonVision",
+                                    "version":  "0.9.0"
+                                },
+                                {
+                                    "id":  "FTD2XX_NET",
+                                    "version":  "1.0.14"
+                                },
+                                {
+                                    "id":  "IronPython",
+                                    "version":  "2.7.5"
+                                },
+                                {
+                                    "id":  "IronPython.StdLib",
+                                    "version":  "2.7.5"
+                                },
+                                {
+                                    "id":  "jacobslusser.ScintillaNET",
+                                    "version":  "3.6.3"
+                                },
+                                {
+                                    "id":  "MathNet.Numerics",
+                                    "version":  "4.5.1"
+                                },
+                                {
+                                    "id":  "openal.redist",
+                                    "version":  "2.0.7"
+                                },
+                                {
+                                    "id":  "OpenCV.Net",
+                                    "version":  "3.3.1"
+                                },
+                                {
+                                    "id":  "OpenTK",
+                                    "version":  "3.1.0"
+                                },
+                                {
+                                    "id":  "OpenTK.GLControl",
+                                    "version":  "3.1.0"
+                                },
+                                {
+                                    "id":  "Rhythm.Net",
+                                    "version":  "1.5.0"
+                                },
+                                {
+                                    "id":  "Rx-Core",
+                                    "version":  "2.2.5"
+                                },
+                                {
+                                    "id":  "Rx-Interfaces",
+                                    "version":  "2.2.5"
+                                },
+                                {
+                                    "id":  "Rx-Linq",
+                                    "version":  "2.2.5"
+                                },
+                                {
+                                    "id":  "Rx-PlatformServices",
+                                    "version":  "2.2.5"
+                                },
+                                {
+                                    "id":  "SvgNet",
+                                    "version":  "2.0.1"
+                                },
+                                {
+                                    "id":  "System.Linq.Dynamic",
+                                    "version":  "1.0.7"
+                                },
+                                {
+                                    "id":  "ZedGraph",
+                                    "version":  "5.1.7"
+                                }
+                            ],
+    "downloaded_artifacts":  [
+                                 {
+                                     "name":  "Bonsai-2.6.3.zip",
+                                     "url":  "https://github.com/bonsai-rx/bonsai/releases/download/2.6.3/Bonsai.zip",
+                                     "sha256":  "46fa4d848b5ede89866ddcc2424672e4c7140c07b5c7b7cbcdfdd218f6c541c6",
+                                     "size_bytes":  935313
+                                 },
+                                 {
+                                     "name":  "bonvision.0.9.0.nupkg",
+                                     "url":  "https://api.nuget.org/v3-flatcontainer/bonvision/0.9.0/bonvision.0.9.0.nupkg",
+                                     "sha256":  "2a0396ba4c78d07df965ab1a32b9d571788fd790116cc20ec134ea04ebc9f9f6",
+                                     "size_bytes":  46942
+                                 }
+                             ]
+}

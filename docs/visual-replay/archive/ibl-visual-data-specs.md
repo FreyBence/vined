@@ -135,6 +135,8 @@ Historical synthetic regression checks performed before the no-test-writing rule
 
 Pass `--stimulus-parameters path/to/parameters.json` to use externally recovered, unit-normalized session/trial parameters. Add `--require-parameters` to reject incomplete parameters rather than falling back to approximations. This flag means parameter completeness, **not validated reconstruction fidelity**. The loader does not automatically download or reinterpret raw Bonsai records.
 
+**VR05 update (2026-09-22):** The separate [recovery command and schema-v2 contract](visual-extraction.md#parameter-recovery-vr05) now support explicitly mapped raw logs, evidenced unit/clock conversions, signed per-trial gain and field-level provenance. The schema-v1 example below remains supported as a legacy declaration. Schema-v2 sigma/phase/angle describe task inputs, whose source-renderer interpretation is distinct from this legacy Gaussian renderer. Source defaults require applicability evidence and are not automatically assigned to the configured recordings.
+
 The JSON contract is illustrated below with placeholder evidence and illustrative numbers, **not measured calibration**:
 
 ```json
