@@ -97,7 +97,6 @@ py -3.10 -m venv .venv
 .venv\Scripts\python.exe -m pip install -r requirements-bootstrap.txt
 .venv\Scripts\python.exe -m pip install --no-deps -r requirements-torch-cpu.txt
 .venv\Scripts\python.exe -m pip install -r requirements.txt -c constraints-windows-py310.txt
-.venv\Scripts\python.exe -B script/check_environment.py --device cpu
 ```
 
 Linux Bash:
@@ -107,15 +106,7 @@ python3.10 -m venv .venv
 .venv/bin/python -m pip install -r requirements-bootstrap.txt
 .venv/bin/python -m pip install --no-deps -r requirements-torch-cpu.txt
 .venv/bin/python -m pip install -r requirements.txt -c constraints-linux-py310.txt
-.venv/bin/python -B script/check_environment.py --device cpu
 ```
-
-The checker runs `pip check`, imports, CLI help, video/dataset round trips, and a
-small synthetic model step without downloading research assets. For CUDA, also
-run it with `--device cuda`. Existing editable installations and optional LFP
-setup are covered in [environment setup and workflow commands](docs/environment.md).
-See [validation results and blockers](docs/environment-validation.md) for the
-limits of these checks.
 
 ## Execution
 
