@@ -14,8 +14,12 @@ def project_path(variable, default):
     return path if path.is_absolute() else REPO_ROOT / path
 
 
+def output_dir():
+    return project_path("VINED_OUTPUT_DIR", REPO_ROOT / "output")
+
+
 def dataset_dir():
-    return project_path("VINED_DATA_DIR", REPO_ROOT / "datasets")
+    return project_path("VINED_DATA_DIR", output_dir() / "datasets")
 
 
 def visual_dir():
@@ -23,4 +27,4 @@ def visual_dir():
 
 
 def replay_dir():
-    return project_path("VINED_REPLAY_DIR", REPO_ROOT / "ibl_task_replay")
+    return project_path("VINED_REPLAY_DIR", output_dir() / "visual_replays")

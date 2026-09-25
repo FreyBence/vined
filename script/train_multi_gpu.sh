@@ -31,7 +31,7 @@ mask_ratio=${5}
 task_var=${6}
 
 user_name="yzhang39"
-base_path="${VINED_OUTPUT_DIR:-$REPO_ROOT}" # change to your own path
+base_path="${VINED_OUTPUT_DIR}" # change to your own path
 config_dir=$(pwd)/src/configs
 data_path="${VINED_DATA_DIR}"
 

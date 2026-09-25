@@ -10,6 +10,7 @@ import torch.nn.functional as F
 from accelerate import Accelerator
 
 import wandb
+from utils.paths import dataset_dir, output_dir
 from multi_modal.mm import MultiModal
 from utils.config_utils import config_from_kwargs, update_config
 from utils.dataset_utils import load_ibl_dataset
@@ -22,8 +23,8 @@ logging.basicConfig(
 
 ap = argparse.ArgumentParser()
 ap.add_argument("--eid", type=str, default="EXAMPLE_EID")
-ap.add_argument("--base_path", type=str, default="EXAMPLE_PATH")
-ap.add_argument("--data_path", type=str, default="EXAMPLE_PATH")
+ap.add_argument("--base_path", type=str, default=str(output_dir()))
+ap.add_argument("--data_path", type=str, default=str(dataset_dir()))
 ap.add_argument("--num_sessions", type=int, default=1)
 ap.add_argument("--model_mode", type=str, default="mm")
 ap.add_argument("--mask_mode", type=str, default="temporal")
@@ -136,11 +137,10 @@ else:
 if args.param_search:
     log_name = f"{eid_}_{model_mode}"
     save_path = os.path.join(base_path, "results", log_name)
-    tune_path = args.data_path.replace("datasets", f"tune/session_{num_sessions}/ray_results/{log_name}")
-    tune_path = tune_path.replace("bcxj", "beez")
+    tune_path = os.path.join(base_path, "tune", f"session_{num_sessions}", "ray_results", log_name)
     print(f"Load ray tune model from: {tune_path}")
     if not os.path.exists(tune_path):
-        tune_path = args.data_path.replace("datasets", f"ray_results/{log_name}")
+        tune_path = os.path.join(base_path, "ray_results", log_name)
     pretrain_path = [
         f for f in os.listdir(tune_path) if os.path.isdir(os.path.join(tune_path, f))
     ][0]
@@ -157,7 +157,9 @@ if args.param_search:
 logging.info(f"Save results to {save_path}.")
 
 if args.wandb:
+    os.makedirs(base_path, exist_ok=True)
     wandb.init(
+        dir=base_path,
         project=config.wandb.project, 
         entity=config.wandb.entity, 
         config=args,

@@ -25,6 +25,27 @@ The data pipeline consists of:
 
 **Status:** this is an experimental research implementation. Temporal alignment, checkpoint restoration, and evaluation task routing need validation before interpreting model scores. See [AGENT.md](AGENT.md) for the findings and development priorities.
 
+## Local data and outputs
+
+Generated and downloaded artifacts default to the gitignored `output/` directory:
+
+```text
+output/
+  datasets/          # ONE cache, aligned data, dataset caches, and vis_stim features
+  visual_replays/    # replay videos and sidecars
+  results/           # training checkpoints, evaluation metrics, and plots
+  wandb/             # W&B run logs for training and evaluation
+  eid-relevanc.txt   # session relevance discovery output
+```
+
+Published reproducibility inputs remain version-controlled under `data/`.
+`VINED_OUTPUT_DIR` overrides the common output root. `VINED_DATA_DIR`,
+`VINED_VISUAL_DIR`, and `VINED_REPLAY_DIR` override individual locations;
+relative environment paths are resolved from the checkout root. Training,
+fine-tuning, and evaluation also accept `--base_path` for their output root
+and `--data_path` for datasets. Hyperparameter searches write `ray_results/`
+under the output root. Explicit path overrides can point outside `output/`.
+
 ## Planned work
 
 - Establish a reproducible visual–neural baseline.

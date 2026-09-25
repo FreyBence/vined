@@ -27,7 +27,14 @@ export PATH="$VENV_BIN:$PATH"
 export VINED_REPO_ROOT="$REPO_ROOT"
 # Ray/Slurm workers import project modules directly from the shared checkout.
 export PYTHONPATH="$REPO_ROOT/src${PYTHONPATH:+:$PYTHONPATH}"
-export VINED_DATA_DIR="${VINED_DATA_DIR:-$REPO_ROOT/datasets}"
+export VINED_OUTPUT_DIR="${VINED_OUTPUT_DIR:-$REPO_ROOT/output}"
+if [[ "$VINED_OUTPUT_DIR" != /* && "$VINED_OUTPUT_DIR" != [A-Za-z]:* ]]; then
+    VINED_OUTPUT_DIR="$REPO_ROOT/$VINED_OUTPUT_DIR"
+fi
+export VINED_DATA_DIR="${VINED_DATA_DIR:-$VINED_OUTPUT_DIR/datasets}"
+if [[ "$VINED_DATA_DIR" != /* && "$VINED_DATA_DIR" != [A-Za-z]:* ]]; then
+    VINED_DATA_DIR="$REPO_ROOT/$VINED_DATA_DIR"
+fi
 export VINED_VISUAL_DIR="${VINED_VISUAL_DIR:-$VINED_DATA_DIR/vis_stim}"
-export VINED_REPLAY_DIR="${VINED_REPLAY_DIR:-$REPO_ROOT/ibl_task_replay}"
+export VINED_REPLAY_DIR="${VINED_REPLAY_DIR:-$VINED_OUTPUT_DIR/visual_replays}"
 cd "$REPO_ROOT"

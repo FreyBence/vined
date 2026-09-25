@@ -14,6 +14,7 @@ from ray.tune.schedulers import ASHAScheduler
 from torch.optim.lr_scheduler import OneCycleLR
 
 import wandb
+from utils.paths import dataset_dir, output_dir
 from loader.make_loader import make_loader
 from multi_modal.encoder_embeddings import EncoderEmbedding
 from multi_modal.mm import MultiModal
@@ -211,6 +212,7 @@ def main(tune_config=None):
 
     if config.wandb.use:
         wandb.init(
+            dir=base_path,
             project=config.wandb.project, 
             entity=config.wandb.entity, 
             config=config,
@@ -390,8 +392,8 @@ if __name__ == "__main__":
 
     ap = argparse.ArgumentParser()
     ap.add_argument("--eid", type=str, default="EXAMPLE_EID")
-    ap.add_argument("--base_path", type=str, default="EXAMPLE_PATH")
-    ap.add_argument("--data_path", type=str, default="EXAMPLE_PATH")
+    ap.add_argument("--base_path", type=str, default=str(output_dir()))
+    ap.add_argument("--data_path", type=str, default=str(dataset_dir()))
     ap.add_argument("--num_sessions", type=int, default=1)
     ap.add_argument("--model_mode", type=str, default="mm")
     ap.add_argument("--mask_mode", type=str, default="temporal")

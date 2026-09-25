@@ -5,7 +5,7 @@ import sys
 import json
 import tempfile
 from pathlib import Path
-from utils.paths import visual_dir, REPO_ROOT
+from utils.paths import dataset_dir, visual_dir, REPO_ROOT
 from utils.provenance import file_hash, fingerprint, source_hashes, split_trials, write_json
 from utils.sessions import add_session_arguments, select_sessions, run_sessions, SkipSession
 
@@ -31,7 +31,7 @@ logging.basicConfig(level=logging.INFO)
 # SET UP
 # ------
 ap = argparse.ArgumentParser()
-ap.add_argument("--base_path", type=str, default="EXAMPLE_PATH")
+ap.add_argument("--base_path", type=str, default=str(dataset_dir()))
 ap.add_argument("--huggingface_org", type=str, default="FreyBence")
 ap.add_argument("--use_lfp", action="store_false")
 add_session_arguments(ap)

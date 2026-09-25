@@ -7,6 +7,7 @@ import shutil
 import zipfile
 from contextlib import closing
 from time import perf_counter
+from utils.paths import replay_dir, visual_dir
 from utils.sessions import add_session_arguments, select_sessions, run_sessions, SkipSession
 from utils.visual_data import SCHEMA_VERSION, FEATURE_WIDTH, validate_ids
 from pathlib import Path
@@ -326,13 +327,13 @@ if __name__ == "__main__":
     ap.add_argument(
         "--video_dir",
         type=str,
-        required=True
+        default=str(replay_dir())
     )
 
     ap.add_argument(
         "--output_dir",
         type=str,
-        required=True
+        default=str(visual_dir())
     )
 
     ap.add_argument(

@@ -15,6 +15,7 @@ from utils.provenance import file_hash, fingerprint, write_json, package_version
 from utils.config_utils import config_from_kwargs, update_config
 from utils.dataset_utils import load_ibl_dataset
 from utils.utils import set_seed
+from utils.paths import dataset_dir, output_dir
 
 logging.basicConfig(level=logging.INFO) 
 
@@ -37,8 +38,8 @@ set_seed(config.seed)
 # ------ 
 ap = argparse.ArgumentParser()
 ap.add_argument("--eid", type=str, default="EXAMPLE_EID")
-ap.add_argument("--base_path", type=str, default="EXAMPLE_PATH")
-ap.add_argument("--data_path", type=str, default="EXAMPLE_PATH")
+ap.add_argument("--base_path", type=str, default=str(output_dir()))
+ap.add_argument("--data_path", type=str, default=str(dataset_dir()))
 ap.add_argument("--num_sessions", type=int, default=1)
 ap.add_argument("--model_mode", type=str, default="mm")
 ap.add_argument("--mask_mode", type=str, default="temporal")

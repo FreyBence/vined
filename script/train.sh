@@ -41,11 +41,11 @@ data_path="${VINED_DATA_DIR}"
 if [ "$search" = "True" ]; then
     echo "Doing hyperparameter search"
     search="--search"
-    base_path="${VINED_OUTPUT_DIR:-$REPO_ROOT}"
+    base_path="${VINED_OUTPUT_DIR}"
 else
     echo "Not doing hyperparameter search"
     search=""
-    base_path="${VINED_OUTPUT_DIR:-$REPO_ROOT}" # change to your own path
+    base_path="${VINED_OUTPUT_DIR}" # change to your own path
 fi
 
 if [ $train_mode = "finetune" ]; then

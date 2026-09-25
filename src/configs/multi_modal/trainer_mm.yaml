@@ -13,9 +13,9 @@ wandb:
   run_name: null
 
 dirs:
-  checkpoint_dir: checkpoints
-  log_dir: results 
-  dataset_cache_dir: datasets # will be overwritten by the script
+  checkpoint_dir: output/checkpoints
+  log_dir: output/results
+  dataset_cache_dir: output/datasets # will be overwritten by the script
   dataset_dir: neurofm123/671c7ea7-6726-4fbe-adeb-f89c2c8e489b_aligned # will be overwritten by the script
   behav_dir:  data/671c7ea7-6726-4fbe-adeb-f89c2c8e489b_aligned # will be overwritten by the script
   huggingface_org: FreyBence

@@ -32,7 +32,7 @@ task_var=${6}
 search=${7}
 
 user_name=$(whoami)
-base_path="${VINED_OUTPUT_DIR:-$REPO_ROOT}" # change to your own path
+base_path="${VINED_OUTPUT_DIR}" # change to your own path
 data_path="${VINED_DATA_DIR}"
 
 if [ $train_mode = "finetune" ]; then

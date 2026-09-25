@@ -30,5 +30,5 @@ user_name=$(whoami)
                              --model_mode mm \
                              --mask_ratio 0.1 \
                              --mixed_training \
-                             --base_path "${REPO_ROOT}" \
+                             --base_path "${VINED_OUTPUT_DIR}" \
                              --data_path "${VINED_DATA_DIR}"

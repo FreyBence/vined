@@ -1,10 +1,5 @@
-# Generated research data and experiment outputs (also when run from src/ or script/)
-datasets/
-ibl_task_replay/
-results/
-checkpoints/
-wandb/
-ray_results/
+# Generated research data and experiment outputs
+/output/
 *_visual_clip.npz
 events.out.tfevents.*
 
