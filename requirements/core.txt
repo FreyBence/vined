@@ -1,8 +1,8 @@
 # ViNED checkout runtime: stimulus replay, CLIP extraction, spike/vision datasets,
 # training, fine-tuning and evaluation. Run scripts from the repository root.
-# Install PyTorch first using requirements-torch-cu118.txt or requirements-torch-cpu.txt,
-# then install this file with the matching constraints-<platform>-py310.txt.
-# Optional raw LFP processing: also install requirements-lfp.txt.
+# Install PyTorch first using requirements/torch-cu118.txt or requirements/torch-cpu.txt,
+# then install this file with the matching requirements/constraints-<platform>-py310.txt.
+# Optional raw LFP processing: also install requirements/lfp.txt.
 
 # Numerical processing, metrics, plotting and configuration.
 numpy==1.26.4

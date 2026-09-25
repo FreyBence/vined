@@ -1,3 +1,0 @@
-# ViNED CPU runtime. Install before requirements.txt; see README.md.
---index-url https://download.pytorch.org/whl/cpu
-torch==2.2.1+cpu

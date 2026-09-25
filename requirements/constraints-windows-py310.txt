@@ -1,6 +1,6 @@
 # Resolved on Windows AMD64, Python 3.10.11.
 # Generated with script/freeze_environment.py after installation.
-# Torch CPU/CUDA variants are selected by requirements-torch-*.txt.
+# Torch CPU/CUDA variants are selected by requirements/torch-*.txt.
 # Versions cover ViNED core and optional LFP dependencies.
 accelerate==0.27.2
 aiohappyeyeballs==2.7.1

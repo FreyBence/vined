@@ -1,10 +1,10 @@
-# ViNED: Visual–Neural Encoding and Decoding
+# ViNED: Visualâ€“Neural Encoding and Decoding
 
 ViNED is Frey Bence's MSc research project exploring the relationship between visual stimuli and neural activity recorded with implanted Neuropixels electrodes. It builds on **NEDS (Neural Encoding and Decoding at Scale)** and uses International Brain Laboratory (IBL) recordings.
 
 ## Research goal
 
-Learn both directions of the visual–neural relationship:
+Learn both directions of the visualâ€“neural relationship:
 
 - **Encoding:** predict neural population activity from visual stimulus representations.
 - **Decoding:** predict visual stimulus representations from neural activity.
@@ -21,7 +21,7 @@ The data pipeline consists of:
 2. Extracting frame-level features with a frozen CLIP ViT-L/14 encoder.
 3. Preparing visual features and binned neural activity for each trial.
 4. Creating cached train, validation, and test datasets.
-5. Training and evaluating visual–neural predictions.
+5. Training and evaluating visualâ€“neural predictions.
 
 **Status:** this is an experimental research implementation. Temporal alignment, checkpoint restoration, and evaluation task routing need validation before interpreting model scores. See [AGENT.md](AGENT.md) for the findings and development priorities.
 
@@ -48,7 +48,7 @@ under the output root. Explicit path overrides can point outside `output/`.
 
 ## Planned work
 
-- Establish a reproducible visual–neural baseline.
+- Establish a reproducible visualâ€“neural baseline.
 - Add task-event modalities to model relationships between stimuli, events, and neural responses.
 - Define and evaluate prediction tasks for neural clusters and brain regions.
 - Evaluate multi-session training and adaptation to held-out sessions.
@@ -90,7 +90,7 @@ or editable-install step.
 - Bash for the optional shell wrappers (Git Bash on Windows); Linux Slurm for
   the supplied cluster/search launchers.
 
-The requirements describe this repository's visual–neural workflow:
+The requirements describe this repository's visualâ€“neural workflow:
 
 | Area | Python dependencies |
 | --- | --- |
@@ -99,34 +99,40 @@ The requirements describe this repository's visual–neural workflow:
 | IBL sessions and processed spikes | ONE-api, ibllib/Brainbox, iblatlas, iblutil |
 | Replay videos and CLIP images | opencv-python-headless 4.10.0.84, Pillow |
 | Dataset storage and downloads | Datasets 2.17.1, PyArrow 14.0.2, huggingface_hub |
-| Optional raw LFP processing | Additional dependencies in [requirements-lfp.txt](requirements-lfp.txt) |
+| Optional raw LFP processing | Additional dependencies in [requirements/lfp.txt](requirements/lfp.txt) |
 
-[requirements.txt](requirements.txt) declares the core dependencies;
-`constraints-windows-py310.txt` and `constraints-linux-py310.txt` pin the resolved
+[requirements/core.txt](requirements/core.txt) declares the core dependencies;
+`requirements/constraints-windows-py310.txt` and `requirements/constraints-linux-py310.txt` pin the resolved
 versions for each platform. Constraints alone do not install packages.
+
+All dependency manifests live in `requirements/`. Keep `bootstrap.txt` separate
+for installer tooling, `lfp.txt` for optional raw LFP processing, and the two
+`torch-*.txt` files as alternative CPU/CUDA installs with their own package
+indexes. The platform constraints preserve independently resolved environments;
+they are not additional lists of packages to install.
 
 ### Install after cloning
 
 Run these commands from the cloned `vined` directory. These examples select CPU
-Torch; for an NVIDIA GPU, substitute `requirements-torch-cu118.txt` for
-`requirements-torch-cpu.txt`.
+Torch; for an NVIDIA GPU, substitute `requirements/torch-cu118.txt` for
+`requirements/torch-cpu.txt`.
 
 Windows PowerShell:
 
 ```powershell
 py -3.10 -m venv .venv
-.venv\Scripts\python.exe -m pip install -r requirements-bootstrap.txt
-.venv\Scripts\python.exe -m pip install --no-deps -r requirements-torch-cpu.txt
-.venv\Scripts\python.exe -m pip install -r requirements.txt -c constraints-windows-py310.txt
+.venv\Scripts\python.exe -m pip install -r requirements/bootstrap.txt
+.venv\Scripts\python.exe -m pip install --no-deps -r requirements/torch-cpu.txt
+.venv\Scripts\python.exe -m pip install -r requirements/core.txt -c requirements/constraints-windows-py310.txt
 ```
 
 Linux Bash:
 
 ```bash
 python3.10 -m venv .venv
-.venv/bin/python -m pip install -r requirements-bootstrap.txt
-.venv/bin/python -m pip install --no-deps -r requirements-torch-cpu.txt
-.venv/bin/python -m pip install -r requirements.txt -c constraints-linux-py310.txt
+.venv/bin/python -m pip install -r requirements/bootstrap.txt
+.venv/bin/python -m pip install --no-deps -r requirements/torch-cpu.txt
+.venv/bin/python -m pip install -r requirements/core.txt -c requirements/constraints-linux-py310.txt
 ```
 
 ## Execution
@@ -141,14 +147,40 @@ configuration, and session selections.
 Bash wrappers resolve the checkout automatically and support `VENV_DIR` and
 `VINED_*` path overrides. Linux Slurm account/partition settings remain
 site-specific. Training enables W&B logging by default; configure your own
-account/project or set `WANDB_MODE=offline` for local runs. Follow the
-[workflow commands](docs/environment.md#paths-and-workflow) for each stage.
+account/project or set `WANDB_MODE=offline` for local runs.
+
+Wrapper arguments (run from the checkout; `--help` shows usage for the positional
+training, evaluation, and cache launchers):
+
+```text
+bash script/create_dataset.sh COUNT EID
+bash script/run_create_dataset.sh [--eid EID | --eids-file FILE] [--n-sessions COUNT]
+bash script/prepare_data.sh [--eid EID | --eids-file FILE] [--n-sessions COUNT]
+bash script/prepare_visual_stim.sh [--eid EID | --eids-file FILE] [--n-sessions COUNT]
+bash script/train.sh COUNT EID TRAIN_MODE MODEL_MODE MASK_RATIO SEARCH TASK_VAR
+bash script/eval.sh COUNT EID TRAIN_MODE MODEL_MODE MASK_RATIO TASK_VAR SEARCH [--overwrite]
+bash script/train_multi_gpu.sh COUNT EID MODEL_MODE MASK_RATIO TASK_VAR
+```
+
+`TRAIN_MODE` is `train` or `finetune`; `MODEL_MODE` is `mm`, `encoding`, or
+`decoding`; `SEARCH` is `True` or `False`; `TASK_VAR` is `all`, `random`, or
+`vision-clip`. `COUNT` is positive, `MASK_RATIO` is between 0 and 1, and `EID`
+is a session UUID (or `None` for multi-session selection). Fine-tuning still
+requires an actual EID. The ineffective `dummy_size` positional argument has
+been removed from both training wrappers. Evaluation overwrites only when
+`--overwrite` is supplied. Use the Python entry points directly for additional
+options such as `--pretrain_task_var`.
+
+Slurm is a shared-cluster job scheduler. `sbatch script/...` applies the
+`#SBATCH` resource requests; ordinary Bash execution ignores them. Search and
+multi-node training currently require Slurm; ordinary single-process training
+does not. Scheduler accounts and partitions must match your cluster.
 
 ## Research documents
 
-- [IBL visual data specifications and parameters](docs/ibl-visual-data-specs.md) — sourced stimulus reference, replay settings, CLIP schema, and alignment requirements.
-- [Hungarian research report](docs/Frey_Bence_ITLNUH_Beszámoló.pdf)
-- [Hungarian presentation](docs/Frey_Bence_ITLNUH_prezentáció.pptx)
+- [IBL visual data specifications and parameters](docs/ibl-visual-data-specs.md) â€” sourced stimulus reference, replay settings, CLIP schema, and alignment requirements.
+- [Hungarian research report](docs/Frey_Bence_ITLNUH_BeszĂˇmolĂł.pdf)
+- [Hungarian presentation](docs/Frey_Bence_ITLNUH_prezentĂˇciĂł.pptx)
 
 ## Origin and attribution
 

@@ -1,3 +1,0 @@
-# ViNED CUDA 11.8 runtime. Install before requirements.txt; see README.md.
---index-url https://download.pytorch.org/whl/cu118
-torch==2.2.1+cu118
