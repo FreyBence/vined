@@ -14,7 +14,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from utils.paths import dataset_dir, replay_dir
+from utils.paths import replay_dir
 from utils.sessions import add_session_arguments, select_sessions, run_sessions
 from utils.stimulus_parameters import (load_stimulus_parameters, resolve_parameters,
                                       resolved_evidence, alf_table_fingerprint, UNITS)
@@ -292,11 +292,15 @@ def verify_video(path, expected_frames):
         cap.release()
 
 
-def _generate_session(one, eid, out_dir, config, parameter_session=None,
+def _generate_session(access, eid, out_dir, config, parameter_session=None,
                       parameter_hash=None, require_parameters=False, write_video=True):
-    def load(name):
-        return one.load_dataset(eid, dataset=name, collection="alf")
-    trials = load("_ibl_trials.table.pqt")
+    table = access.load_dataset(eid, "_ibl_trials.table.pqt", collection="alf")
+    # Trials and wheel are separately versioned source objects. Keep wheel
+    # positions/timestamps coherent and expose both effective revision labels.
+    timestamps, positions = access.load_datasets(
+        eid, ["_ibl_wheel.timestamps.npy", "_ibl_wheel.position.npy"], collection="alf")
+    trials = table.data
+    sources = [table.source, timestamps.source, positions.source]
     if parameter_session is not None:
         identity = parameter_session.get("recovery", {}).get("alf_table_fingerprint")
         if identity is not None and identity != alf_table_fingerprint(trials):
@@ -306,12 +310,17 @@ def _generate_session(one, eid, out_dir, config, parameter_session=None,
             raise ValueError(f"Parameter manifest contains unknown trial IDs: {sorted(unknown)}")
     resolved = [resolve_parameters(parameter_session, row, require_parameters)
                 for row in range(len(trials))]
-    stim_off_times = (trials["stimOff_times"].to_numpy() if "stimOff_times" in trials
-                      else load("_ibl_trials.stimOff_times.npy"))
+    if "stimOff_times" in trials:
+        stim_off_times = trials["stimOff_times"].to_numpy()
+    else:
+        offsets = access.load_dataset(eid, "_ibl_trials.stimOff_times.npy", collection="alf",
+                                       revision=table.source.revision)
+        stim_off_times = offsets.data
+        sources.append(offsets.source)
     if np.asarray(stim_off_times).shape != (len(trials),):
         raise ValueError("Stimulus offsets must match original trial rows")
-    raw_timestamps = load("_ibl_wheel.timestamps.npy")
-    raw_positions = load("_ibl_wheel.position.npy")
+    raw_timestamps = timestamps.data
+    raw_positions = positions.data
     wheel_timestamps, wheel_position = validate_wheel(raw_timestamps, raw_positions)
     removed_samples = len(raw_timestamps) - len(wheel_timestamps)
     if removed_samples:
@@ -341,7 +350,10 @@ def _generate_session(one, eid, out_dir, config, parameter_session=None,
             input_samples=len(raw_timestamps), output_samples=len(wheel_timestamps),
             removed_duplicate_samples=removed_samples,
             within_timestamp_motion="unresolved where duplicate timestamps occur"),
-        dataset_revision=None, session_calibration_verified=False,
+        dataset_revision=table.source.revision,
+        source_revision_groups=dict(trials=table.source.revision, wheel=timestamps.source.revision),
+        source_datasets=json.loads(json.dumps([asdict(source) for source in sources], default=str)),
+        session_calibration_verified=False,
         reconstruction_fidelity="unverified",
         parameter_manifest_sha256=parameter_hash,
         parameter_manifest_entry=parameter_session,
@@ -361,7 +373,7 @@ def _generate_session(one, eid, out_dir, config, parameter_session=None,
         json.dumps(metadata, indent=2, allow_nan=False), encoding="utf-8")
 
 
-def generate_visual_stimulus_for_session(one, eids, *, config=ReplayConfig(),
+def generate_visual_stimulus_for_session(access, eids, *, config=ReplayConfig(),
                                         stimulus_parameters=None, require_parameters=False,
                                         write_video=True):
     parameter_sessions, parameter_hash = (load_stimulus_parameters(stimulus_parameters)
@@ -387,7 +399,7 @@ def generate_visual_stimulus_for_session(one, eids, *, config=ReplayConfig(),
         print(f"{eid}: generating in {session}; final output: {destination}", flush=True)
         try:
             session.mkdir()
-            _generate_session(one, eid, session, config, parameter_sessions.get(eid),
+            _generate_session(access, eid, session, config, parameter_sessions.get(eid),
                               parameter_hash, require_parameters, write_video)
             if destination.exists():
                 raise FileExistsError(f"Session appeared during generation: {destination}")
@@ -408,10 +420,12 @@ def generate_visual_stimulus_for_session(one, eids, *, config=ReplayConfig(),
 
 
 if __name__ == "__main__":
-    from one.api import ONE
+    from session_data import SessionAccess
 
     parser = argparse.ArgumentParser(description=__doc__)
     add_session_arguments(parser)
+    parser.add_argument("--access-policy", choices=("local-only", "remote-allowed"),
+                        default="remote-allowed")
     parser.add_argument("--no-video", action="store_true",
                         help="Save rendering sidecars only, for direct CLIP extraction")
     parser.add_argument("--stimulus-parameters", type=Path,
@@ -425,8 +439,7 @@ if __name__ == "__main__":
     write_video = not args.pop("no_video")
     stimulus_parameters = args.pop("stimulus_parameters")
     require_parameters = args.pop("require_parameters")
-    one = ONE(base_url="https://openalyx.internationalbrainlab.org",
-              password="international", silent=True, cache_dir=str(dataset_dir()))
-    generate_visual_stimulus_for_session(one, eids, config=ReplayConfig(**args),
+    access = SessionAccess(policy=args.pop("access_policy"))
+    generate_visual_stimulus_for_session(access, eids, config=ReplayConfig(**args),
                                         stimulus_parameters=stimulus_parameters,
                                         require_parameters=require_parameters, write_video=write_video)

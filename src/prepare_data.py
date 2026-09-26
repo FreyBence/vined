@@ -1,7 +1,5 @@
 import argparse
 import logging
-import os
-import sys
 import json
 import tempfile
 from pathlib import Path
@@ -10,11 +8,10 @@ from utils.provenance import file_hash, fingerprint, source_hashes, split_trials
 from utils.sessions import add_session_arguments, select_sessions, run_sessions, SkipSession
 
 import numpy as np
-import pandas as pd
-from one.api import ONE
+from session_data import SessionAccess
 
-from datasets import DatasetDict, DatasetInfo
-from utils.dataset_utils import create_dataset, upload_dataset
+from datasets import DatasetDict
+from utils.dataset_utils import create_dataset
 from utils.ibl_data_utils import (
     align_data,
     bin_behaviors,
@@ -32,11 +29,10 @@ logging.basicConfig(level=logging.INFO)
 # ------
 ap = argparse.ArgumentParser()
 ap.add_argument("--base_path", type=str, default=str(dataset_dir()))
-ap.add_argument("--huggingface_org", type=str, default="FreyBence")
 ap.add_argument("--use_lfp", action="store_false")
 add_session_arguments(ap)
-ap.add_argument("--n_workers", type=int, default=1)
 ap.add_argument("--split-seed", type=int, default=42)
+ap.add_argument("--access-policy", choices=("local-only", "remote-allowed"), default="remote-allowed")
 args = ap.parse_args()
 
 eids = select_sessions(args.eid, args.eids_file, args.n_sessions)
@@ -50,19 +46,12 @@ params = {
     "fr_thresh": 0.2
 }
 
-beh_names = ["vision-clip"]
-
 DYNAMIC_VARS = ["vision-clip"]
 
 # ---------------
 # PREPROCESS DATA
 # ---------------
-one = ONE(
-    base_url="https://openalyx.internationalbrainlab.org",
-    password="international",
-    silent=True,
-    cache_dir=args.base_path
-)
+access = SessionAccess(policy=args.access_policy, cache_dir=args.base_path)
 
 def prepare_session(eid):
     destination = Path(args.base_path) / f"{eid}_aligned"
@@ -75,27 +64,22 @@ def prepare_session(eid):
             raise ValueError("Regenerate CLIP features with revision provenance before preparing data")
         visual_provenance = json.loads(features["provenance"].item())
 
-    # if os.path.exists(f"{args.base_path}/{eid}_aligned"):
-    #     logging.info(f"The dataset {eid}_aligned already exists.")
-    #     continue
-
     logging.info(f"EID {eid}")
 
-    neural_dict, behave_dict, meta_dict, trials_dict, _ = prepare_data(
-        one, eid, params, n_workers=args.n_workers
+    neural_dict, _, meta_dict, trials_dict, _ = prepare_data(
+        access, eid
     )
 
     if neural_dict is None:
         raise SkipSession("Missing spike data")
 
     regions, beryl_reg = list_brain_regions(neural_dict, **params)
-    region_cluster_ids = select_brain_regions(neural_dict, beryl_reg, regions, **params)
+    region_cluster_ids = select_brain_regions(beryl_reg, regions)
 
-    bin_spikes, clusters_used_in_bins = bin_spiking_data(
+    bin_spikes, _ = bin_spiking_data(
         region_cluster_ids,
         neural_dict,
         trials_df=trials_dict["trials_df"],
-        n_workers=args.n_workers,
         **params
     )
 
@@ -114,24 +98,23 @@ def prepare_session(eid):
     meta_dict["cluster_depths"] = [meta_dict["cluster_depths"][idx] for idx in keep_unit_idxs]
     meta_dict["good_clusters"] = [meta_dict["good_clusters"][idx] for idx in keep_unit_idxs]
     meta_dict["uuids"] = [meta_dict["uuids"][idx] for idx in keep_unit_idxs]
-    # meta_dict["cluster_qc"] = {
-    #     k: np.asarray(v)[keep_unit_idxs].tolist() for k, v in meta_dict["cluster_qc"].items()
-    # }
+    for key in ("cluster_pids", "cluster_probes"):
+        meta_dict[key] = [meta_dict[key][idx] for idx in keep_unit_idxs]
 
     bin_beh, beh_mask = bin_behaviors(
-        one,
         eid,
         DYNAMIC_VARS,
         trials_df=trials_dict["trials_df"],
         allow_nans=True,
-        n_workers=args.n_workers,
         **params,
     )
 
     if args.use_lfp == False:
         from utils.preprocess_lfp import featurize_lfp, prepare_lfp
 
-        lfp_prec = prepare_lfp(one, eid, dead_channel_threshold=0., **params)
+        lfp_prec, lfp_sources = prepare_lfp(
+            access, eid, dead_channel_threshold=0., trials=trials_dict["trials_df"],
+            return_sources=True, **params)
         all_psd = featurize_lfp(
             lfp_prec, bin_size=int(params["interval_len"]/params["binsize"])
         )
@@ -142,9 +125,10 @@ def prepare_session(eid):
         logging.info(f"Binned LFP Data: {bin_lfp.shape}")
     else:
         bin_lfp = None
+        lfp_sources = []
 
     try:
-        align_bin_spikes, align_bin_beh, align_bin_lfp, target_mask, bad_trial_idxs = align_data(
+        align_bin_spikes, align_bin_beh, align_bin_lfp, target_mask, _ = align_data(
             bin_spikes,
             bin_beh,
             bin_lfp,
@@ -157,8 +141,6 @@ def prepare_session(eid):
         raise ValueError(f"Alignment failed for {eid}: {e}") from e
 
     # Data partition (train: 0.7 val: 0.1 test: 0.2)
-    num_trials = len(align_bin_spikes)
-
     trial_mask = np.array(target_mask).astype(bool).tolist()
     rejected_trial_ids = trials_dict["trials_df"].loc[
         ~np.asarray(trial_mask), "original_trial_id"].to_numpy(dtype=np.int64).tolist()
@@ -174,11 +156,14 @@ def prepare_session(eid):
     if file_hash(feature_path) != feature_sha256:
         raise ValueError("Visual features changed during alignment; retry with stable inputs")
     provenance = dict(schema_version=1, eid=eid, subject=str(meta_dict["subject"]),
+                      source_datasets=dict(**meta_dict["source_datasets"], lfp=lfp_sources),
                       params=params, split=split_metadata,
                       visual_sha256=feature_sha256, visual=visual_provenance,
                       sources=source_hashes("src/prepare_data.py", "src/utils/ibl_data_utils.py",
                                             "src/utils/dataset_utils.py", "src/utils/visual_data.py",
-                                            "src/utils/provenance.py"),
+                                            "src/utils/provenance.py", "src/session_data/access.py",
+                                            "src/session_data/spikes.py", "src/session_data/ephys.py",
+                                            "src/utils/preprocess_lfp.py"),
                       selection=dict(valid_trial_ids=original_trial_ids.tolist(),
                                      rejected_trial_ids=rejected_trial_ids,
                                      intervals=intervals.tolist(),
@@ -190,7 +175,7 @@ def prepare_session(eid):
                                      firing_rate_policy="session-level QC before splitting",
                                      firing_rate_threshold_hz=1/params["fr_thresh"]),
                       neuron_order={key: [str(value) for value in meta_dict[key]] for key in
-                                    ("uuids", "cluster_regions")})
+                                    ("uuids", "cluster_regions", "cluster_pids", "cluster_probes")})
     provenance["fingerprint"] = fingerprint(provenance)
 
     train_beh, val_beh, test_beh = {}, {}, {}
@@ -237,7 +222,6 @@ def prepare_session(eid):
     )
     logging.info(dataset)
 
-    # upload_dataset(dataset, org=args.huggingface_org, eid=f"{eid}_aligned")
     for name in dataset:
         dataset[name] = dataset[name].add_column("split", [name] * len(dataset[name]))
         dataset[name] = dataset[name].add_column("provenance_id", [provenance["fingerprint"]] * len(dataset[name]))

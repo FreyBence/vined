@@ -1,40 +1,26 @@
-import multiprocessing
 from utils.paths import visual_dir as get_visual_dir
-import os
-import sys
-import uuid
-from functools import partial
-from pathlib import Path
+import json
+from dataclasses import asdict
 
-import brainbox.behavior.dlc as dlc
 import numpy as np
 import pandas as pd
-from brainbox.io.one import SessionLoader, SpikeSortingLoader
+from brainbox.io.one import SpikeSortingLoader, _channels_alf2bunch
+from utils.sessions import SkipSession
 from brainbox.population.decode import get_spike_counts_in_bins
 from iblatlas.regions import BrainRegions
 from iblutil.numerical import bincount2D, ismember
-from scipy.interpolate import interp1d
-from tqdm import *
+from tqdm import tqdm
 
 from utils.visual_data import load_archive, resample_features, validate_ids
 
-DYNAMIC_VARS = ["vision-clip"]
-
-def globalize(func):
-  def result(*args, **kwargs):
-    return func(*args, **kwargs)
-  result.__name__ = result.__qualname__ = uuid.uuid4().hex
-  setattr(sys.modules[result.__module__], result.__name__, result)
-  return result
-
-
-def load_spiking_data(one, pid, compute_metrics=False, qc=None, **kwargs):
+def load_spiking_data(access, pid, compute_metrics=False, qc=None, **kwargs):
     eid = kwargs.pop("eid", "")
     pname = kwargs.pop("pname", "")
     sampling_freq = 30_000
-    spike_loader = SpikeSortingLoader(pid=pid, one=one, eid=eid, pname=pname)
-    
-    spikes, clusters, channels = spike_loader.load_spike_sorting()
+    result = access.load_spike_sorting(eid, pid=pid, pname=pname or None)
+    spikes, clusters, channels = result.spikes, result.clusters, result.channels
+    # Channel interpretation and cluster enrichment remain neural processing.
+    channels = _channels_alf2bunch(channels, brain_regions=BrainRegions())
     clusters_labeled = SpikeSortingLoader.merge_clusters(
         spikes, clusters, channels, compute_metrics=compute_metrics
     )
@@ -42,6 +28,7 @@ def load_spiking_data(one, pid, compute_metrics=False, qc=None, **kwargs):
         return None, None, None
     else:
         clusters_labeled = clusters_labeled.to_df()
+    clusters_labeled.attrs["source"] = json.loads(json.dumps(asdict(result.source), default=str))
     
     if qc is None:
         return spikes, clusters_labeled, sampling_freq
@@ -68,7 +55,7 @@ def merge_probes(spikes_list, clusters_list):
 
     for clusters, spikes in zip(clusters_list, spikes_list):
         spikes["clusters"] += cluster_max
-        cluster_max = clusters.index.max() + 1
+        cluster_max += len(clusters)
         merged_spikes.append(spikes)
         merged_clusters.append(clusters)
         
@@ -82,7 +69,7 @@ def merge_probes(spikes_list, clusters_list):
 
 
 def load_trials_and_mask(
-    one, 
+    access,
     eid, 
     min_rt=0.0, 
     max_rt=10., 
@@ -91,7 +78,7 @@ def load_trials_and_mask(
     max_trial_len=10, 
     exclude_unbiased=False, 
     exclude_nochoice=True, 
-    sess_loader=None,
+    trials=None,
 ): 
     if nan_exclude == "default":
         nan_exclude = [
@@ -103,11 +90,8 @@ def load_trials_and_mask(
             "feedbackType"
         ]
 
-    if sess_loader is None:
-        sess_loader = SessionLoader(one=one, eid=eid)
-
-    if sess_loader.trials.empty:
-        sess_loader.load_trials()
+    if trials is None:
+        trials = access.load_trials(eid).data
 
     if min_rt is not None:
         query = f"(firstMovement_times - stimOn_times < {min_rt})"
@@ -128,8 +112,8 @@ def load_trials_and_mask(
     if min_rt is None:
         query = query[3:]
 
-    mask = ~sess_loader.trials.eval(query)
-    return sess_loader.trials, mask
+    mask = ~trials.eval(query)
+    return trials, mask
 
 
 def list_brain_regions(neural_dict, **kwargs):
@@ -142,20 +126,10 @@ def list_brain_regions(neural_dict, **kwargs):
     return regions, beryl_reg
 
 
-def select_brain_regions(regressors, beryl_reg, region, **kwargs):
+def select_brain_regions(beryl_reg, region):
     reg_mask = np.isin(beryl_reg, region)
     reg_clu_ids = np.argwhere(reg_mask).flatten()
     return reg_clu_ids
-
-
-def create_intervals(start_time, end_time, interval_len):
-    interval_begs = np.arange(
-        start_time, end_time-interval_len, interval_len
-    )
-    interval_ends = np.arange(
-        start_time+interval_len, end_time, interval_len
-    )
-    return np.c_[interval_begs, interval_ends]
 
 
 def get_spike_data_per_interval(
@@ -165,7 +139,6 @@ def get_spike_data_per_interval(
     interval_ends, 
     interval_len, 
     binsize,
-    n_workers=None
 ):
     n_intervals = len(interval_begs)
 
@@ -188,16 +161,11 @@ def get_spike_data_per_interval(
             # no spikes in this interval
             binned_spikes_tmp = np.zeros((n_clusters_in_region, n_bins))
 
-            if np.isnan(t_beg) or np.isnan(t_end):
-                t_idxs = np.nan * np.ones(n_bins)
-            else:
-                t_idxs = np.arange(t_beg, t_end + binsize / 2, binsize)
-
             idxs_tmp = np.arange(n_clusters_in_region)
 
         else:
             # bin spikes
-            binned_spikes_tmp, t_idxs, cluster_idxs = bincount2D(
+            binned_spikes_tmp, _, cluster_idxs = bincount2D(
                 times_curr, clust_curr, xbin=binsize, xlim=[t_beg, t_end]
             )
 
@@ -217,7 +185,6 @@ def bin_spiking_data(
     neural_df, 
     intervals=None, 
     trials_df=None, 
-    n_workers=os.cpu_count(), 
     **kwargs
 ):
     if trials_df is not None:
@@ -255,144 +222,17 @@ def bin_spiking_data(
             interval_ends=intervals[:, 1],
             interval_len=interval_len,
             binsize=kwargs["binsize"],
-            n_workers=n_workers
         )
         binned_list = [x.T for x in binned_array]   
     return np.array(binned_list), clusters_used_in_bins
 
 
-def get_behavior_per_interval(
-    target_times, 
-    target_vals, 
-    intervals=None, 
-    trials_df=None, 
-    allow_nans=False,
-    n_workers=None,
-    **kwargs
-):
-    binsize = kwargs["binsize"]
-
-    if trials_df is not None:
-        align_event = kwargs["align_time"]
-        align_interval = kwargs["time_window"]
-        interval_len = align_interval[1] - align_interval[0]
-        align_times = trials_df[align_event].values
-        interval_begs = align_times + align_interval[0]
-        interval_ends = align_times + align_interval[1]
-    else:
-        assert intervals is not None, \
-            "Require intervals to segment the recording into chunks including trials and non-trials."
-        interval_begs, interval_ends = intervals.T
-        interval_len = interval_ends[0] - interval_begs[0]  # fallback if needed
-
-    n_intervals = len(interval_begs)
-
-    if np.all(np.isnan(interval_begs)) or np.all(np.isnan(interval_ends)):
-        print("Interval times all nan")
-        good_interval = np.nan * np.ones(interval_begs.shape[0])
-        return [], [], good_interval, []
-
-    # np.ceil because we want to make sure our bins contain all data
-    n_bins = int(np.ceil(interval_len / binsize))
-
-    # split data into intervals
-    idxs_beg = np.searchsorted(target_times, interval_begs, side="right")
-    idxs_end = np.searchsorted(target_times, interval_ends, side="left")
-
-    target_times_og_list = [target_times[ib:ie] for ib, ie in zip(idxs_beg, idxs_end)]
-    target_vals_og_list = [target_vals[ib:ie] for ib, ie in zip(idxs_beg, idxs_end)]
-
-    # outputs
-    target_times_list = [None] * n_intervals
-    target_vals_list = [None] * n_intervals
-    good_interval = [None] * n_intervals
-    skip_reasons = [None] * n_intervals
-
-    for interval_idx in tqdm(range(n_intervals)):
-        target_time = target_times_og_list[interval_idx]
-        target_val = target_vals_og_list[interval_idx]
-
-        is_good_interval, x_interp, y_interp = False, None, None
-
-        if len(target_val) == 0:
-            skip_reason = "target data not present"
-
-        elif np.sum(np.isnan(target_val)) > 0 and not allow_nans:
-            skip_reason = "nans in target data"
-
-        elif np.isnan(interval_begs[interval_idx]) or np.isnan(interval_ends[interval_idx]):
-            skip_reason = "bad interval data"
-
-        elif np.abs(interval_begs[interval_idx] - target_time[0]) > binsize:
-            skip_reason = "target data starts too late"
-
-        elif np.abs(interval_ends[interval_idx] - target_time[-1]) > binsize:
-            skip_reason = "target data ends too early"
-
-        else:
-            is_good_interval = True
-            skip_reason = None
-
-            x_interp = np.linspace(
-                interval_begs[interval_idx] + binsize,
-                interval_ends[interval_idx],
-                n_bins
-            )
-
-            if len(target_val.shape) > 1 and target_val.shape[1] > 1:
-                n_dims = target_val.shape[1]
-                y_interp_tmps = []
-                for n in range(n_dims):
-                    y_interp_tmps.append(
-                        interp1d(
-                            target_time,
-                            target_val[:, n],
-                            kind="linear",
-                            fill_value="extrapolate"
-                        )(x_interp)
-                    )
-                y_interp = np.hstack([y[:, None] for y in y_interp_tmps])
-            else:
-                y_interp = interp1d(
-                    target_time,
-                    target_val,
-                    kind="linear",
-                    fill_value="extrapolate"
-                )(x_interp)
-
-        # store results
-        good_interval[interval_idx] = is_good_interval
-        target_times_list[interval_idx] = x_interp
-        target_vals_list[interval_idx] = y_interp
-        skip_reasons[interval_idx] = skip_reason
-
-    return target_times_list, target_vals_list, np.array(good_interval), skip_reasons   
-
-
-def load_anytime_behaviors(one, eid, n_workers=None):
-
-    behaviors = [
-        "vision-clip"
-    ]
-
-    behave_dict = {}
-
-    for beh in tqdm(behaviors):
-        behave_dict[beh] = load_visual_stimulus(eid, beh)
-
-    return behave_dict
-
-
 def bin_behaviors(
-    one, 
     eid, 
     behaviors,
-    intervals=None, 
-    trials_only=False, 
     trials_df=None, 
     mask=None, 
     allow_nans=True, 
-    n_workers=os.cpu_count(),
     **kwargs
 ):
     if trials_df is None:
@@ -432,29 +272,37 @@ def bin_behaviors(
     return behave_dict, mask_dict
 
 
-def prepare_data(one, eid, params, n_workers=os.cpu_count()):
-    pids, probe_names = one.eid2pid(eid) 
-    details = one.get_details(eid)
-    print(f"Merge {len(probe_names)} probes for session EID: {eid}")
+def prepare_data(access, eid):
+    probes = access.probes(eid)
+    details = access.metadata(eid).reported
+    if not probes:
+        raise SkipSession(f"No probe insertions for EID {eid}")
+    print(f"Merge {len(probes)} probes for session EID: {eid}")
 
     clusters_list = []
     spikes_list = []
-    for pid, probe_name in zip(pids, probe_names):
+    source_records = []
+    for probe in probes:
+        pid, probe_name = probe["id"], probe["name"]
         tmp_spikes, tmp_clusters, sampling_freq = load_spiking_data(
-            one, pid, eid=eid, pname=probe_name
+            access, pid, eid=eid, pname=probe_name
         )
         if tmp_spikes is None:
             return None, None, None, None, None
+        if tmp_clusters.empty:
+            raise SkipSession(f"No clusters for EID {eid}, PID {pid}, probe {probe_name}")
         tmp_clusters["pid"] = pid
+        tmp_clusters["probe"] = probe_name
+        source_records.append(tmp_clusters.attrs["source"])
         spikes_list.append(tmp_spikes)
         clusters_list.append(tmp_clusters)
     spikes, clusters = merge_probes(spikes_list, clusters_list)
 
-    _, good_trials_mask = load_trials_and_mask(one=one, eid=eid)
-
+    trial_source = access.load_trials(eid)
     trials_df, trials_mask = load_trials_and_mask(
-        one=one, eid=eid, min_rt=0., max_rt=10., 
+        access=access, eid=eid, min_rt=0., max_rt=10., trials=trial_source.data,
     )
+    good_trials_mask = trials_mask.copy()
         
     trials_df["original_trial_id"] = np.arange(len(trials_df), dtype=np.int64)
     behave_dict = {}  # Visual data are loaded and validated once during binning.
@@ -475,7 +323,10 @@ def prepare_data(one, eid, params, n_workers=os.cpu_count()):
         "good_clusters": list((clusters["label"] >= 1).astype(int)),
         "cluster_depths": list(clusters["depths"]),
         "uuids":  list(clusters["uuids"]),
-        # "cluster_qc": {k: np.asarray(v) for k, v in clusters.to_dict("list").items()},
+        "cluster_pids": list(clusters["pid"]),
+        "cluster_probes": list(clusters["probe"]),
+        "source_datasets": dict(spikes=source_records,
+                                trials=json.loads(json.dumps([asdict(s) for s in trial_source.sources], default=str))),
     }
 
     trials_data = {
@@ -511,7 +362,6 @@ def align_data(
         "vision-clip",
     ], 
     trials_mask=None,
-    nan_thresh=0.3,
     behavior_masks=None,
     trial_index=None,
 ):

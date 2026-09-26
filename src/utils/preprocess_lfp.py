@@ -1,29 +1,15 @@
-import sys
-import pickle
-import tempfile
 from tqdm import tqdm
-from os import symlink
 import numpy as np
 import pandas as pd
-from pathlib import Path
-import matplotlib.pyplot as plt
-from one.api import ONE
+from session_data import AccessPolicy
+from utils.sessions import SkipSession
+from dataclasses import asdict
+import json
 import scipy
-from sklearn.model_selection import train_test_split, KFold, StratifiedKFold
-from sklearn.metrics import accuracy_score, roc_auc_score
-from sklearn.decomposition import PCA
-from sklearn.preprocessing import StandardScaler
-import neuropixel
-from brainbox.io.one import SpikeSortingLoader
 from ibldsp.utils import rms, fcn_cosine
-from ibldsp.waveforms import compute_spike_features
-import spikeglx
 import spikeinterface.preprocessing as si
-from spikeinterface.extractors.iblextractors import IblRecordingExtractor
 from spikeinterface.preprocessing import phase_shift
-from utils.ibl_data_utils import load_trials_and_mask
 
-band = 'lp'
 BANDS = {
     'delta': [0, 4], 
     'theta': [4, 10], 
@@ -91,7 +77,8 @@ def split(data, window_length, time_step):
 # load & preprocess
 # ------------------
 def prepare_lfp(
-    one, eid, mask=None, fs=2500.0, dead_channel_threshold=0., **kwargs
+    access, eid, mask=None, fs=2500.0, dead_channel_threshold=0.,
+    trials=None, return_sources=False, **kwargs
 ):
     """Load, preprocess, and merge LFP from both probes.
     
@@ -101,36 +88,47 @@ def prepare_lfp(
     trial_window = kwargs["time_window"]
     align_time = kwargs["align_time"]
     
-    pids, probes = one.eid2pid(eid)
-    ssl = SpikeSortingLoader(pid=pids[0], one=one)
-    stimOn_times = one.load_object(eid, 'trials', collection='alf')[align_time]
-    if mask:
+    probes = access.probes(eid)
+    if not probes:
+        raise SkipSession(f"No ephys insertions for EID {eid}")
+    if trials is None:
+        trials = access.load_trials(eid).data
+    stimOn_times = trials[align_time]
+    if mask is not None:
         stimOn_times = stimOn_times[mask]
-
-    detect_kwargs = {
-        "lf": {"fs": fs, "psd_hf_threshold": 1.4, 'similarity_threshold': (-0.25, 1)},
-    }
+    stimOn_times = np.asarray(stimOn_times, dtype=float)
+    if not len(stimOn_times):
+        raise SkipSession(f"No LFP trial rows for EID {eid}")
 
     lfp_per_probe = []
-    for idx in range(len(pids)):
-        pid, probe = pids[0], probes[0]
-        print(probe)
-        
-        rec_si_stream = IblRecordingExtractor(pid=pid, stream_name=f"{probe}.lf", one=one, stream=True)    
+    sources = []
+    for probe in probes:
+        print(probe["name"])
+        source = access.load_ephys(eid, pid=probe["id"], pname=probe["name"], band="lf",
+                                   stream=access.policy == AccessPolicy.REMOTE_ALLOWED)
+        rec_si_stream = source.recording
+        if not np.isclose(rec_si_stream.get_sampling_frequency(), fs):
+            raise ValueError(f"LFP sampling frequency differs from requested {fs} Hz for {probe['name']}")
+        sources.append(json.loads(json.dumps(asdict(source.source), default=str)))
         rec_phs = phase_shift(rec_si_stream) # channel rephasing
 
-        rec_bp = si.bandpass_filter(rec_phs, freq_min=0.5, freq_max=250)
-        bad_chans, labels = si.detect_bad_channels(
+        # Preserve the existing LFP band; installed SpikeInterface requires an
+        # explicit low-cutoff opt-in. Its automatic margins cover filter edges.
+        rec_bp = si.bandpass_filter(rec_phs, freq_min=0.5, freq_max=250,
+                                    margin_ms="auto", ignore_low_freq_error=True)
+        bad_chans, _ = si.detect_bad_channels(
             rec_bp, dead_channel_threshold=dead_channel_threshold, num_random_chunks=100, seed=0
         )
     
         lfp_per_trial = []
         for trial_idx in tqdm(range(len(stimOn_times)), total=len(stimOn_times)):
             t_event = stimOn_times[trial_idx]
-            s_event = int(ssl.samples2times(t_event, direction='reverse'))
-        
-            # for NP probes always 12 because AP is sampled at 12x the frequency of LF
-            sample_lf = s_event // 12
+            # Keep unavailable trial rows aligned with the other modalities.
+            if not np.isfinite(t_event):
+                lfp_per_trial.append(np.full((rec_bp.get_num_channels(),
+                                             int(round((trial_window[1] - trial_window[0]) * fs))), np.nan))
+                continue
+            sample_lf = int(np.floor(source.times_to_samples(t_event)))
             first, last = (
                 int(trial_window[0] * fs) + sample_lf, 
                 int(trial_window[1] * fs + sample_lf)
@@ -143,16 +141,16 @@ def prepare_lfp(
         lfp_per_trial = np.array(lfp_per_trial)
         lfp_per_trial = lfp_per_trial.transpose(0,2,1)
         
-    lfp_per_probe.append(lfp_per_trial)
-    lfp_per_probe = np.stack(lfp_per_probe, axis=-1).squeeze()
+        lfp_per_probe.append(lfp_per_trial)
+    lfp_per_probe = np.concatenate(lfp_per_probe, axis=2)
     print("Preprocessed LFP data shape: ", lfp_per_probe.shape)
     
-    return lfp_per_probe
+    return (lfp_per_probe, sources) if return_sources else lfp_per_probe
 
 # ------------------
 # feature extraction
 # ------------------
-def featurize_lfp(lfp_data, bin_size=200, samp_freq=2500, batch_size=50, pc_var_thresh=0.99):
+def featurize_lfp(lfp_data, bin_size=200, samp_freq=2500, batch_size=50):
     """Extract Power spectral density for LFP.
     
     Args:
@@ -172,7 +170,6 @@ def featurize_lfp(lfp_data, bin_size=200, samp_freq=2500, batch_size=50, pc_var_
     batch_idxs = list(range(0, n_trials, batch_size)) 
     n_batches = len(batch_idxs)
     all_psd = {}
-    #for name in ['psd_delta', 'psd_theta', 'psd_alpha', 'psd_beta','psd_gamma']:
     for name in ['psd_lfp']:
         print(f'Frequency Band: {name}')
         l_power_bands = []
