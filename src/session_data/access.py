@@ -5,6 +5,8 @@ from enum import Enum
 from pathlib import Path
 from uuid import UUID
 import hashlib
+from contextlib import ExitStack
+from tempfile import TemporaryDirectory
 
 from utils.paths import REPO_ROOT, dataset_dir
 from utils.sessions import select_sessions
@@ -80,13 +82,23 @@ class SessionAccess:
     """
 
     def __init__(self, *, policy, cache_dir=None,
-                 base_url="https://openalyx.internationalbrainlab.org"):
+                 base_url="https://openalyx.internationalbrainlab.org", force_reload=False):
         self._policy = AccessPolicy(policy)
+        if type(force_reload) is not bool:
+            raise TypeError("force_reload must be a boolean")
+        if force_reload and self._policy != AccessPolicy.REMOTE_ALLOWED:
+            raise ValueError("force_reload requires remote-allowed access")
+        self._force_reload = force_reload
+        self._reloaded = set()
         cache_path = Path(cache_dir).expanduser() if cache_dir is not None else dataset_dir()
         self._cache_dir = (cache_path if cache_path.is_absolute()
                            else REPO_ROOT / cache_path).resolve()
         self._base_url = base_url
         self._one = None
+
+    @property
+    def force_reload(self):
+        return self._force_reload
 
     @property
     def policy(self):
@@ -124,6 +136,9 @@ class SessionAccess:
                                         base_url=self.base_url, mode="local", silent=True)
                     # Load existing local tables before permitting remote lookup.
                     self._one.mode = "remote"
+                    if self.force_reload:
+                        # No cached HTTP response or offline fallback for this context.
+                        self._one.alyx.cache_mode = None
             except Exception as exc:
                 raise SessionAccessError(
                     "access_failed", "Could not initialize session source access"
@@ -142,7 +157,7 @@ class SessionAccess:
             if self.policy == AccessPolicy.LOCAL_ONLY:
                 path = client.eid2path(eid)
             else:
-                path = client.eid2path(eid, query_type="local")
+                path = None if self.force_reload else client.eid2path(eid, query_type="local")
                 if path is None:
                     path = client.eid2path(eid, query_type="remote")
         except SessionAccessError as exc:
@@ -367,8 +382,18 @@ class SessionAccess:
                                      eid=session.eid)
         loaded = []
         for row, source in selected:
+            staging = ExitStack()
             try:
-                path = self._client().load_dataset_from_id(source.dataset_id, download_only=True)
+                refresh = self.force_reload and source.dataset_id not in self._reloaded
+                if refresh:
+                    temporary = staging.enter_context(TemporaryDirectory(prefix="reload-", dir=self.cache_dir))
+                    # Installed ONE has no public force option on load_dataset_from_id.
+                    # Its download primitive always transfers, even for cached datasets.
+                    path = self._client()._download_dataset(row, cache_dir=temporary, update_cache=False)
+                    if path is None:
+                        raise SessionAccessError("source_unavailable", f"Remote reload unavailable: {source.name}", eid=session.eid)
+                else:
+                    path = self._client().load_dataset_from_id(source.dataset_id, download_only=True)
                 path = Path(path)
                 # ONE can return an inconsistent local file in offline mode. Do not
                 # decode it as valid source data merely because the path exists.
@@ -385,6 +410,13 @@ class SessionAccess:
                         raise SessionAccessError("source_inconsistent", f"File hash mismatch: {path}",
                                                  eid=session.eid)
                 data = path if download_only else load_file_content(path)
+                if refresh:
+                    source.path.parent.mkdir(parents=True, exist_ok=True)
+                    path.replace(source.path)
+                    path = source.path
+                    if download_only:
+                        data = path
+                    self._reloaded.add(source.dataset_id)
                 identity = DatasetSource(source.eid, source.dataset_id, source.name,
                                          source.collection, source.revision, path, "local")
                 loaded.append(LoadedDataset(data, identity))
@@ -398,4 +430,6 @@ class SessionAccess:
             except Exception as exc:
                 raise SessionAccessError("access_failed", f"Could not load {source.name}",
                                          eid=session.eid) from exc
+            finally:
+                staging.close()
         return tuple(loaded)

@@ -20,7 +20,7 @@ revision = trials.source.revision
 ## Configuration and identity
 
 `SessionAccess(*, policy, cache_dir=None,
-base_url="https://openalyx.internationalbrainlab.org")` requires an explicit policy:
+base_url="https://openalyx.internationalbrainlab.org", force_reload=False)` requires an explicit policy:
 
 - `AccessPolicy.LOCAL_ONLY` / `"local-only"`: cached identity and local files only;
   no remote fallback or Alyx client.
@@ -28,7 +28,16 @@ base_url="https://openalyx.internationalbrainlab.org")` requires an explicit pol
   and acquisition of missing files are permitted. ONE's cached HTTP responses may
   be used; this is not a guarantee of freshly queried remote availability.
 
-`policy`, `cache_dir`, and `base_url` are read-only properties. The cache defaults
+`force_reload=True` requires `remote-allowed`. It bypasses cached HTTP metadata
+responses and resolves session identity remotely. For `load_dataset` and
+`load_datasets`, each requested dataset is re-downloaded once per access context,
+even if already cached. Downloads are staged in the cache filesystem, checked
+against available size/hash metadata, and decoded before replacing the cached
+file. Failed downloads/validation do not replace an existing cached file and do
+not fall back to it. This does not clear unrelated files or HTTP-cache entries,
+and does not promise forced acquisition for separate spike/ephys adapter paths.
+
+`policy`, `cache_dir`, `base_url`, and `force_reload` are read-only properties. The cache defaults
 to `utils.paths.dataset_dir()` and its `VINED_DATA_DIR` / `VINED_OUTPUT_DIR`
 conventions. Explicit relative cache paths resolve against the checkout root.
 Existing ONE authentication configuration is used without interactive prompts.
