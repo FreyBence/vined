@@ -18,7 +18,7 @@ LEGACY_BACKEND = "legacy_python_gabor"
 STATES = {"hidden": 0, "stationary_visible": 1, "closed_loop": 2,
           "freeze_in_place": 3, "freeze_at_center": 4, "terminated": 5,
           "legacy_onset_coupled": 240, "legacy_response_hold": 241}
-RENDER_FILES = ("src/visual_stim_gen.py", "src/prepare_visual_stim.py", "src/utils/stimulus_parameters.py",
+RENDER_FILES = ("src/visual_stim_gen.py", "src/utils/stimulus_parameters.py",
                 "src/utils/replay_contract.py", "src/utils/provenance.py",
                 "src/utils/paths.py", "src/utils/sessions.py")
 

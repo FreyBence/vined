@@ -1,0 +1,44 @@
+{
+  "eid": null,
+  "profile": "iblrig-a0a031e2-choice-world",
+  "applicability": {
+    "kind": "project_assumption",
+    "evidence": "Use the pinned active choice-world reference as a functional approximation; historical session equivalence is unverified."
+  },
+  "scene": {
+    "screen_width_mm": 400,
+    "screen_height_mm": 300,
+    "distance_mm": 140,
+    "display_size": [800, 600],
+    "image_size": [800, 600],
+    "horizontal_fov_deg": 120,
+    "provenance": {
+      "kind": "project_assumption",
+      "evidence": "Schematic frontal 4:3 screen; dimensions and viewpoint are not measured session calibration."
+    }
+  },
+  "observation": {
+    "cadence_hz": 30,
+    "domain": "visible_interval",
+    "evidence": "Configured reconstruction cadence, not measured display refresh."
+  },
+  "movement": {
+    "wheel_sign": -1,
+    "max_gap_seconds": 1,
+    "provenance": {
+      "kind": "project_assumption",
+      "evidence": "Explicit ALF wheel-sign approximation; reject interpolation across gaps greater than one second."
+    }
+  },
+  "events": {
+    "closed_loop": {
+      "field": "goCue_times",
+      "provenance": {"kind": "project_assumption", "evidence": "Go cue approximates activation when recorded closed-loop timing is unavailable."}
+    },
+    "freeze": {
+      "field": "response_times",
+      "provenance": {"kind": "project_assumption", "evidence": "Response approximates freeze when recorded display-freeze timing is unavailable."}
+    }
+  },
+  "phase_seed": 0
+}

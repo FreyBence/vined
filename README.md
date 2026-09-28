@@ -157,10 +157,28 @@ bash script/create_dataset.sh COUNT EID
 bash script/run_create_dataset.sh [--eid EID | --eids-file FILE] [--n-sessions COUNT]
 bash script/prepare_data.sh [--eid EID | --eids-file FILE] [--n-sessions COUNT]
 bash script/prepare_visual_stim.sh [--eid EID | --eids-file FILE] [--n-sessions COUNT]
+bash script/generate_replay.sh [--eid EID] [--projection on|off] [--force-reload]
 bash script/train.sh COUNT EID TRAIN_MODE MODEL_MODE MASK_RATIO SEARCH TASK_VAR
 bash script/eval.sh COUNT EID TRAIN_MODE MODEL_MODE MASK_RATIO TASK_VAR SEARCH [--overwrite]
 bash script/train_multi_gpu.sh COUNT EID MODEL_MODE MASK_RATIO TASK_VAR
 ```
+
+`generate_replay.sh` generates compressed lossless frames and replay metadata for all
+EIDs in `data/eids.txt` by default; `--eid EID` selects one session. Every session
+uses all trials. `--projection off` selects display-only output; projection is
+on by default. It uses the explicit approximation settings in
+`data/replay-config.json` (800×600, 30 Hz). Each run creates a new directory under
+`VINED_REPLAY_DIR`, with one subdirectory per EID; `--output DIR` selects a specific new directory.
+The wrapper always permits remote access, reusing cached files and downloading
+missing data. Add `--force-reload` to bypass cached metadata responses and
+re-download requested replay source datasets even when cached. Unrelated cache
+contents and previous generated outputs are preserved.
+Metadata/catalog lookup may still contact IBL. Incomplete
+trials retain their outcomes. This pipeline does not generate MP4 videos. See the
+[replay interface](docs/visual-replay/interface.md) for configuration and statuses.
+Generation shows progress for all selected EIDs and for the current session's
+trials. Trial progress starts after source preparation and includes unsuccessful
+trial outcomes; it advances after artifact publication.
 
 `TRAIN_MODE` is `train` or `finetune`; `MODEL_MODE` is `mm`, `encoding`, or
 `decoding`; `SEARCH` is `True` or `False`; `TASK_VAR` is `all`, `random`, or
