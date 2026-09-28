@@ -11,6 +11,7 @@ Before planning, auditing, or implementing work, read and follow:
 * [.agent/rules/planning.md](.agent/rules/planning.md) for task decomposition, dependency planning, task-file structure, and progress tracking.
 * [.agent/rules/context.md](.agent/rules/context.md) for selecting the minimum authoritative documentation required for the current component and task.
 * [.agent/rules/audit.md](.agent/rules/audit.md) for component audits, finding priorities, repository-gap classification, and audit output structure.
+* [.agent/rules/interface.md](.agent/rules/interface.md) for post-implementation interface documentation, public API contracts, cross-module compatibility checks, and interface output structure.
 
 These rules apply throughout the task, not only during initial planning.
 
