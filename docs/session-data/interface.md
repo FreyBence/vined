@@ -107,7 +107,8 @@ misleading empty catalog. Discovery order carries no temporal or trial meaning.
 
 ```text
 access.load_dataset(eid, dataset, *, collection=None, revision=None, download_only=False)
-access.load_datasets(eid, datasets, *, collection=None, revision=None, download_only=False)
+access.load_datasets(eid, datasets, *, collection=None, revision=None, download_only=False,
+                     latest_common_revision=False)
 ```
 
 Names are nonempty filenames or ONE filename patterns selecting exactly one
@@ -123,6 +124,15 @@ Every member must have the same EID, collection, and revision. Mixed selections
 raise `source_conflict` before loading; distinct source groups may be requested
 separately, leaving their cross-group compatibility explicit to the consumer.
 Equal revision labels alone are not a scientific compatibility certification.
+
+With `latest_common_revision=True`, mixed automatically selected revisions within
+one collection fall back to the newest revision shared by every requested dataset
+in the same catalog snapshot. Ordering follows ONE's lexicographic revision-label
+ordering, with the unrevisioned label `""` oldest. The fallback emits a warning and
+returns the effective revision in each source record. Explicit revision requests
+are never overridden. No shared revision, ambiguous files, or mixed collections
+still raise `source_conflict`; loading and acquisition failures are not retried at
+older revisions. Replay enables this option for its wheel timestamp/position pair.
 
 `data` is ONE's decoded representation (for example a DataFrame, NumPy array,
 dictionary, or text). `download_only=True` instead returns the materialized

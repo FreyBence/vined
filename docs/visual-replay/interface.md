@@ -25,7 +25,11 @@ publication/readback interfaces are described below.
 `trial_ids` selects unique original zero-based source-table row positions and
 preserves request order; omission selects all rows. Revisions follow the
 session-data contract. Auxiliary trial events use the exact table revision;
-wheel arrays are jointly loaded in their own revision group. Optional task
+wheel arrays are jointly loaded in their own revision group. If automatic wheel
+selection yields mixed revisions, session-data selects the newest shared revision
+and emits a warning; the effective sources remain recorded in replay provenance.
+Explicit `wheel_revision` requests are preserved. No shared revision remains an
+error. Optional task
 settings come from `_iblrig_taskSettings.raw.json` in the selected collection.
 No raw-clock conversion is inferred.
 

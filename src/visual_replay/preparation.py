@@ -417,6 +417,7 @@ def resolve_reconstruction_plan(
             ["_ibl_wheel.timestamps.npy", "_ibl_wheel.position.npy"],
             collection="alf",
             revision=wheel_revision,
+            latest_common_revision=True,
         )
         sources.extend([_source(ts), _source(pos)])
         times, positions = (

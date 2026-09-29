@@ -5,6 +5,7 @@ from enum import Enum
 from pathlib import Path
 from uuid import UUID
 import hashlib
+import warnings
 from contextlib import ExitStack
 from tempfile import TemporaryDirectory
 
@@ -333,11 +334,14 @@ class SessionAccess:
         return load_ephys(self, eid, pid=pid, pname=pname, band=band,
                           stream=stream, revision=revision)
 
-    def load_datasets(self, eid, datasets, *, collection=None, revision=None, download_only=False):
+    def load_datasets(self, eid, datasets, *, collection=None, revision=None, download_only=False,
+                      latest_common_revision=False):
         """Load a coherent group from one catalog snapshot, preserving request order.
 
         Each name must select one dataset. Joint selections must share a collection
         and revision; request distinct source groups separately if they differ.
+        Opt in to latest_common_revision to resolve mixed automatic revisions to
+        the newest shared revision, without overriding explicit requests.
         """
         from one.alf.exceptions import ALFError, ALFObjectNotFound
         from one.alf.io import load_file_content
@@ -354,6 +358,7 @@ class SessionAccess:
             raise ValueError("Loading requires exact collection/revision values")
         session, table, origin = self._catalog(eid)
         selected = []
+        candidates = []
         for name in names:
             try:
                 # Exact filtering first prevents ONE's last-before revision fallback.
@@ -365,6 +370,7 @@ class SessionAccess:
                     if revision is not None and origin == "remote":
                         reason = "revision_unavailable"
                     raise SessionAccessError(reason, f"No source matches {name}", eid=session.eid)
+                candidates.append(matches)
                 matches = filter_datasets(matches, revision=revision,
                                           revision_last_before=revision is None, assert_unique=True)
                 row = matches.iloc[0]
@@ -377,6 +383,47 @@ class SessionAccess:
             except Exception as exc:
                 raise SessionAccessError("access_failed", f"Could not resolve source {name}",
                                          eid=session.eid) from exc
+        if (latest_common_revision and revision is None
+                and len({source.collection for _, source in selected}) == 1
+                and len({source.revision for _, source in selected}) > 1):
+            effective_collection = selected[0][1].collection
+            groups = [
+                [(row, self._describe(session, row, origin)) for _, row in matches.iterrows()]
+                for matches in candidates
+            ]
+            shared = set.intersection(*[
+                {source.revision for _, source in group
+                 if source.collection == effective_collection}
+                for group in groups
+            ])
+            if not shared:
+                available = {
+                    name: sorted({source.revision for _, source in group
+                                  if source.collection == effective_collection})
+                    for name, group in zip(names, groups)
+                }
+                raise SessionAccessError(
+                    "source_conflict",
+                    f"Joint sources have no shared revision for {session.eid}: {available}",
+                    eid=session.eid,
+                )
+            # ONE orders revision labels lexicographically; unrevisioned ('') is oldest.
+            common_revision = max(shared)
+            resolved = []
+            for name, group in zip(names, groups):
+                matches = [(row, source) for row, source in group
+                           if source.collection == effective_collection
+                           and source.revision == common_revision]
+                if len(matches) != 1:
+                    raise SessionAccessError("source_conflict", f"Ambiguous source for {name}",
+                                             eid=session.eid)
+                resolved.append(matches[0])
+            selected = resolved
+            warnings.warn(
+                f"{session.eid}: joint sources {names} have different default revisions; "
+                f"using newest shared revision {common_revision!r} in {effective_collection!r}",
+                stacklevel=2,
+            )
         if len({(source.collection, source.revision) for _, source in selected}) > 1:
             raise SessionAccessError("source_conflict", "Joint sources have different collections/revisions",
                                      eid=session.eid)
