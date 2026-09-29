@@ -16,6 +16,9 @@ def validate_ids(values):
 def load_archive(path, eid):
     """Legacy archives are rejected: their trial IDs and clock are ambiguous."""
     with np.load(path, allow_pickle=False) as data:
+        if "manifest.json" in data.files:
+            raise ValueError("This feature generation requires visual_features.FeatureArtifactReader; "
+                             "the legacy alignment loader cannot preserve its coverage and generation identity")
         required = {"schema_version", "eid", "trial_ids", "offsets", "times", "features", "valid", "clock"}
         if not required.issubset(data.files):
             raise ValueError("Legacy/incomplete visual archive; regenerate features from timestamped replays")

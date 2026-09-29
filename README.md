@@ -156,7 +156,7 @@ training, evaluation, and cache launchers):
 bash script/create_dataset.sh COUNT EID
 bash script/run_create_dataset.sh [--eid EID | --eids-file FILE] [--n-sessions COUNT]
 bash script/prepare_data.sh [--eid EID | --eids-file FILE] [--n-sessions COUNT]
-bash script/prepare_visual_stim.sh [--eid EID | --eids-file FILE] [--n-sessions COUNT]
+bash script/prepare_visual_stim.sh [--eid EID] [--replay-dir output/visual_replays/RUN] [--sample-fps 5]
 bash script/generate_replay.sh [--eid EID] [--projection on|off] [--force-reload]
 bash script/train.sh COUNT EID TRAIN_MODE MODEL_MODE MASK_RATIO SEARCH TASK_VAR
 bash script/eval.sh COUNT EID TRAIN_MODE MODEL_MODE MASK_RATIO TASK_VAR SEARCH [--overwrite]
@@ -179,6 +179,18 @@ trials retain their outcomes. This pipeline does not generate MP4 videos. See th
 Generation shows progress for all selected EIDs and for the current session's
 trials. Trial progress starts after source preparation and includes unsuccessful
 trial outcomes; it advances after artifact publication.
+
+`prepare_visual_stim.sh` processes all published replay sessions by default;
+`--eid EID` selects one session. Discovery uses the replay directory, not
+`data/eids.txt`. It reads saved mouse-view replay images through verified
+replay readback, without MP4 decoding. It preserves the full image extent for
+CLIP and selects all observations unless `--sample-fps` is supplied. Select a
+specific replay run when multiple generations exist. Outputs are compressed
+`<eid>_visual_clip.npz` feature generations under `VINED_VISUAL_DIR`; existing
+files are refused, so use a fresh `--output-dir` for another extraction.
+Read them with `visual_features.FeatureArtifactReader`. These archives retain
+coverage, trial outcomes, and generation identities; the legacy alignment loader
+does not support them yet. See the [visual-features interface](docs/visual-features/interface.md).
 
 `TRAIN_MODE` is `train` or `finetune`; `MODEL_MODE` is `mm`, `encoding`, or
 `decoding`; `SEARCH` is `True` or `False`; `TASK_VAR` is `all`, `random`, or

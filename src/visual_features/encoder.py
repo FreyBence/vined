@@ -1,0 +1,161 @@
+"""Fixed-weight CLIP encoding with explicit full-view image preparation."""
+
+from copy import deepcopy
+from dataclasses import dataclass
+from pathlib import Path
+import re
+
+import numpy as np
+
+from utils.provenance import file_hash, package_versions, source_hashes
+from visual_replay import TrialOutcome
+from .observations import ObservationSelection
+
+
+class FeatureExtractionError(RuntimeError):
+    """Encoder/preprocessing failure; no completed feature result is available."""
+
+
+@dataclass(frozen=True)
+class EncodedObservation:
+    metadata: dict
+    selected: bool
+    feature: np.ndarray | None
+    status: str
+
+
+def prepare_image(rgb, size, *, fill=(128, 128, 128)):
+    """Fit RGB8 into a square with centered neutral padding, without cropping."""
+    from PIL import Image
+
+    if (not isinstance(rgb, np.ndarray) or rgb.dtype != np.uint8 or rgb.ndim != 3
+            or rgb.shape[2] != 3 or min(rgb.shape[:2]) <= 0):
+        raise ValueError("Expected a nonempty uint8 RGB image")
+    if type(size) is not int or size <= 0:
+        raise ValueError("size must be a positive integer")
+    height, width = rgb.shape[:2]
+    scale = size / max(width, height)
+    dimensions = (max(1, round(width * scale)), max(1, round(height * scale)))
+    image = Image.fromarray(rgb).resize(dimensions, resample=Image.Resampling.BICUBIC)
+    canvas = Image.new("RGB", (size, size), fill)
+    canvas.paste(image, ((size - dimensions[0]) // 2, (size - dimensions[1]) // 2))
+    return canvas
+
+
+class ClipEncoder:
+    """Load one immutable model/processor snapshot and encode bounded batches."""
+
+    def __init__(self, model_name="openai/clip-vit-large-patch14", *, revision="main",
+                 device=None):
+        import torch
+        from huggingface_hub import HfApi, snapshot_download
+        from transformers import CLIPModel, CLIPImageProcessor
+
+        if not re.fullmatch(r"[0-9a-f]{40}", revision):
+            revision = HfApi().model_info(model_name, revision=revision).sha
+        if not re.fullmatch(r"[0-9a-f]{40}", revision or ""):
+            raise ValueError("CLIP revision must resolve to an immutable commit")
+        snapshot = Path(snapshot_download(model_name, revision=revision,
+            allow_patterns=["*.json", "pytorch_model.bin", "model.safetensors"]))
+        self._device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        self._model = CLIPModel.from_pretrained(str(snapshot), local_files_only=True).to(self._device)
+        self._model.eval()
+        self._model.requires_grad_(False)
+        self._processor = CLIPImageProcessor.from_pretrained(str(snapshot), local_files_only=True)
+        self._size = self._model.config.vision_config.image_size
+        self._width = self._model.config.projection_dim
+        if type(self._size) is not int or self._size <= 0 or self._width != 768:
+            raise ValueError("Require a square-input CLIP model with 768 projected features")
+        # Pixel conversion/normalization are explicit; downloaded crop defaults
+        # must not undo the full-view adaptation.
+        self._processor.do_resize = False
+        self._processor.do_center_crop = False
+        self._processor.do_rescale = True
+        self._processor.rescale_factor = 1 / 255
+        self._processor.do_normalize = True
+        self._processor.do_convert_rgb = True
+        self._provenance = dict(model=model_name, revision=revision,
+            artifact_hashes={p.name: file_hash(p) for p in snapshot.iterdir() if p.is_file()},
+            output="CLIPModel.get_image_features: projected pooled vision output",
+            feature_width=self._width, dtype="float32", normalization="L2 per observation",
+            preparation=dict(policy="aspect-preserving fit and centered square padding",
+                image_size=self._size, fill_rgb=[128, 128, 128], resample="Pillow BICUBIC",
+                rounding="Python round, minimum one pixel", odd_padding="extra pixel at right/bottom",
+                input="uint8 RGB [0,255], top row first"),
+            processor=self._processor.to_dict(), packages=package_versions(), device=str(self._device),
+            sources=source_hashes("src/visual_features/encoder.py", "src/visual_features/observations.py"))
+
+    @property
+    def provenance(self):
+        return deepcopy(self._provenance)
+
+    def encode(self, frames):
+        """Return float32[B,768]; raise rather than publish unusable vectors."""
+        import torch
+
+        if not frames:
+            raise ValueError("Cannot encode an empty batch")
+        try:
+            images = [prepare_image(rgb, self._size) for rgb in frames]
+            inputs = self._processor(images=images, return_tensors="pt")
+            with torch.inference_mode():
+                features = self._model.get_image_features(
+                    **{key: value.to(self._device) for key, value in inputs.items()}).float()
+                if (features.shape != (len(frames), self._width)
+                        or not torch.isfinite(features).all()
+                        or (torch.linalg.vector_norm(features, dim=-1) <= 1e-12).any()):
+                    raise ValueError("CLIP produced invalid projected features")
+                features = torch.nn.functional.normalize(features, dim=-1).cpu().numpy()
+            if not np.isfinite(features).all():
+                raise ValueError("CLIP produced nonfinite normalized features")
+            return features
+        except (ValueError, TypeError, RuntimeError, OSError) as exc:
+            raise FeatureExtractionError(f"CLIP extraction failed: {exc}") from exc
+
+
+def iter_encoded_observations(observations, encoder, *, batch_size=32):
+    """Preserve record order and all source metadata while encoding selected pixels.
+
+    Yield EncodedObservation or unchanged TrialOutcome. Source completion is
+    exposed by observations only after exhaustion; this produces no archive.
+    """
+    if not isinstance(observations, ObservationSelection) or observations.state != "pending":
+        raise ValueError("Expected a fresh ObservationSelection")
+    if type(batch_size) is not int or batch_size <= 0:
+        raise ValueError("batch_size must be a positive integer")
+
+    def encode_batch(records):
+        frames = [record.rgb for record in records if record.selected and record.rgb is not None]
+        try:
+            values = iter(encoder.encode(frames)) if frames else iter(())
+        except FeatureExtractionError as exc:
+            ids = [record.metadata["observation_id"] for record in records
+                   if record.selected and record.rgb is not None]
+            raise FeatureExtractionError(f"Observations {ids}: {exc}") from exc
+        for record in records:
+            feature = None
+            if not record.selected:
+                status = "not_selected"
+            elif record.metadata["status"] != "valid":
+                status = "source_unavailable"
+            else:
+                if record.rgb is None:
+                    raise FeatureExtractionError("Selected valid observation has no pixels")
+                value = next(values)
+                feature = np.frombuffer(value.tobytes(), dtype=np.float32).reshape(value.shape)
+                status = "encoded"
+            yield EncodedObservation(deepcopy(record.metadata), record.selected, feature, status)
+
+    with observations:
+        records = []
+        for item in observations:
+            if isinstance(item, TrialOutcome):
+                yield from encode_batch(records)
+                records = []
+                yield item
+            else:
+                records.append(item)
+                if len(records) == batch_size:
+                    yield from encode_batch(records)
+                    records = []
+        yield from encode_batch(records)
