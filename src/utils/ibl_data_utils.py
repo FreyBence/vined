@@ -4,62 +4,63 @@ from dataclasses import asdict
 
 import numpy as np
 import pandas as pd
-from brainbox.io.one import SpikeSortingLoader, _channels_alf2bunch
+from neural_data import QualitySelection, RecordingRequest, load_population
 from utils.sessions import SkipSession
 from brainbox.population.decode import get_spike_counts_in_bins
 from iblatlas.regions import BrainRegions
-from iblutil.numerical import bincount2D, ismember
+from iblutil.numerical import bincount2D
 from tqdm import tqdm
 
 from utils.visual_data import load_archive, resample_features, validate_ids
 
-def load_spiking_data(access, pid, compute_metrics=False, qc=None, **kwargs):
-    eid = kwargs.pop("eid", "")
-    pname = kwargs.pop("pname", "")
-    sampling_freq = 30_000
-    result = access.load_spike_sorting(eid, pid=pid, pname=pname or None)
-    spikes, clusters, channels = result.spikes, result.clusters, result.channels
-    # Channel interpretation and cluster enrichment remain neural processing.
-    channels = _channels_alf2bunch(channels, brain_regions=BrainRegions())
-    clusters_labeled = SpikeSortingLoader.merge_clusters(
-        spikes, clusters, channels, compute_metrics=compute_metrics
-    )
-    if clusters_labeled is None:
-        return None, None, None
-    else:
-        clusters_labeled = clusters_labeled.to_df()
-    clusters_labeled.attrs["source"] = json.loads(json.dumps(asdict(result.source), default=str))
-    
-    if qc is None:
-        return spikes, clusters_labeled, sampling_freq
-    else:
-        iok = clusters_labeled["label"] >= qc
-        selected_clusters = clusters_labeled[iok]
-        spike_idx, ib = ismember(spikes["clusters"], selected_clusters.index)
-        selected_clusters.reset_index(drop=True, inplace=True)
-        selected_spikes = {k: v[spike_idx] for k, v in spikes.items()}
-        selected_spikes["clusters"] = selected_clusters.index[ib].astype(np.int32)
-        return selected_spikes, selected_clusters, sampling_freq
+def load_spiking_data(access, pid, compute_metrics=False, qc=None, *, eid, pname=None,
+                      collection=None, revision=None):
+    """Legacy adapter; sorting times are seconds and sampling frequency is unknown."""
+    if compute_metrics:
+        raise ValueError("Neural source preparation only consumes supplied quality metrics")
+    quality = None if qc is None else QualitySelection(
+        "label", "Legacy caller-requested numeric lower bound on supplied label", minimum=qc)
+    population = load_population(access, eid, [RecordingRequest(
+        pid=pid, pname=pname or None, collection=collection, revision=revision)], quality=quality)
+    clusters = population.units
+    clusters.attrs["source"] = json.loads(json.dumps(population.recordings[0]["source"], default=str))
+    clusters.attrs["neural_source"] = population.recordings[0]
+    return population.spikes, clusters, None
 
 
 def merge_probes(spikes_list, clusters_list):
-    assert (len(clusters_list) == len(spikes_list)), \
-        "clusters_list and spikes_list must have the same length"
-    assert all([isinstance(s, dict) for s in spikes_list]), \
-        "spikes_list must contain only dictionaries"
-    assert all([isinstance(c, pd.DataFrame) for c in clusters_list]), \
-        "clusters_list must contain only pd.DataFrames"
+    if not clusters_list or len(clusters_list) != len(spikes_list):
+        raise ValueError("Supply matching nonempty probe lists")
 
     merged_spikes, merged_clusters = [], []
     cluster_max = 0
 
     for clusters, spikes in zip(clusters_list, spikes_list):
-        spikes["clusters"] += cluster_max
+        assignments = np.asarray(spikes["clusters"])
+        times = np.asarray(spikes["times"])
+        if (assignments.ndim != 1 or times.ndim != 1 or len(assignments) != len(times)
+                or assignments.dtype.kind not in "iu" or not np.isfinite(times).all()
+                or np.any(assignments < 0) or np.any(assignments >= len(clusters))):
+            raise ValueError("Invalid probe spike/unit associations")
+        shifted = {}
+        for key, values in spikes.items():
+            values = np.asarray(values)
+            if values.ndim == 0 or len(values) != len(times):
+                raise ValueError(f"Probe spike field {key} does not match event rows")
+            shifted[key] = values.copy()
+        shifted["clusters"] = assignments.astype(np.int64) + cluster_max
         cluster_max += len(clusters)
-        merged_spikes.append(spikes)
-        merged_clusters.append(clusters)
+        merged_spikes.append(shifted)
+        copied_clusters = clusters.copy()
+        copied_clusters.attrs = {}
+        merged_clusters.append(copied_clusters)
         
     merged_clusters = pd.concat(merged_clusters, ignore_index=True)
+    identity = ["eid", "probe", "collection", "revision", "source_unit_id"]
+    if all(key in merged_clusters for key in identity) and merged_clusters.duplicated(identity).any():
+        raise ValueError("Duplicate scoped source unit identities")
+    if any(set(s) != set(merged_spikes[0]) for s in merged_spikes):
+        raise ValueError("Probe spike fields differ; select a common explicit representation before merging")
     merged_spikes = {
         k: np.concatenate([s[k] for s in merged_spikes]) for k in merged_spikes[0].keys()
     }
@@ -315,12 +316,12 @@ def prepare_data(access, eid):
         
     meta_data = {
         "eid": eid,
-        "subject": details["subject"],
-        "lab": details["lab"],
+        "subject": details.get("subject"),
+        "lab": details.get("lab"),
         "sampling_freq": sampling_freq,
         "cluster_channels": list(clusters["channels"]),
         "cluster_regions": list(clusters["acronym"]),
-        "good_clusters": list((clusters["label"] >= 1).astype(int)),
+        "good_clusters": list(clusters["label"]),
         "cluster_depths": list(clusters["depths"]),
         "uuids":  list(clusters["uuids"]),
         "cluster_pids": list(clusters["pid"]),
