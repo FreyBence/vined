@@ -1,4 +1,5 @@
 import os
+from training_dataset import PersistedSplit, model_sample
 from utils.paths import visual_dir
 from utils.cache_manifest import cache_records
 from utils.provenance import file_hash
@@ -381,7 +382,22 @@ class BaseDataset(torch.utils.data.Dataset):
         eids = None,
     ) -> None:
 
-        if data_dir is not None:
+        self.scientific_split = dataset if isinstance(dataset, PersistedSplit) else None
+        if self.scientific_split is not None:
+            if mode != dataset.split or eids is not None and set(eids) != set(dataset.session_ids):
+                raise ValueError("Loader split/session selection differs from the verified dataset view")
+            if sort_by_depth or sort_by_region or brain_region != 'all' or not pad_to_right:
+                raise ValueError("Scientific dataset loader preserves source neuron order and right padding")
+            requested = [target] if isinstance(target, str) else target
+            if requested is not None and any(mod != 'vision-clip' for mod in requested):
+                raise ValueError("Scientific dataset supports only spike and vision-clip modalities")
+            self.max_time_length = max_time_length
+            self.max_space_length = max_space_length
+            self.pad_value = pad_value
+            self.data_paths = None
+            self.dataset = dataset
+            self.dataset_name = 'ibl'
+        elif data_dir is not None:
             options = dict(target=target, pad_value=pad_value, max_time_length=max_time_length,
                            max_space_length=max_space_length, bin_size=bin_size,
                            pad_to_right=pad_to_right, sort_by_depth=sort_by_depth,
@@ -589,6 +605,9 @@ class BaseDataset(torch.utils.data.Dataset):
             return len(self.dataset)
         
     def __getitem__(self, idx):
+        if self.scientific_split is not None:
+            return model_sample(self.scientific_split[idx], max_time_length=self.max_time_length,
+                                max_space_length=self.max_space_length, pad_value=self.pad_value)
         if self.data_paths is not None:
             record = self.cache_records[idx]
             if idx not in self.verified_cache:

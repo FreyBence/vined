@@ -239,8 +239,29 @@ def load_ibl_dataset(
     mode = "train",
     batch_size=16,
     use_re=False,
-    seed=42
+    seed=42,
+    dataset_generation=None,
+    expected_dataset_generation_id=None,
 ):
+    # Scientific generations own their splits. Legacy HF paths stay isolated below.
+    from pathlib import Path
+    from training_dataset import load_dataset_splits
+    selected_path = Path(dataset_generation if dataset_generation is not None else
+                         aligned_data_dir if aligned_data_dir else cache_dir)
+    manifest_path = selected_path / 'manifest.json'
+    scientific = dataset_generation is not None
+    if manifest_path.is_file():
+        scientific = True
+    if scientific:
+        if split_method != 'predefined' or train_session_eid or test_session_eid:
+            raise ValueError("Scientific datasets use persisted predefined splits; configure session assignments at creation")
+        result = load_dataset_splits(selected_path, session_ids=[eid] if eid is not None else None,
+                                     expected_generation_id=expected_dataset_generation_id)
+        if result[3]['num_sessions'] > num_sessions:
+            raise ValueError("Dataset contains more sessions than requested; select an EID or increase num_sessions")
+        return result
+    if expected_dataset_generation_id is not None:
+        raise ValueError("Expected generation ID requires an explicitly selected scientific dataset")
     if aligned_data_dir:
         dataset = load_from_disk(aligned_data_dir)
         # if dataset does not have a 'train' key, it is a single session dataset
@@ -445,5 +466,3 @@ def split_both_dataset(
     })
 
     return new_aligned_dataset, new_unaligned_dataset
-            
-            

@@ -11,6 +11,7 @@ from loader.base import (
     SessionSampler,
     WeightedSessionSampler,
 )
+from training_dataset.handoff import collate_model_samples
 
 
 def seed_worker(worker_id):
@@ -92,6 +93,7 @@ def make_loader(
         generator=generator,
         pin_memory=True,
         drop_last=False,
+        collate_fn=collate_model_samples if dataset.scientific_split is not None else None,
     )
 
     return dataloader

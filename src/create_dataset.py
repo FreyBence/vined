@@ -1,174 +1,60 @@
+"""Publish scientific training datasets from explicitly selected alignment generations."""
+
 import argparse
-import logging
-import os
 import json
-import tempfile
 from pathlib import Path
-from uuid import uuid4
 
-import numpy as np
-from tqdm import tqdm
-
-from loader.base import BaseDataset
-from utils.cache_manifest import CACHE_SCHEMA, preprocessing_sources, aligned_hashes, preprocessing_packages
-from utils.provenance import file_hash, fingerprint, write_json, package_versions
-from utils.config_utils import config_from_kwargs, update_config
-from utils.dataset_utils import load_ibl_dataset
-from utils.utils import set_seed
-from utils.paths import dataset_dir, output_dir
-
-logging.basicConfig(level=logging.INFO) 
-
-neural_acronyms = {
-    "ap": "spike",
-}
-static_acronyms = {}
-dynamic_acronyms = {
-    "vision-clip": "vision-clip",
-}
-
-model_config = "src/configs/multi_modal/mm.yaml"
-kwargs = {"model": f"include:{model_config}"}
-config = config_from_kwargs(kwargs)
-config = update_config("src/configs/multi_modal/trainer_mm.yaml", config)
-set_seed(config.seed)
-
-# ------ 
-# SET UP
-# ------ 
-ap = argparse.ArgumentParser()
-ap.add_argument("--eid", type=str, default="EXAMPLE_EID")
-ap.add_argument("--base_path", type=str, default=str(output_dir()))
-ap.add_argument("--data_path", type=str, default=str(dataset_dir()))
-ap.add_argument("--num_sessions", type=int, default=1)
-ap.add_argument("--model_mode", type=str, default="mm")
-ap.add_argument("--mask_mode", type=str, default="temporal")
-ap.add_argument("--mask_ratio", type=float, default=0.1)
-ap.add_argument("--mixed_training", action="store_true")
-ap.add_argument(
-    "--modality", nargs="+", 
-    default=["ap", "vision-clip"]
-)
-args = ap.parse_args()
+from training_dataset import AlignmentSource, SampleConfig, SplitConfig, generate_dataset
+from utils.paths import dataset_dir
 
 
-eid = args.eid
-base_path = args.base_path
-model_mode = args.model_mode
-modality = args.modality
-config["model"]["masker"]["mode"] = args.mask_mode
-config["model"]["masker"]["ratio"] = args.mask_ratio
-
-logging.info(f"EID: {eid} model mode: {args.model_mode} mask ratio: {args.mask_ratio}")
-logging.info(f"Available modality: {modality}")
-
-neural_mods, static_mods, dynamic_mods = [], [], []
-for mod in modality:
-    if mod in neural_acronyms:
-        neural_mods.append(neural_acronyms[mod])
-    elif mod in static_acronyms:
-        static_mods.append(static_acronyms[mod])   
-    elif mod in dynamic_acronyms:
-        dynamic_mods.append(dynamic_acronyms[mod])   
-
-if model_mode == "mm":
-    input_mods = output_mods = neural_mods + dynamic_mods
-elif model_mode == "decoding":
-    input_mods = neural_mods
-    output_mods = dynamic_mods
-elif model_mode == "encoding":
-    input_mods = static_mods + dynamic_mods
-    output_mods = neural_mods
-else:
-    raise ValueError(f"Model mode {model_mode} not supported.")
-
-modal_filter = {"input": input_mods, "output": output_mods}
-
-
-# ---------
-# LOAD DATA
-# ---------
-train_dataset, val_dataset, test_dataset, meta_data = load_ibl_dataset(
-    args.data_path,  
-    args.data_path,
-    num_sessions=args.num_sessions,
-    eid = eid if args.num_sessions == 1 else None,
-    use_re=True,
-    split_method="predefined",
-    test_session_eid=[],
-    batch_size=1,
-    seed=config.seed
-)
-
-max_space_length = max(list(meta_data["eid_list"].values()))
-logging.info(f"MAX space length to pad spike data to: {max_space_length}")
-
-# Cache generations are immutable. Each session pointer changes only after all
-# splits have been written and checked; unreferenced files are never discovered.
-options = dict(target=[mod for mod in modality if mod in dynamic_acronyms],
-               load_meta=config.data.load_meta, pad_to_right=True, pad_value=-1.,
-               max_time_length=config.data.max_time_length, max_space_length=max_space_length,
-               dataset_name=config.data.dataset_name, sort_by_depth=config.data.sort_by_depth,
-               sort_by_region=config.data.sort_by_region, stitching=True,
-               bin_size=0.05, brain_region="all")
-root = Path(args.data_path) / ('ibl_mm' if args.num_sessions == 1 else f'ibl_mm_{args.num_sessions}')
-root.mkdir(parents=True, exist_ok=True)
-generation = root / 'generations' / uuid4().hex
-generation.mkdir(parents=True)
-manifests = {}
-for session_eid in sorted(meta_data["eid_list"]):
-    provenance_path = Path(args.data_path) / f"{session_eid}_aligned" / "provenance.json"
-    provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
-    if provenance["fingerprint"] != fingerprint({k: v for k, v in provenance.items() if k != "fingerprint"}):
-        raise ValueError("Aligned provenance fingerprint is invalid")
-    manifests[session_eid] = dict(schema_version=CACHE_SCHEMA, eid=session_eid,
-        options=options, sources=preprocessing_sources(),
-        preprocessing_packages=preprocessing_packages(),
-        aligned_provenance_sha256=file_hash(provenance_path),
-        aligned_files=aligned_hashes(provenance_path.parent), packages=package_versions(),
-        provenance_id=provenance["fingerprint"], samples=[])
-
-for split, dataset in (("train", train_dataset), ("val", val_dataset), ("test", test_dataset)):
-    prepared = BaseDataset(dataset, **options)
-    for row in tqdm(range(len(prepared)), desc=split):
-        original = dataset[row]
-        sample = prepared[row]
-        session_eid, trial_id = sample["eid"], int(sample["trial_id"])
-        manifest = manifests[session_eid]
-        if original.get("provenance_id") != manifest["provenance_id"] or original.get("split") != split:
-            raise ValueError("Aligned sample provenance/split does not match manifest; rebuild aligned data")
-        name = f"{session_eid}_{split}_{trial_id}.npy"
-        destination = generation / name
-        if destination.exists():
-            raise ValueError("Duplicate original trial in cache generation")
-        sample["split"] = split
-        sample["provenance_id"] = manifest["provenance_id"]
-        np.save(destination, sample)
-        restored = np.load(destination, allow_pickle=True).item()
-        shapes = {key: list(np.asarray(value).shape) for key, value in sample.items()}
-        if restored["eid"] != session_eid or int(restored["trial_id"]) != trial_id:
-            raise ValueError("Cache output identity verification failed")
-        if {key: list(np.asarray(value).shape) for key, value in restored.items()} != shapes:
-            raise ValueError("Cache output shape verification failed")
-        manifest["samples"].append(dict(file=destination.relative_to(root).as_posix(),
-            split=split, trial_id=trial_id, shapes=shapes, sha256=file_hash(destination)))
-
-for session_eid, manifest in manifests.items():
-    identities = [r["trial_id"] for r in manifest["samples"]]
-    if len(identities) != len(set(identities)) or not identities:
-        raise ValueError("Empty or duplicate cache sample identities")
-    provenance = json.loads((Path(args.data_path) / f"{session_eid}_aligned" / "provenance.json").read_text(encoding="utf-8"))
-    if aligned_hashes(Path(args.data_path) / f"{session_eid}_aligned") != manifest["aligned_files"]:
-        raise ValueError("Aligned dataset changed during cache generation")
-    for split, ids in provenance["split"]["memberships"].items():
-        if set(ids) != {r["trial_id"] for r in manifest["samples"] if r["split"] == split}:
-            raise ValueError("Cache generation does not contain every declared split member")
-    manifest["fingerprint"] = fingerprint(manifest)
-    with tempfile.NamedTemporaryFile(dir=root, suffix=".json", delete=False) as temporary:
-        temporary_path = Path(temporary.name)
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--alignment-generation", required=True, type=Path, action="append",
+                        help="One explicit alignment generation per session; repeat for multiple sessions")
+    parser.add_argument("--expected-alignment-generation-id", action="append",
+                        help="Expected IDs in the same order as alignment-generation arguments")
+    parser.add_argument("--output-dir", type=Path, default=dataset_dir() / "training-dataset")
+    parser.add_argument("--split-strategy", required=True, choices=("within_session", "session_held_out"))
+    parser.add_argument("--split-ratios", type=float, nargs=3, metavar=("TRAIN", "VAL", "TEST"))
+    parser.add_argument("--split-seed", type=int)
+    parser.add_argument("--session-assignments", type=Path, help="JSON object mapping sessions to train/val/test")
+    parser.add_argument("--exclusions", type=Path, help="JSON list of session_id/trial_id/reason objects")
+    parser.add_argument("--max-time-length", type=int)
+    parser.add_argument("--max-neuron-count", type=int)
+    args = parser.parse_args(argv)
+    if args.expected_alignment_generation_id is not None and len(args.expected_alignment_generation_id) != len(args.alignment_generation):
+        parser.error("Provide one expected ID per alignment-generation argument, or omit all expected IDs")
+    if args.session_assignments is not None:
+        if args.split_strategy != "session_held_out" or args.split_ratios is not None or args.split_seed is not None:
+            parser.error("Session assignments require session_held_out without ratios or seed")
+    elif args.split_ratios is None or args.split_seed is None:
+        parser.error("Ratio-based splitting requires --split-ratios and --split-seed")
     try:
-        write_json(temporary_path, manifest)
-        os.replace(temporary_path, root / f"{session_eid}.manifest.json")
-    finally:
-        temporary_path.unlink(missing_ok=True)
-logging.info("Published complete cache manifests")
+        assignments = json.loads(args.session_assignments.read_text(encoding="utf-8")) if args.session_assignments else None
+        exclusions = {}
+        if args.exclusions:
+            records = json.loads(args.exclusions.read_text(encoding="utf-8"))
+            if not isinstance(records, list):
+                raise ValueError("Exclusions must be a JSON list")
+            for record in records:
+                identity = (record["session_id"], record["trial_id"])
+                if identity in exclusions:
+                    raise ValueError("Duplicate exclusion identity")
+                exclusions[identity] = record["reason"]
+        split_config = SplitConfig(args.split_strategy, args.split_ratios, args.split_seed, assignments, exclusions)
+        sample_config = SampleConfig(args.max_time_length, args.max_neuron_count)
+        expected = args.expected_alignment_generation_id or [None] * len(args.alignment_generation)
+        generation = generate_dataset([AlignmentSource(path, identity) for path, identity in
+                                      zip(args.alignment_generation, expected)], args.output_dir,
+                                      split_config=split_config, sample_config=sample_config)
+    except Exception as error:
+        parser.exit(1, f"Dataset creation failed: {error}\n")
+    print(json.dumps(dict(generation_id=generation.generation_id, path=str(generation.path),
+                         sessions=generation.manifest["sessions"],
+                         samples={name: len(getattr(generation.dataset, name)) for name in ("train", "val", "test")})))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
