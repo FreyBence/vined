@@ -20,6 +20,16 @@ def read_json(path):
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def is_fixable(status, reason):
+    """Identify potentially repairable artifacts, excluding known source limits."""
+    if "image files:" in reason or "missing observations.jsonl" in reason:
+        return True
+    if status in {"unavailable", "invalid"}:
+        return False
+    return not (status == "partial"
+                and reason == "Requested domain contains unavailable reconstruction")
+
+
 def audit(root):
     latest = {}
     errors = []
@@ -79,6 +89,7 @@ def audit(root):
                              "No published outcome; trial may be unattempted or still generating", session))
             except (OSError, ValueError, KeyError, TypeError) as exc:
                 rows.append((eid, trial_id, "incomplete", "?", "unreadable_outcome", str(exc), session))
+    rows = [(*row, is_fixable(row[4], row[5])) for row in rows]
     return latest, checked, rows, errors
 
 
@@ -99,7 +110,7 @@ def main():
         "Snapshot only: active generations may still be writing. Image contents/hashes are not verified.",
         f"Sessions: {len({eid for eid, trial_id in latest})} | Trials checked: {checked} | Missing: {counts['missing']} | Incomplete: {counts['incomplete']}",
         "",
-        "eid\ttrial_id\tcategory\timage_files\toutcome_status\treason\tgeneration",
+        "eid\ttrial_id\tcategory\timage_files\toutcome_status\treason\tgeneration\tFixable",
     ]
     report.extend("\t".join(str(value).replace("\t", " ").replace("\n", " ").replace("\r", " ")
                             for value in row) for row in rows)

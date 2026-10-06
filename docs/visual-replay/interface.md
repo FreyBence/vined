@@ -742,7 +742,14 @@ Run `python script/audit_replay.py` to write `output/audit-replay.txt`.
 `--replay-dir DIR` overrides the normal replay directory. The script selects the
 newest saved definition by modification time per (EID, original trial ID), so
 subset retries do not hide other trials. Each missing or incomplete trial includes EID, trial ID,
-image-file count, outcome status, reason, and generation path. It checks outcomes,
+image-file count, outcome status, reason, generation path, and a boolean `Fixable`
+column (`True` or `False`). `Fixable` identifies a potentially repairable finding,
+not a guarantee of successful reconstruction. The audit marks known
+`unavailable`/`invalid` source outcomes and `partial` outcomes with reason
+`Requested domain contains unavailable reconstruction` as `False`. Missing or
+unreadable outcomes, rendering/storage failures, and unknown reasons are `True`.
+Image-count mismatches or missing `observations.jsonl` are `True` even when the
+underlying reconstruction has a source gap. It checks outcomes,
 image-file counts, and observation-file presence without decoding images or
 verifying hashes. Active generations are a snapshot and may appear unfinished.
 Sessions without saved definitions and trials not requested by those definitions
@@ -754,16 +761,12 @@ status, as does finding no definitions; reported missing trials alone do not.
 Run `bash script/auto-fix-replay.sh [AUDIT_FILE]`, or
 `python script/auto_fix_replay.py [AUDIT_FILE]`. The default input is
 `output/audit-replay.txt` from the audit script (not the categorized analysis).
-Missing and incomplete rows are deduplicated by EID/trial ID and retried once,
-grouped by session. By default auto-fix skips `unavailable`/`invalid` source
-outcomes and `partial` outcomes whose reason is `Requested domain contains
-unavailable reconstruction`: rerendering the same inputs cannot resolve these
-source-data/coverage limits. Skipped counts are printed by reason. Missing or
-unreadable outcomes, failed rendering/storage, and unknown reasons remain
-retryable. Explicit image-count mismatches or missing `observations.jsonl`
-remain retryable even when the underlying reconstruction has a source gap, so
-available artifacts can be repaired without claiming full reconstruction.
-`--retry-all` includes skipped source issues when inputs, configuration, or replay
+Every missing or incomplete row with `Fixable=True` is selected, deduplicated by
+EID/trial ID, and retried once, grouped by session. Auto-fix consumes the audit's
+boolean decision without reclassifying statuses or reasons. `Fixable=False` rows
+are skipped, with counts printed by reason. Older reports without the column and
+rows with invalid boolean values are rejected; rerun the audit to update them.
+`--retry-all` includes `Fixable=False` rows when inputs, configuration, or replay
 code have changed, including when deliberately refreshing data with
 `--force-reload`. `--dry-run` prints the filtered selection and skipped reasons
 without generating. An entirely skipped report returns zero without creating
@@ -774,6 +777,11 @@ generation's configuration. Supported overrides are `--config`, `--projection
 on|off`, `--access-policy local-only|remote-allowed` (default remote-allowed),
 `--force-reload`, and `--output`. Retries write directly into `<replay-root>/<eid>`
 and replace the selected trials while retaining other trials in that folder.
+If that folder has a saved definition but no published manifest, auto-fix expands
+the retry to include every trial in the saved request, including source-gap
+outcomes, because unselected trials cannot be verified for retention. The expanded
+selection is reported by `--dry-run` too. Replacement remains staged; generation
+failure preserves the interrupted folder.
 `--output` overrides the replay root; existing roots are supported. No dated retry
 directory is created. The input audit is preserved. Session errors
 are reported and subsequent sessions continue; unresolved reconstruction returns
