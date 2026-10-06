@@ -6,6 +6,8 @@ import hashlib
 import json
 import math
 import os
+import shutil
+import tempfile
 import time
 from pathlib import Path
 
@@ -138,10 +140,11 @@ def _encode_video(directory, outcome, image_format):
             writer.release()
 
 
-def write_replay(replay, output, *, video=False, on_trial_published=None):
-    """Consume a fresh ReplayStream into a new directory; publish manifest last.
+def write_replay(replay, output, *, video=False, on_trial_published=None, overwrite=False):
+    """Consume a fresh ReplayStream and publish its manifest last.
 
-    Existing output is never replaced. Storage errors or interruption propagate,
+    With overwrite=True, stage replacement and retain unselected trials.
+    Otherwise existing output is refused. Storage errors or interruption propagate,
     leaving published trials inspectable but no completed generation manifest.
     Optional video failure is explicit and does not invalidate lossless images.
     """
@@ -151,6 +154,10 @@ def write_replay(replay, output, *, video=False, on_trial_published=None):
         raise TypeError("video must be a boolean")
     if on_trial_published is not None and not callable(on_trial_published):
         raise TypeError("on_trial_published must be callable")
+    if type(overwrite) is not bool:
+        raise TypeError("overwrite must be a boolean")
+    if overwrite:
+        return _write_replacement(replay, output, video, on_trial_published)
     root = Path(output)
     root.mkdir(parents=True, exist_ok=False)
     (root / "trials").mkdir()
@@ -210,6 +217,139 @@ def write_replay(replay, output, *, video=False, on_trial_published=None):
     finally:
         if records is not None:
             records.close()
+
+
+def _copy_retained_file(source, destination):
+    # Images/video are immutable; hard links avoid duplicating a session's frames.
+    if Path(source).suffix in {".npz", ".npy", ".mp4"}:
+        try:
+            os.link(source, destination)
+            return destination
+        except OSError:
+            pass
+    return shutil.copy2(source, destination)
+
+
+def _retain_trials(previous, staged, manifest):
+    old_definition = _read_json(previous / "definition.json")
+    definition = _read_json(staged / "definition.json")
+    if (old_definition.get("kind") != "replay_stream_definition"
+            or old_definition["inputs"]["eid"] != definition["inputs"]["eid"]):
+        raise ValueError("Existing output is not a replay for this EID")
+    selected = set(definition["inputs"]["requested_trial_ids"])
+    retained = sorted(set(old_definition["inputs"]["requested_trial_ids"]) - selected)
+    if not retained or selected == set(range(definition["inputs"]["original_trial_count"])):
+        return manifest
+    old = ReplayArtifactReader(previous)
+    if (old_definition["inputs"]["trial_table_fingerprint"] != definition["inputs"]["trial_table_fingerprint"]
+            or old_definition["image_space"] != definition["image_space"]
+            or old.artifact_manifest["format"] != manifest["format"]):
+        raise ValueError("Subset overwrite requires the same source trial table, image space, and artifact format")
+    entries = {row["trial_id"]: row for row in manifest["trials"]}
+    old_entries = {row["trial_id"]: row for row in old.artifact_manifest["trials"]}
+    for trial_id in retained:
+        source = _inside(previous, f"trials/{trial_id}")
+        entry = old_entries[trial_id]
+        if (_file_hash(source / "observations.jsonl") != entry["observations_file_sha256"]
+                or _file_hash(source / "outcome.json") != entry["outcome_file_sha256"]):
+            raise ValueError(f"Retained trial {trial_id} has changed metadata; include it in the retry")
+        outcome = _read_json(source / "outcome.json")
+        with os.scandir(source / "images") as files:
+            count = sum(item.is_file() and item.name.endswith(".npz") for item in files)
+        if count != outcome["image_count"]:
+            raise ValueError(f"Retained trial {trial_id} has missing images; include it in the retry")
+        shutil.copytree(source, staged / "trials" / str(trial_id), copy_function=_copy_retained_file)
+        entries[trial_id] = deepcopy(entry)
+
+    # Preserve each trial's original reconstruction provenance, including older
+    # configuration/evidence, while binding the combined records to one manifest.
+    new_source_id = _digest(definition)
+    sources = {new_source_id: deepcopy(definition)}
+    trial_sources = {str(i): new_source_id for i in selected}
+    old_sources = old_definition.get("source_definitions", {old.definition_id: old_definition})
+    old_trial_sources = old_definition.get("trial_source_definition_ids", {})
+    for trial_id in retained:
+        source_id = old_trial_sources.get(str(trial_id), old.definition_id)
+        sources[source_id] = deepcopy(old_sources[source_id])
+        trial_sources[str(trial_id)] = source_id
+    ids = sorted(selected | set(retained))
+    trial_inputs = {row["trial_id"]: row for row in old_definition["inputs"]["trials"] if row["trial_id"] in retained}
+    trial_inputs.update({row["trial_id"]: row for row in definition["inputs"]["trials"]})
+    definition["inputs"]["requested_trial_ids"] = ids
+    definition["inputs"]["trials"] = [trial_inputs[i] for i in ids]
+    definition["source_definitions"] = sources
+    definition["trial_source_definition_ids"] = trial_sources
+    definition_id = _digest(definition)
+    digest = hashlib.sha256()
+    outcomes = []
+    for trial_id in ids:
+        directory = staged / "trials" / str(trial_id)
+        records_path = directory / "observations.jsonl"
+        temporary = directory / ".observations-rebind.jsonl"
+        trial_digest = hashlib.sha256()
+        with records_path.open(encoding="utf-8") as records, temporary.open("xb") as target:
+            for line in records:
+                metadata = json.loads(line)
+                metadata["definition_id"] = definition_id
+                target.write(_json(metadata) + b"\n")
+                _bind(trial_digest, metadata)
+                _bind(digest, metadata)
+        temporary.replace(records_path)
+        outcome = _read_json(directory / "outcome.json")
+        outcome.update(definition_id=definition_id, observations_sha256=trial_digest.hexdigest())
+        (directory / "outcome.json").write_bytes(_json(outcome) + b"\n")
+        entries[trial_id].update(observations_file_sha256=_file_hash(records_path),
+                                 outcome_file_sha256=_file_hash(directory / "outcome.json"))
+        _bind(digest, outcome)
+        outcomes.append(outcome)
+    completion = deepcopy(manifest["completion"])
+    status = ("success" if all(row["status"] == "complete" for row in outcomes)
+              else "partial" if any(row["image_count"] for row in outcomes) else "failed")
+    completion.update(definition_id=definition_id, requested_trial_ids=ids, trials=outcomes,
+                      reconstruction_status=status, records_sha256=digest.hexdigest(),
+                      image_count=sum(row["image_count"] for row in outcomes),
+                      observation_count=sum(row["emitted_count"] for row in outcomes))
+    completion.pop("generation_id")
+    completion["generation_id"] = _digest(completion)
+    manifest.update(definition_id=definition_id, completion=completion, trials=[entries[i] for i in ids])
+    manifest.pop("artifact_id")
+    manifest["artifact_id"] = _digest(manifest)
+    (staged / "definition.json").write_bytes(_json(definition) + b"\n")
+    (staged / "manifest.json").write_bytes(_json(manifest) + b"\n")
+    return manifest
+
+
+def _write_replacement(replay, output, video, on_trial_published):
+    root = Path(output).absolute()
+    if root.is_symlink():
+        raise ValueError("Cannot overwrite a symlinked replay directory")
+    root = root.resolve()
+    root.parent.mkdir(parents=True, exist_ok=True)
+    staged = Path(tempfile.mkdtemp(prefix=f".{root.name}-staging-", dir=root.parent))
+    staged.rmdir()  # The ordinary writer creates its own new directory.
+    backup = staged.with_name(staged.name + "-previous")
+    try:
+        manifest = write_replay(replay, staged, video=video, on_trial_published=on_trial_published)
+        if root.exists():
+            manifest = _retain_trials(root, staged, manifest)
+        try:
+            if root.exists():
+                _publish_rename(root, backup)
+            _publish_rename(staged, root)
+        except BaseException:
+            if backup.exists() and not root.exists():
+                _publish_rename(backup, root)
+            raise
+        if backup.exists():
+            if backup.resolve().parent != root.parent:
+                raise ValueError("Replay backup escapes the output parent")
+            shutil.rmtree(backup)
+        return manifest
+    finally:
+        # These paths are siblings allocated for this replacement only. A backup
+        # is deliberately preserved if publication and rollback both fail.
+        if staged.exists() and staged.resolve().parent == root.parent:
+            shutil.rmtree(staged)
 
 
 class ReplayArtifactReader:

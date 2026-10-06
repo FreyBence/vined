@@ -64,7 +64,7 @@ def _time(value):
 
 
 class _Wheel:
-    def __init__(self, times, positions, max_gap):
+    def __init__(self, times, positions):
         times = np.asarray(times, dtype=np.float64)
         positions = np.asarray(positions, dtype=np.float64)
         self.reason = None
@@ -80,8 +80,6 @@ class _Wheel:
         self.times, self.positions = times[keep], positions[keep]
         self.times.setflags(write=False)
         self.positions.setflags(write=False)
-        self.max_gap = max_gap
-        self.gap_indices = np.flatnonzero(np.diff(self.times) > max_gap)
 
     def at(self, time):
         if self.reason:
@@ -92,8 +90,6 @@ class _Wheel:
         if index < len(self.times) and self.times[index] == time:
             return float(self.positions[index]), None
         left, right = index - 1, index
-        if self.times[right] - self.times[left] > self.max_gap:
-            return None, "Wheel interpolation crosses an inadmissible gap"
         fraction = (time - self.times[left]) / (self.times[right] - self.times[left])
         return float(self.positions[left] + fraction * (self.positions[right] - self.positions[left])), None
 
@@ -175,7 +171,7 @@ class TrialTimeline:
         """Exact availability partition of the half-open requested domain.
 
         Open spans and explicit boundary points preserve valid observations at
-        either end of an inadmissible wheel gap without filling the gap itself.
+        the ends of recorded wheel coverage without extrapolating beyond it.
         These are reconstruction-availability intervals, not frame supports.
         """
         if self.record["status"] != "prepared":
@@ -187,8 +183,7 @@ class TrialTimeline:
         boundaries.add(movement_end)
         wheel = self._wheel
         if len(wheel.times):
-            candidates = np.r_[wheel.times[0], wheel.times[-1],
-                               wheel.times[wheel.gap_indices], wheel.times[wheel.gap_indices + 1]]
+            candidates = np.r_[wheel.times[0], wheel.times[-1]]
             boundaries.update(float(x) for x in candidates
                               if events["closed_loop"] <= x <= movement_end)
         ordered = sorted(x for x in boundaries if start <= x <= end)
@@ -212,10 +207,7 @@ def prepare_trial_timelines(plan):
     if (movement["interpolation"] != "linear" or movement["extrapolation"] != "unavailable"
             or movement["baseline"] != "closed_loop_event"):
         raise ValueError("Unsupported resolved movement policy")
-    max_gap = _time(movement["max_gap_seconds"])
-    if max_gap <= 0:
-        raise ValueError("max_gap_seconds must be positive")
-    wheel = _Wheel(plan.wheel_timestamps, plan.wheel_positions, max_gap)
+    wheel = _Wheel(plan.wheel_timestamps, plan.wheel_positions)
     records = definition["trials"]
     if [record["trial_id"] for record in records] != definition["requested_trial_ids"]:
         raise ValueError("Trial records do not account for the requested original IDs")

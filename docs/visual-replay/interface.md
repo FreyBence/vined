@@ -66,10 +66,9 @@ explicit approximate setup, not recovered session calibration:
   },
   "movement": {
     "wheel_sign": -1,
-    "max_gap_seconds": 1,
     "provenance": {
       "kind": "project_assumption",
-      "evidence": "Explicit ALF sign approximation; reject interpolation across gaps greater than one second."
+      "evidence": "Explicit ALF sign approximation; interpolate between recorded samples without a duration limit."
     }
   },
   "events": {
@@ -105,12 +104,22 @@ Only `visible_interval` regular reconstruction scheduling is currently resolved.
 No frame support interval is implied by cadence. `wheel_sign` is `-1` or `1`;
 the declared displacement interpretation is sign × wheel delta in radians ×
 radius in millimeters × signed gain in degrees/millimeter. The baseline is the
-closed-loop event. The positive `max_gap_seconds` configures subsequent timeline
-evaluation; preparation retains the unmodified wheel samples.
+closed-loop event. Interpolation has no sample-gap duration limit; preparation
+retains the unmodified wheel samples. Legacy `max_gap_seconds` configuration
+is accepted but discarded and has no effect.
 
 Event bindings accept `closedLoop_times` or `goCue_times`, and `stimFreeze_times`
 or `response_times`. The latter of each pair requires `project_assumption`.
 Available finite recorded closed-loop/freeze events outrank configured proxies.
+When the selected activation event is unavailable, wheel control is assumed
+active at stimulus onset, with onset as the wheel baseline. This fallback is
+recorded as a project assumption in the trial's event evidence. Missing stimulus
+onset or offset still makes the trial unavailable; feedback/outcome behavior is
+unchanged.
+Closed-loop activation may precede stimulus onset; its original timestamp remains
+the wheel baseline, without clamping or shifting the visible interval. Offset
+must follow onset. Freeze must lie within the visible interval and must not
+precede closed-loop activation (activation must precede or equal offset for no-go trials).
 Optional event files absent at the trial-table revision are recorded as missing
 evidence, allowing configured proxies to apply. No other revision is substituted;
 access and integrity failures still propagate.
@@ -206,17 +215,19 @@ Offset hides the stimulus. Simultaneous transitions are applied in order
 onset → closed loop → freeze → offset, so hiding wins. Angular positions wrap
 to `[-180, 180)`; they are not clamped to successful trajectories.
 
-The evaluator uses linear interpolation between eligible wheel observations.
-Queries outside coverage or strictly inside gaps wider than `max_gap_seconds`
-are unavailable. Exact samples on gap boundaries remain usable. Equal timestamps
+The evaluator uses linear interpolation between recorded wheel observations,
+regardless of their time separation. Queries outside recorded coverage remain
+unavailable. Equal timestamps
 retain the last acquired position; `timeline.wheel_policy` records this policy
 and the number removed. Samples are never reordered. Missing coupling baseline
 makes wheel-dependent motion unavailable; an unavailable error freeze remains
 unavailable throughout the hold. Reward centering is a known task transition
-and does not invent a wheel position inside a prior gap.
+and does not require a wheel position for centering.
 
 Within recorded trial bounds, times before onset or at/after offset are known
-blank. Without those bounds, only the offset event itself establishes hiding;
+blank. Stimulus onset/offset determine visibility even when they extend outside
+the recorded trial interval; they are not clipped or rejected on that basis.
+Without those bounds, only the offset event itself establishes hiding;
 times outside the visible interval are otherwise unavailable. No blank state
 is extrapolated into a different trial.
 
@@ -480,10 +491,16 @@ with ReplayArtifactReader("output/replay-generation") as reader:
     completion = reader.completion
 ```
 
-`write_replay(replay, output, *, video=False, on_trial_published=None)` consumes a fresh, pending
-`ReplayStream` into a **new directory**. Existing output raises `FileExistsError`;
-there is no overwrite, resume, or fallback to an older generation. It returns the
-published artifact manifest after the source stream completes. Reconstruction
+`write_replay(replay, output, *, video=False, on_trial_published=None, overwrite=False)`
+consumes a fresh, pending `ReplayStream`. By default it requires a new directory
+and raises `FileExistsError` for existing output. With `overwrite=True`, it stages
+the requested trials and replaces the destination after completion, preserving
+unselected trials. Existing output is preserved if generation or staging fails.
+Subset replacement requires the same EID, source trial-table fingerprint, image
+space, and artifact format, and a published previous manifest; damaged unselected
+trial metadata or missing images must be included in the retry. Full replacement
+may change configuration or format. There is no fallback to an older selected
+trial. It returns the published artifact manifest after the source stream completes. Reconstruction
 failures retain their trial outcomes and may yield a completed manifest whose
 `reconstruction_status` is `partial` or `failed`.
 
@@ -491,7 +508,19 @@ An optional `on_trial_published(outcome)` callback receives a defensive copy of
 each trial outcome after its directory has been published, including optional
 video processing. It is called for unavailable/failed trials too. Callback
 exceptions propagate and prevent generation-manifest publication; a progress
-notification is not a generation completion record.
+notification is not a generation completion record. With overwrite enabled,
+callbacks refer to staged trial publication; the EID folder is replaced only
+after generation accounting and retention finish.
+
+After subset replacement, `definition.json` includes `source_definitions` keyed
+by original definition digest and `trial_source_definition_ids` mapping original
+trial IDs (JSON string keys) to those definitions. These preserve the actual
+configuration/evidence of each trial; common top-level configuration describes
+the latest request. The combined `inputs.requested_trial_ids` and `inputs.trials`
+cover all retained and replaced trials. Observation/outcome definition IDs and
+content digests are rebound to the combined definition, so ordinary
+`ReplayArtifactReader` readback remains supported. Images remain unchanged for
+unselected trials. Source clock and trial identity are preserved.
 
 Schema version 1 writes losslessly compressed NumPy RGB8 arrays independently of video:
 
@@ -665,10 +694,11 @@ silently applying another session's calibration. `--eid` and `--eids-file` are
 mutually exclusive. The underlying preparation API still requires a resolved EID.
 
 The Bash wrapper selects all EIDs from `data/eids.txt` (or `VINED_EIDS_FILE`)
-unless `--eid` selects one. It always processes all trials: trial-count and
-trial-ID options are rejected. `--projection on|off` defaults to `on`, mapping
-to `mouse_view` or `display`. The lower-level Python CLI retains its diagnostic
-trial-selection options; the wrapper never forwards them.
+unless `--eid` selects one. Optional `--trial-number N` (alias `--trial-id N`)
+selects an original zero-based trial, including zero; repeat to select multiple
+trials. Omission processes all trials. With multiple EIDs, the selection applies
+to each session. `--projection on|off` defaults to `on`, mapping to `mouse_view`
+or `display`. The same selectors are supported by `src/generate_replays.py`.
 
 The wrapper delegates session coordination to `src/generate_replays.py`, which
 displays two `tqdm` progress bars: accounted EIDs and published trials for the
@@ -681,23 +711,73 @@ not successful reconstruction. Preparation/downloads may take time before the
 trial bar appears. Progress is written to stderr; terminal cursor support is
 needed to display both bars in place.
 
-Each invocation defaults to a new `VINED_REPLAY_DIR/run-<UTC timestamp>-<PID>`
-directory; `--output` overrides this destination. Each EID gets a separate
+Each invocation defaults to `VINED_REPLAY_DIR` (normally
+`output/visual_replays`); `--output` overrides this root. Each EID gets a separate
 subdirectory, with compressed frames under
 `<eid>/trials/<original-id>/images/<schedule-index>.npz`.
-Existing run directories are refused. Ordinary session failures or partial
+Reruns replace selected trials in the existing EID folder and preserve other
+trials using staged publication and a refreshed, combined manifest. No dated run
+directory is created. Stop other writers for that EID before rerunning.
+Ordinary session failures or partial
 outcomes are reported and later EIDs continue; the script returns the highest
 nonzero child status, or zero when all succeed. Interrupt statuses 130/143 stop
 the run. The wrapper always passes `--access-policy remote-allowed`: cached files
 are reused and missing data may be acquired. Metadata/catalog lookup may still
 contact IBL even when files are cached; this is not an offline guarantee.
 There is no Bash access-policy option. The lower-level Python CLI retains its
-explicit policy option for offline use. `--force-reload` bypasses cached HTTP
+explicit policy option for offline use and accepts `--overwrite` with `--generate`
+to opt into the same staged replacement behavior. `--force-reload` bypasses cached HTTP
 metadata responses and re-downloads each requested replay source dataset once
 per session access context, including already-cached files. Size/hash validation
 and decoding precede replacement; failures do not fall back to stale files.
-Unrelated cached datasets and earlier replay generations are untouched. The
+Unrelated cached datasets and other EID folders are untouched. The
 Python CLI also accepts `--force-reload`, requiring `--access-policy remote-allowed`.
-The only other supported options are `--config`,
+Other supported options are `--trial-number` / `--trial-id`, `--config`,
 `--output`, and `--help`. The feature-extraction wrapper `prepare_visual_stim.sh`
 remains separate.
+
+## Missing-trial audit
+
+Run `python script/audit_replay.py` to write `output/audit-replay.txt`.
+`--replay-dir DIR` overrides the normal replay directory. The script selects the
+newest saved definition by modification time per (EID, original trial ID), so
+subset retries do not hide other trials. Each missing or incomplete trial includes EID, trial ID,
+image-file count, outcome status, reason, and generation path. It checks outcomes,
+image-file counts, and observation-file presence without decoding images or
+verifying hashes. Active generations are a snapshot and may appear unfinished.
+Sessions without saved definitions and trials not requested by those definitions
+are outside this report. Discovery errors are recorded and return a nonzero exit
+status, as does finding no definitions; reported missing trials alone do not.
+
+## Retry audited trials
+
+Run `bash script/auto-fix-replay.sh [AUDIT_FILE]`, or
+`python script/auto_fix_replay.py [AUDIT_FILE]`. The default input is
+`output/audit-replay.txt` from the audit script (not the categorized analysis).
+Missing and incomplete rows are deduplicated by EID/trial ID and retried once,
+grouped by session. By default auto-fix skips `unavailable`/`invalid` source
+outcomes and `partial` outcomes whose reason is `Requested domain contains
+unavailable reconstruction`: rerendering the same inputs cannot resolve these
+source-data/coverage limits. Skipped counts are printed by reason. Missing or
+unreadable outcomes, failed rendering/storage, and unknown reasons remain
+retryable. Explicit image-count mismatches or missing `observations.jsonl`
+remain retryable even when the underlying reconstruction has a source gap, so
+available artifacts can be repaired without claiming full reconstruction.
+`--retry-all` includes skipped source issues when inputs, configuration, or replay
+code have changed, including when deliberately refreshing data with
+`--force-reload`. `--dry-run` prints the filtered selection and skipped reasons
+without generating. An entirely skipped report returns zero without creating
+output folders; skipped findings remain in the audit.
+
+Retries use the current `data/replay-config.json` by default, not the original
+generation's configuration. Supported overrides are `--config`, `--projection
+on|off`, `--access-policy local-only|remote-allowed` (default remote-allowed),
+`--force-reload`, and `--output`. Retries write directly into `<replay-root>/<eid>`
+and replace the selected trials while retaining other trials in that folder.
+`--output` overrides the replay root; existing roots are supported. No dated retry
+directory is created. The input audit is preserved. Session errors
+are reported and subsequent sessions continue; unresolved reconstruction returns
+nonzero. There is no retry-until-success loop. Run the audit again afterward to
+refresh remaining issues. The updated EID folder remains readable as one
+content-bound replay generation. Existing historical run/retry folders or merged
+collections are not migrated automatically.

@@ -9,27 +9,34 @@ from tqdm import tqdm
 
 from prepare_replay import main as prepare_session
 from utils.sessions import select_sessions
+from utils.paths import replay_dir
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--eid")
+    parser.add_argument("--trial-id", "--trial-number", type=int, action="append",
+                        help="Original zero-based trial number; repeat to select multiple trials")
     parser.add_argument("--projection", choices=("on", "off"), default="on")
     parser.add_argument("--config", type=Path, default=Path("data/replay-config.json"))
-    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--output", type=Path, default=replay_dir())
     parser.add_argument("--force-reload", action="store_true")
     args = parser.parse_args()
+    if args.trial_id is not None and any(i < 0 for i in args.trial_id):
+        parser.error("Trial numbers must be nonnegative")
     eids = select_sessions(eid=args.eid)
-    args.output.mkdir(parents=True, exist_ok=False)
+    args.output.mkdir(parents=True, exist_ok=True)
     status = 0
     with tqdm(total=len(eids), desc="EIDs", unit="eid", position=0, dynamic_ncols=True) as progress:
         for eid in eids:
             progress.set_postfix_str(f"{eid} (preparing)")
             command = ["--config", str(args.config), "--output", str(args.output / eid),
-                       "--generate", "--eid", eid, "--access-policy", "remote-allowed",
+                       "--generate", "--overwrite", "--eid", eid, "--access-policy", "remote-allowed",
                        "--image-space", "mouse_view" if args.projection == "on" else "display"]
             if args.force_reload:
                 command.append("--force-reload")
+            for trial_id in dict.fromkeys(args.trial_id or []):
+                command.extend(["--trial-id", str(trial_id)])
             try:
                 code = prepare_session(command, progress_position=1)
             except SystemExit as exc:

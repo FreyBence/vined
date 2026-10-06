@@ -24,10 +24,9 @@
   },
   "movement": {
     "wheel_sign": -1,
-    "max_gap_seconds": 1,
     "provenance": {
       "kind": "project_assumption",
-      "evidence": "Explicit ALF wheel-sign approximation; reject interpolation across gaps greater than one second."
+      "evidence": "Explicit ALF wheel-sign approximation; linearly interpolate between recorded samples without a duration limit."
     }
   },
   "events": {

@@ -175,25 +175,23 @@ def _configuration(config, eid):
         support_intervals=None,
     )
     movement = config["movement"]
-    if not isinstance(movement, dict) or set(movement) != {
+    if not isinstance(movement, dict) or set(movement) - {"max_gap_seconds"} != {
         "wheel_sign",
-        "max_gap_seconds",
         "provenance",
     }:
-        raise ValueError("Movement requires wheel_sign, max_gap_seconds and provenance")
+        raise ValueError("Movement requires wheel_sign and provenance")
     _declaration(movement["provenance"], "Wheel interpretation")
     if type(movement["wheel_sign"]) is not int or movement["wheel_sign"] not in {-1, 1}:
         raise ValueError(
             "wheel_sign must be -1 or 1, mapping ALF wheel to task azimuth"
         )
-    movement["max_gap_seconds"] = _number(
-        movement["max_gap_seconds"], "max_gap_seconds", positive=True
-    )
+    # Accept older configuration files, but no elapsed-time cutoff is applied.
+    movement.pop("max_gap_seconds", None)
     movement.update(
         interpolation="linear",
         extrapolation="unavailable",
         baseline="closed_loop_event",
-        gap_policy="intervals wider than max_gap_seconds are unavailable",
+        gap_policy="interpolate between recorded samples without a duration limit",
     )
     events = config["events"]
     if not isinstance(events, dict) or set(events) != {"closed_loop", "freeze"}:
@@ -604,10 +602,20 @@ def resolve_reconstruction_plan(
                 for name, field in {
                     "onset": "stimOn_times",
                     "offset": "stimOff_times",
-                    "closed_loop": closed_loop_field,
                 }.items()
             }
             event_evidence = deepcopy(config["events"])
+            try:
+                events["closed_loop"] = _event(row, closed_loop_field)
+            except UnavailableInput:
+                # Missing activation evidence does not imply a stationary
+                # stimulus. Use onset as an explicit assumed wheel baseline.
+                events["closed_loop"] = events["onset"]
+                event_evidence["closed_loop"] = dict(
+                    field="stimOn_times",
+                    provenance=dict(
+                        kind="project_assumption",
+                        evidence="Activation event unavailable; assume wheel control is already active at stimulus onset, using onset as its baseline"))
             if "closedLoop_times" in row and np.isfinite(row["closedLoop_times"]):
                 events["closed_loop"] = float(row["closedLoop_times"])
                 event_evidence["closed_loop"] = dict(
@@ -620,14 +628,16 @@ def resolve_reconstruction_plan(
                     event_evidence["freeze"] = dict(field=freeze_field, provenance=dict(kind="session", evidence="Recorded ALF display freeze"))
                 events["freeze"] = _event(row, freeze_field)
             movement_end = events.get("freeze", events["offset"])
+            # Activation (including a go-cue proxy) may precede the first
+            # visible frame. Preserve its source time as the wheel baseline;
+            # visibility is independently bounded by onset and offset.
+            if events["onset"] >= events["offset"]:
+                raise ValueError("Stimulus offset must follow onset")
             if (
-                not events["onset"]
-                <= events["closed_loop"]
-                <= movement_end
-                <= events["offset"]
-                or events["onset"] == events["offset"]
+                not events["onset"] <= movement_end <= events["offset"]
+                or events["closed_loop"] > movement_end
             ):
-                raise ValueError("Contradictory onset/closed-loop/freeze/offset order")
+                raise ValueError("Freeze must lie within visibility and not precede closed-loop activation")
             # Preserve response and feedback separately even when they are not bindings.
             for field in (
                 "response_times",
@@ -655,8 +665,10 @@ def resolve_reconstruction_plan(
             # content. Without it, visibility outside onset/offset stays unknown.
             if "intervals_0" in row and "intervals_1" in row:
                 start, end = _event(row, "intervals_0"), _event(row, "intervals_1")
-                if not start <= events["onset"] < events["offset"] <= end:
-                    raise ValueError("Stimulus visibility lies outside the source trial interval")
+                if start >= end:
+                    raise ValueError("Source trial interval end must follow start")
+                # Visibility follows stimulus events even when the stimulus
+                # begins before, or remains visible after, the trial interval.
                 record["trial_interval"] = [start, end]
             if wheel_error is not None:
                 record.update(wheel_error)

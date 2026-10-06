@@ -15,7 +15,8 @@ from visual_replay import ReplayStream, resolve_reconstruction_plan, write_repla
 def main(argv=None, *, progress_position=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, required=True, help="Session-specific reconstruction configuration JSON")
-    parser.add_argument("--output", type=Path, required=True, help="New definition JSON file, or new generation directory with --generate")
+    parser.add_argument("--output", type=Path, required=True, help="Definition JSON file, or generation directory with --generate")
+    parser.add_argument("--overwrite", action="store_true", help="Replace selected trials in an existing generation; requires --generate")
     parser.add_argument("--generate", action="store_true", help="Generate lossless images, observation records, and completion manifest")
     parser.add_argument("--image-space", choices=("mouse_view", "display"), default="mouse_view")
     parser.add_argument("--video", action="store_true", help="Also encode complete trials as MP4 with source-observation mappings")
@@ -32,6 +33,8 @@ def main(argv=None, *, progress_position=None):
     parser.add_argument("--settings-collection", default="raw_behavior_data")
     parser.add_argument("--settings-revision")
     args = parser.parse_args(argv)
+    if args.overwrite and not args.generate:
+        parser.error("--overwrite requires --generate")
     report = print if progress_position is None else tqdm.write
     if not args.generate and (args.video or args.image_space != "mouse_view"):
         parser.error("--video and --image-space require --generate")
@@ -62,7 +65,7 @@ def main(argv=None, *, progress_position=None):
                          position=progress_position, leave=False, dynamic_ncols=True))
         with progress as bar:
             manifest = write_replay(
-                ReplayStream(plan, image_space=args.image_space), args.output, video=args.video,
+                ReplayStream(plan, image_space=args.image_space), args.output, video=args.video, overwrite=args.overwrite,
                 on_trial_published=None if bar is None else lambda outcome: bar.update(1))
         completion = manifest["completion"]
         video_failed = any(item["video"]["status"] == "failed" for item in manifest["trials"])
