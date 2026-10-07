@@ -208,6 +208,21 @@ depending on available source evidence and architecture.
 
 The timing source must remain identifiable.
 
+## Experimental projection cadence
+
+The researcher has confirmed that projection during the experiments operated at
+60 Hz. Regular replay frame generation must therefore use 60 Hz (one frame
+every 1/60 second), with optional constant-rate video encoded at 60 FPS when
+storing one frame per observation. This is the experimental replay cadence;
+downstream feature sampling is a separate operation.
+
+When individual recorded display timestamps are unavailable, reconstruct frame
+times from stimulus onset at this cadence within the source visibility interval.
+Keep these timestamps classified as reconstructed: the confirmed projection
+rate does not establish the measured time of each display refresh or dropped
+frames. Explicit alternative sampling requests must retain their configured
+cadence and must not be represented as the experimental display cadence.
+
 ---
 
 ## Irregular and regular timing

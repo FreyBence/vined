@@ -21,7 +21,7 @@ from utils.stimulus_parameters import (load_stimulus_parameters, resolve_paramet
 from utils.replay_contract import (legacy_contract, legacy_sidecar, record_fingerprint,
                                    validate_manifest, validate_legacy_adapter)
 
-FPS = 30
+FPS = 60
 VIDEO_WIDTH = VIDEO_HEIGHT = 720
 STIM_RADIUS = 120
 BACKGROUND = 128

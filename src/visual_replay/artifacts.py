@@ -1,10 +1,12 @@
 """Lossless replay publication and verified streaming readback."""
 
 from contextlib import ExitStack
+from concurrent.futures import ProcessPoolExecutor, FIRST_COMPLETED, wait
 from copy import deepcopy
 import hashlib
 import json
 import math
+import multiprocessing
 import os
 import shutil
 import tempfile
@@ -140,7 +142,120 @@ def _encode_video(directory, outcome, image_format):
             writer.release()
 
 
-def write_replay(replay, output, *, video=False, on_trial_published=None, overwrite=False):
+def _write_trial(items, root, video):
+    """Render and publish one trial, retaining only one image at a time."""
+    staging = None
+    records = None
+    try:
+        for item in items:
+            metadata = item.metadata
+            trial_id = metadata["trial_id"]
+            if staging is None:
+                staging = root / "trials" / f".staging-{trial_id}"
+                staging.mkdir()
+                (staging / "images").mkdir()
+                records = (staging / "observations.jsonl").open("xb")
+            if isinstance(item, ReplayObservation):
+                if item.rgb is not None:
+                    with (staging / "images" / f"{metadata['schedule_index']}.npz").open("xb") as image:
+                        np.savez_compressed(image, rgb=item.rgb)
+                records.write(_json(metadata) + b"\n")
+                continue
+            records.flush()
+            os.fsync(records.fileno())
+            records.close()
+            records = None
+            _write_json(staging / "outcome.json", metadata)
+            video_result = dict(status="not_requested")
+            if video:
+                if metadata["status"] != "complete":
+                    video_result = dict(status="skipped", reason="Trial reconstruction is incomplete; gaps are not encoded")
+                else:
+                    try:
+                        video_result = _encode_video(staging, metadata, "npz_rgb8")
+                    except (ImportError, ValueError, OSError, RuntimeError) as exc:
+                        video_result = dict(status="failed", reason=f"{type(exc).__name__}: {exc}")
+            entry = dict(trial_id=trial_id,
+                         observations_file_sha256=_file_hash(staging / "observations.jsonl"),
+                         outcome_file_sha256=_file_hash(staging / "outcome.json"), video=video_result)
+            _publish_rename(staging, root / "trials" / str(trial_id))
+            return entry, metadata
+        return None
+    finally:
+        if records is not None:
+            records.close()
+
+
+def _init_trial_worker(plan, image_space):
+    global _worker_replay, _worker_timelines
+    # Workers receive resolved local inputs, never a SessionAccess or ONE client.
+    _worker_replay = ReplayStream(plan, image_space=image_space)
+    _worker_timelines = {item.trial_id: item for item in _worker_replay._timelines}
+    # Prevent native numerical libraries from multiplying the process count.
+    from threadpoolctl import threadpool_limits
+    threadpool_limits(limits=1)
+
+
+def _write_trial_worker(trial_id, root, video):
+    _worker_replay._timelines = [_worker_timelines[trial_id]]
+    items = _worker_replay._run()
+    try:
+        return _write_trial(items, Path(root), video)
+    finally:
+        # Stop at the trial outcome; only the coordinator finalizes completion.
+        items.close()
+
+
+def _write_parallel(replay, root, video, workers, on_trial_published):
+    ids = replay.definition["inputs"]["requested_trial_ids"]
+    count = min(workers, len(ids))
+    published = {}
+    replay._state = "running"
+    with ProcessPoolExecutor(max_workers=count, mp_context=multiprocessing.get_context("spawn"),
+                             initializer=_init_trial_worker,
+                             initargs=(replay._plan, replay._image_space)) as pool:
+        pending = {}
+        remaining = iter(ids)
+
+        def submit():
+            trial_id = next(remaining, None)
+            if trial_id is not None:
+                pending[pool.submit(_write_trial_worker, trial_id, str(root.resolve()), video)] = trial_id
+
+        for _ in range(count):
+            submit()
+        try:
+            while pending:
+                ready, _ = wait(pending, return_when=FIRST_COMPLETED)
+                for future in ready:
+                    trial_id = pending.pop(future)
+                    entry, outcome = future.result()
+                    if entry["trial_id"] != trial_id or outcome["trial_id"] != trial_id:
+                        raise ValueError("Parallel worker returned a different trial")
+                    published[trial_id] = entry
+                    if on_trial_published is not None:
+                        on_trial_published(deepcopy(outcome))
+                    submit()
+        except BaseException:
+            for future in pending:
+                future.cancel()
+            raise
+    # Bind records in requested order regardless of worker completion order.
+    digest = hashlib.sha256()
+    outcomes = []
+    for trial_id in ids:
+        directory = root / "trials" / str(trial_id)
+        with (directory / "observations.jsonl").open(encoding="utf-8") as records:
+            for line in records:
+                _bind(digest, json.loads(line))
+        outcome = _read_json(directory / "outcome.json")
+        _bind(digest, outcome)
+        outcomes.append(outcome)
+    replay._finish(outcomes, digest)
+    return [published[trial_id] for trial_id in ids]
+
+
+def write_replay(replay, output, *, video=False, on_trial_published=None, overwrite=False, workers=1):
     """Consume a fresh ReplayStream and publish its manifest last.
 
     With overwrite=True, stage replacement and retain unselected trials.
@@ -156,54 +271,28 @@ def write_replay(replay, output, *, video=False, on_trial_published=None, overwr
         raise TypeError("on_trial_published must be callable")
     if type(overwrite) is not bool:
         raise TypeError("overwrite must be a boolean")
+    if type(workers) is not int or workers < 1:
+        raise ValueError("workers must be a positive integer")
     if overwrite:
-        return _write_replacement(replay, output, video, on_trial_published)
+        return _write_replacement(replay, output, video, on_trial_published, workers)
     root = Path(output)
     root.mkdir(parents=True, exist_ok=False)
     (root / "trials").mkdir()
     definition = replay.definition
     _write_json(root / "definition.json", definition)
     published = []
-    records = None
-    staging = None
-    try:
-        with replay:
-            for item in replay:
-                metadata = item.metadata
-                trial_id = metadata["trial_id"]
-                if staging is None:
-                    staging = root / "trials" / f".staging-{trial_id}"
-                    staging.mkdir()
-                    (staging / "images").mkdir()
-                    records = (staging / "observations.jsonl").open("xb")
-                if isinstance(item, ReplayObservation):
-                    if item.rgb is not None:
-                        with (staging / "images" / f"{metadata['schedule_index']}.npz").open("xb") as image:
-                            np.savez_compressed(image, rgb=item.rgb)
-                    records.write(_json(metadata) + b"\n")
-                else:
-                    records.flush()
-                    os.fsync(records.fileno())
-                    records.close()
-                    records = None
-                    _write_json(staging / "outcome.json", metadata)
-                    video_result = dict(status="not_requested")
-                    if video:
-                        if metadata["status"] != "complete":
-                            video_result = dict(status="skipped", reason="Trial reconstruction is incomplete; gaps are not encoded")
-                        else:
-                            try:
-                                video_result = _encode_video(staging, metadata, "npz_rgb8")
-                            except (ImportError, ValueError, OSError, RuntimeError) as exc:
-                                video_result = dict(status="failed", reason=f"{type(exc).__name__}: {exc}")
-                    entry = dict(trial_id=trial_id,
-                                 observations_file_sha256=_file_hash(staging / "observations.jsonl"),
-                                 outcome_file_sha256=_file_hash(staging / "outcome.json"), video=video_result)
-                    _publish_rename(staging, root / "trials" / str(trial_id))
-                    staging = None
-                    published.append(entry)
-                    if on_trial_published is not None:
-                        on_trial_published(deepcopy(metadata))
+    with replay:
+        if workers > 1 and len(definition["inputs"]["requested_trial_ids"]) > 1:
+            published = _write_parallel(replay, root, video, workers, on_trial_published)
+        else:
+            while True:
+                result = _write_trial(replay, root, video)
+                if result is None:
+                    break
+                entry, outcome = result
+                published.append(entry)
+                if on_trial_published is not None:
+                    on_trial_published(deepcopy(outcome))
         completion = replay.completion
         if completion is None or [item["trial_id"] for item in published] != completion["requested_trial_ids"]:
             raise ValueError("Cannot publish an unfinished or unaccounted replay")
@@ -214,9 +303,6 @@ def write_replay(replay, output, *, video=False, on_trial_published=None, overwr
         _write_json(root / ".manifest-staging.json", manifest)
         _publish_rename(root / ".manifest-staging.json", root / "manifest.json")
         return manifest
-    finally:
-        if records is not None:
-            records.close()
 
 
 def _copy_retained_file(source, destination):
@@ -319,7 +405,7 @@ def _retain_trials(previous, staged, manifest):
     return manifest
 
 
-def _write_replacement(replay, output, video, on_trial_published):
+def _write_replacement(replay, output, video, on_trial_published, workers):
     root = Path(output).absolute()
     if root.is_symlink():
         raise ValueError("Cannot overwrite a symlinked replay directory")
@@ -329,7 +415,8 @@ def _write_replacement(replay, output, video, on_trial_published):
     staged.rmdir()  # The ordinary writer creates its own new directory.
     backup = staged.with_name(staged.name + "-previous")
     try:
-        manifest = write_replay(replay, staged, video=video, on_trial_published=on_trial_published)
+        manifest = write_replay(replay, staged, video=video, on_trial_published=on_trial_published,
+                                workers=workers)
         if root.exists():
             manifest = _retain_trials(root, staged, manifest)
         try:

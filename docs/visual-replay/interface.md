@@ -60,9 +60,9 @@ explicit approximate setup, not recovered session calibration:
     }
   },
   "observation": {
-    "cadence_hz": 30,
+    "cadence_hz": 60,
     "domain": "visible_interval",
-    "evidence": "Configured reconstruction cadence, not measured refresh."
+    "evidence": "Experiment projection rate confirmed by the researcher as 60 Hz; onset-aligned frame times are reconstructed, not individually measured display refreshes."
   },
   "movement": {
     "wheel_sign": -1,
@@ -101,6 +101,11 @@ resolved separately from this physical scene; `STIM_TRANSLATION_Z` overrides
 the reference display distance when present.
 
 Only `visible_interval` regular reconstruction scheduling is currently resolved.
+The experimental configuration uses 60 Hz, matching the researcher-confirmed
+projection rate. Frames are scheduled at `stimulus_onset + index / 60` strictly
+before stimulus offset, and remain classified as reconstructed. Optional video
+and previews use 60 FPS for this configuration. Explicit alternative cadences
+are supported as sampling overrides and recorded in timing provenance.
 No frame support interval is implied by cadence. `wheel_sign` is `-1` or `1`;
 the declared displacement interpretation is sign × wheel delta in radians ×
 radius in millimeters × signed gain in degrees/millimeter. The baseline is the
@@ -491,7 +496,7 @@ with ReplayArtifactReader("output/replay-generation") as reader:
     completion = reader.completion
 ```
 
-`write_replay(replay, output, *, video=False, on_trial_published=None, overwrite=False)`
+`write_replay(replay, output, *, video=False, on_trial_published=None, overwrite=False, workers=1)`
 consumes a fresh, pending `ReplayStream`. By default it requires a new directory
 and raises `FileExistsError` for existing output. With `overwrite=True`, it stages
 the requested trials and replaces the destination after completion, preserving
@@ -503,6 +508,20 @@ may change configuration or format. There is no fallback to an older selected
 trial. It returns the published artifact manifest after the source stream completes. Reconstruction
 failures retain their trial outcomes and may yield a completed manifest whose
 `reconstruction_status` is `partial` or `failed`.
+
+`workers` must be a positive integer. Values above one render and compress
+independent trials in spawned processes, capped at the selected trial count.
+Source resolution remains once per EID in the coordinator; workers receive
+resolved local inputs and perform no ONE/Alyx requests. Each worker retains only
+the current frame. Manifest records and content digests follow requested trial
+order regardless of completion order; callbacks run in the coordinator as trials
+finish. `workers=1` uses the sequential path. Programmatic parallel callers must
+use Python's `if __name__ == "__main__":` guard. Worker/storage failures prevent
+manifest publication, and existing output remains protected during replacement.
+
+`src/prepare_replay.py --generate`, `src/generate_replays.py`,
+`script/generate_replay.sh`, and `script/auto_fix_replay.py` (also through
+`script/auto-fix-replay.sh`) accept `--workers N`, defaulting to one.
 
 An optional `on_trial_published(outcome)` callback receives a defensive copy of
 each trial outcome after its directory has been published, including optional
@@ -685,7 +704,11 @@ The wrapper selects the project virtual environment through `environment.sh`
 and invokes `prepare_replay.py --generate` without video encoding. It saves
 compressed lossless frames and metadata only. Its default configuration is
 `data/replay-config.json`, a reusable explicit approximation with `eid: null`,
-800×600 display/scene rasters, and 30 Hz cadence. Override it with `--config`.
+800×600 display/scene rasters, and the confirmed 60 Hz experimental cadence.
+Override it with `--config`. The legacy `src/visual_stim_gen.py` renderer also
+generates at 60 FPS and records reconstructed source timing.
+Existing 30 Hz replay artifacts and their derived visual features retain their
+original timing; regenerate the replay and derived features to use 60 Hz.
 In the CLI only, a null configuration EID is filled from `--eid`, or the first
 entry of `--eids-file` (default `data/eids.txt`, respecting `VINED_EIDS_FILE`).
 Comments and blank manifest lines are ignored. A configuration with a concrete

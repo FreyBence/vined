@@ -68,6 +68,16 @@ Connect replay CLI generation, artifact readers, and optional video output to th
 
 Automatic migration of historical replay artifacts, downstream CLIP integration, and additional storage backends beyond the required replay workflow.
 
+### [x] VR07 — Generate independent trials in parallel
+
+**Summary:**
+
+Allow generation and auto-fix callers to configure trial workers within one EID, reusing resolved session inputs without worker API calls and preserving ordered identity, content binding, failure isolation, and staged publication.
+
+**Out of scope:**
+
+Parallel session acquisition, API/cache policy changes, and a performance benchmark suite.
+
 ## Dependencies
 
 - VR02 depends on VR01.
@@ -75,3 +85,4 @@ Automatic migration of historical replay artifacts, downstream CLIP integration,
 - VR04 depends on VR03.
 - VR05 depends on VR04.
 - VR06 depends on VR05.
+- VR07 depends on VR06.

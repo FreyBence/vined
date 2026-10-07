@@ -21,9 +21,12 @@ def main():
     parser.add_argument("--projection", choices=("on", "off"), default="on")
     parser.add_argument("--access-policy", choices=("local-only", "remote-allowed"), default="remote-allowed")
     parser.add_argument("--force-reload", action="store_true")
+    parser.add_argument("--workers", type=int, default=1, help="Parallel trial processes per EID (default: 1)")
     parser.add_argument("--retry-all", action="store_true", help="Also retry Fixable=False rows after changing data, configuration, or replay code")
     parser.add_argument("--dry-run", action="store_true", help="List selected trials without generating")
     args = parser.parse_args()
+    if args.workers < 1:
+        parser.error("--workers must be positive")
     if args.force_reload and args.access_policy != "remote-allowed":
         parser.error("--force-reload requires remote-allowed access")
     selected = defaultdict(set)
@@ -93,7 +96,8 @@ def main():
     for eid, ids in sorted(selected.items()):
         command = ["--config", str(args.config), "--eid", eid, "--generate", "--overwrite",
                    "--output", str(output / eid), "--access-policy", args.access_policy,
-                   "--image-space", "mouse_view" if args.projection == "on" else "display"]
+                   "--image-space", "mouse_view" if args.projection == "on" else "display",
+                   "--workers", str(args.workers)]
         for trial_id in sorted(ids):
             command.extend(["--trial-id", str(trial_id)])
         if args.force_reload:

@@ -18,9 +18,9 @@
     }
   },
   "observation": {
-    "cadence_hz": 30,
+    "cadence_hz": 60,
     "domain": "visible_interval",
-    "evidence": "Configured reconstruction cadence, not measured display refresh."
+    "evidence": "Experiment projection rate confirmed by the researcher as 60 Hz; onset-aligned frame times are reconstructed, not individually measured display refreshes."
   },
   "movement": {
     "wheel_sign": -1,

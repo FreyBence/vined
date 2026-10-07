@@ -90,6 +90,13 @@ Image dimensions and viewpoint values are documented configuration, independent 
 
 The observation scheduler uses recorded display times when applicable, or an explicitly configured reconstruction schedule over the requested source-session domain. It records whether timing is measured, reconstructed, or assumed. A configured cadence does not establish the original display refresh rate.
 
+The experimental reconstruction configuration uses the researcher-confirmed
+60 Hz projection rate defined in `spec.md`. Without individual display timestamps,
+the regular schedule is anchored to stimulus onset with 1/60-second spacing and
+remains classified as reconstructed. Optional one-frame-per-observation video
+uses the same 60 FPS cadence; explicit alternative sampling remains separately
+identified in timing provenance.
+
 Every observation retains its actual source-session timestamp and timing precision. Scheduling does not extend a trial to satisfy video duration or frame-count constraints. State evaluation handles event boundaries independently of whether the schedule samples those boundaries.
 
 Replay scheduling defines which reconstructed observations are supplied. Any subsequent selection for feature extraction belongs to `visual-features`; neither operation creates a neural time grid.

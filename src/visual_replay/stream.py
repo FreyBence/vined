@@ -67,6 +67,7 @@ class ReplayStream:
             array.setflags(write=False)
             arrays.append(array)
         snapshot = ReconstructionPlan(inputs, *arrays)
+        self._plan = snapshot
         self._timelines = prepare_trial_timelines(snapshot)
         self._renderer = DisplayRenderer(snapshot)
         self._projector = SceneProjector(snapshot) if image_space == "mouse_view" else None
@@ -206,20 +207,25 @@ class ReplayStream:
                 yield TrialOutcome(result)
             # Reached only after every trial result has been consumed and the
             # iterator was resumed to exhaustion. No finally block may complete.
-            status = ("success" if all(x["status"] == "complete" for x in outcomes)
-                      else "partial" if any(x["image_count"] for x in outcomes) else "failed")
-            completion = dict(
-                schema_version=1, kind="replay_completion", definition_id=self.definition_id,
-                eid=self._inputs["eid"], trial_table_fingerprint=self._inputs["trial_table_fingerprint"],
-                image_space=self._image_space, requested_trial_ids=self._inputs["requested_trial_ids"],
-                accounting_complete=True, reconstruction_status=status,
-                observation_count=sum(x["emitted_count"] for x in outcomes),
-                image_count=sum(x["image_count"] for x in outcomes),
-                records_sha256=digest.hexdigest(), trials=outcomes,
-            )
-            completion["generation_id"] = _digest(completion)
-            self._completion = completion
-            self._state = "completed"
+            self._finish(outcomes, digest)
         finally:
             if self._completion is None:
                 self._state = "interrupted"
+
+    def _finish(self, outcomes, digest):
+        if [item["trial_id"] for item in outcomes] != self._inputs["requested_trial_ids"]:
+            raise ValueError("Cannot complete a replay with missing or reordered trial outcomes")
+        status = ("success" if all(x["status"] == "complete" for x in outcomes)
+                  else "partial" if any(x["image_count"] for x in outcomes) else "failed")
+        completion = dict(
+            schema_version=1, kind="replay_completion", definition_id=self.definition_id,
+            eid=self._inputs["eid"], trial_table_fingerprint=self._inputs["trial_table_fingerprint"],
+            image_space=self._image_space, requested_trial_ids=self._inputs["requested_trial_ids"],
+            accounting_complete=True, reconstruction_status=status,
+            observation_count=sum(x["emitted_count"] for x in outcomes),
+            image_count=sum(x["image_count"] for x in outcomes),
+            records_sha256=digest.hexdigest(), trials=outcomes,
+        )
+        completion["generation_id"] = _digest(completion)
+        self._completion = completion
+        self._state = "completed"

@@ -18,6 +18,7 @@ def main(argv=None, *, progress_position=None):
     parser.add_argument("--output", type=Path, required=True, help="Definition JSON file, or generation directory with --generate")
     parser.add_argument("--overwrite", action="store_true", help="Replace selected trials in an existing generation; requires --generate")
     parser.add_argument("--generate", action="store_true", help="Generate lossless images, observation records, and completion manifest")
+    parser.add_argument("--workers", type=int, default=1, help="Parallel trial rendering/compression processes (default: 1)")
     parser.add_argument("--image-space", choices=("mouse_view", "display"), default="mouse_view")
     parser.add_argument("--video", action="store_true", help="Also encode complete trials as MP4 with source-observation mappings")
     parser.add_argument("--access-policy", choices=("local-only", "remote-allowed"), default="local-only")
@@ -33,6 +34,10 @@ def main(argv=None, *, progress_position=None):
     parser.add_argument("--settings-collection", default="raw_behavior_data")
     parser.add_argument("--settings-revision")
     args = parser.parse_args(argv)
+    if args.workers < 1:
+        parser.error("--workers must be positive")
+    if args.workers != 1 and not args.generate:
+        parser.error("--workers requires --generate")
     if args.overwrite and not args.generate:
         parser.error("--overwrite requires --generate")
     report = print if progress_position is None else tqdm.write
@@ -66,6 +71,7 @@ def main(argv=None, *, progress_position=None):
         with progress as bar:
             manifest = write_replay(
                 ReplayStream(plan, image_space=args.image_space), args.output, video=args.video, overwrite=args.overwrite,
+                workers=args.workers,
                 on_trial_published=None if bar is None else lambda outcome: bar.update(1))
         completion = manifest["completion"]
         video_failed = any(item["video"]["status"] == "failed" for item in manifest["trials"])

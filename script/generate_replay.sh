@@ -6,6 +6,7 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/environment.sh"
 output="${VINED_REPLAY_DIR}"
 config="data/replay-config.json"
 projection=on
+workers=1
 reload=()
 trials=()
 selection=()
@@ -17,17 +18,18 @@ while [[ $# -gt 0 ]]; do
             echo "Without --eid, uses all EIDs in data/eids.txt."
             echo "Saves compressed lossless frames and metadata; no MP4 videos."
             echo "Overwrites selected trials under the output directory's EID folders."
-            echo "Optional: --force-reload --config FILE --output DIR"
+            echo "Optional: --workers N --force-reload --config FILE --output DIR"
             echo "Reuses cached data and permits remote lookup/download of missing data."
             exit 0 ;;
         --force-reload) reload=(--force-reload); shift ;;
-        --eid|--projection|--config|--output|--trial-number|--trial-id)
+        --eid|--projection|--config|--output|--trial-number|--trial-id|--workers)
             [[ $# -ge 2 && -n "$2" ]] || fail "Missing value for $1"
             case "$1" in
                 --eid) selection=(--eid "$2") ;;
                 --projection) projection="$2" ;;
                 --config) config="$2" ;;
                 --output) output="$2" ;;
+                --workers) workers="$2" ;;
                 --trial-number|--trial-id) trials+=(--trial-id "$2") ;;
             esac
             shift 2 ;;
@@ -35,4 +37,4 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 exec "$PYTHON" src/generate_replays.py --config "$config" --output "$output" \
-    --projection "$projection" "${selection[@]}" "${reload[@]}" "${trials[@]}"
+    --projection "$projection" --workers "$workers" "${selection[@]}" "${reload[@]}" "${trials[@]}"

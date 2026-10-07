@@ -21,7 +21,10 @@ def main():
     parser.add_argument("--config", type=Path, default=Path("data/replay-config.json"))
     parser.add_argument("--output", type=Path, default=replay_dir())
     parser.add_argument("--force-reload", action="store_true")
+    parser.add_argument("--workers", type=int, default=1, help="Parallel trial processes per EID (default: 1)")
     args = parser.parse_args()
+    if args.workers < 1:
+        parser.error("--workers must be positive")
     if args.trial_id is not None and any(i < 0 for i in args.trial_id):
         parser.error("Trial numbers must be nonnegative")
     eids = select_sessions(eid=args.eid)
@@ -32,7 +35,8 @@ def main():
             progress.set_postfix_str(f"{eid} (preparing)")
             command = ["--config", str(args.config), "--output", str(args.output / eid),
                        "--generate", "--overwrite", "--eid", eid, "--access-policy", "remote-allowed",
-                       "--image-space", "mouse_view" if args.projection == "on" else "display"]
+                       "--image-space", "mouse_view" if args.projection == "on" else "display",
+                       "--workers", str(args.workers)]
             if args.force_reload:
                 command.append("--force-reload")
             for trial_id in dict.fromkeys(args.trial_id or []):

@@ -54,7 +54,7 @@ def legacy_contract(fps):
                     dependencies=rendering_dependencies(), scene_profile=None,
                     output_space="stimulus", capture_storage=None,
                     source_clock="session_seconds", source_time_kind="reconstructed",
-                    timing_evidence="Legacy 30 Hz onset-aligned reconstruction; not recorded display refreshes",
+                    timing_evidence=f"Legacy {fps:g} Hz onset-aligned reconstruction; experiment projection rate confirmed as 60 Hz; not recorded display refreshes",
                     video_mapping=dict(policy="identity", fps=float(fps)))
     contract["fingerprint"] = fingerprint(contract)
     validate_contract(contract)
