@@ -109,19 +109,28 @@ required selection metadata raise `ValueError`.
 
 ## Counting intervals and trials
 
+Omitting bin_size uses exactly 1/60 second (approximately 16.67 ms, 60 Hz).
+The CLI uses the same default when the request omits this field; explicit null
+retains single-bin-per-window counting. The experiment uses 20 ms as its
+reference and permits candidate sizes within ±5 ms (15–25 ms); 1/60 second
+satisfies this constraint and matches the confirmed visual projection cadence.
+Use the full-precision JSON value below rather than rounding to 0.01667 seconds.
+Existing 20 ms generations retain their recorded grids and require regeneration
+from spikes before aligning on the new experimental grid.
+
 ```python
 from neural_data import count_intervals, count_trials
 
 counts = count_intervals(population, [(100., 100.05), (101., 101.07)],
-                        bin_size=0.02, request_ids=[8, 19])
+                        bin_size=1/60, request_ids=[8, 19])
 trials = access.load_trials(population.eid)
 trial_counts = count_trials(population, trials, event="stimOn_times",
-                           offsets=(-0.5, 1.5), bin_size=0.02)
+                           offsets=(-0.5, 1.5), bin_size=1/60)
 ```
 
-`count_intervals(population, intervals, *, bin_size=None, request_ids=None,
-unit_coverage=None)` counts each `[start, end)` window independently. `intervals`
-has shape `[requests, 2]` in source-session seconds. With `bin_size=None`, each
+`count_intervals(population, intervals, *, bin_size=1/60, request_ids=None,
+unit_coverage=None, workers=1)` counts each `[start, end)` window independently. `intervals`
+has shape `[requests, 2]` in source-session seconds. With explicit `bin_size=None`, each
 window is one bin, allowing callers to request arbitrary individual physical
 intervals. A positive finite bin size partitions each window and retains a
 shortened final bin. The returned edges are authoritative; durations are not
@@ -135,8 +144,8 @@ preserved. Nonfinite boundaries produce unavailable outcomes without inventing
 an interval. Finite reversed/zero-width windows and malformed inputs raise
 `ValueError`. Empty requests and empty selected populations are supported.
 
-`count_trials(population, trials, *, event, offsets, bin_size=None,
-unit_coverage=None)` accepts a `LoadedTrials` from session-data. Source EIDs must
+`count_trials(population, trials, *, event, offsets, bin_size=1/60,
+unit_coverage=None, workers=1)` accepts a `LoadedTrials` from session-data. Source EIDs must
 match the population. The table's unique nonnegative integer index supplies
 original trial IDs and must be retained if callers subset the table. It is never
 renumbered. A missing event column fails; a missing/nonfinite event value retains
@@ -151,6 +160,16 @@ window. Left-sided searches at every edge preserve coincident events, exclude
 the right boundary, and avoid repeated full-session spike scans. Separate calls
 with the same population, windows, IDs, and policies have the same numerical
 results; there is no learned or batch-dependent state.
+
+Both counting entry points accept `workers=1`, a positive integer. Above one,
+independent windows run in shared-memory CPU threads, capped at the request
+count. Spike inputs, recording coverage, and unit selection are validated once
+before dispatch; workers read them without source acquisition or full spike-array
+copies. Returned windows follow request order, retaining original IDs, unit
+columns, half-open edges, and coverage semantics. Empty/single-window requests
+use the sequential path. Errors propagate after active workers finish; no partial
+result is returned. Concurrent callers must not mutate the supplied population
+while counting. Worker count does not change numerical processing configuration.
 
 ## Count output and validity
 
@@ -218,7 +237,7 @@ from neural_data import generate_neural, load_generation
 
 generation = generate_neural(
     access, eid, [RecordingRequest(pname="probe01", revision="")], "output/neural",
-    event="stimOn_times", offsets=(-0.5, 1.5), bin_size=0.02,
+    event="stimOn_times", offsets=(-0.5, 1.5), bin_size=1/60,
 )
 loaded = load_generation(generation.path,
                          expected_generation_id=generation.generation_id)
@@ -226,13 +245,20 @@ counts = loaded.data
 ```
 
 `generate_neural(access, eid, recordings, output_dir, *, intervals=None,
-request_ids=None, event=None, offsets=None, bin_size=None, quality=None,
-anatomy=None, unit_coverage=None, trial_collection="alf", trial_revision=None)`
+request_ids=None, event=None, offsets=None, bin_size=1/60, quality=None,
+anatomy=None, unit_coverage=None, trial_collection="alf", trial_revision=None, workers=1)`
 processes one session. Supply exactly one of absolute `intervals` or a trial
 `event`; trial mode requires offsets and takes IDs from the original table.
 Selection and coverage objects have the contracts above. Acquisition stays
 within session-data. No visual artifact, behavioral eligibility filter, model,
 or experiment split is required.
+
+`workers` controls window counting and staged per-window NPZ compression in
+separate shared-memory thread pools. Source loading and final verification and
+publication remain serial. Each output file is written by one worker, and file
+and outcome accounting retains requested order. A worker failure prevents
+publication. Worker count is an execution setting, excluded from generation
+configuration; identical numerical outputs retain the same content identity.
 
 The returned `NeuralGeneration` has `generation_id`, absolute `path`, `data`
 (`NeuralCounts`), and `manifest`. Publication uses a temporary sibling directory
@@ -303,6 +329,13 @@ From the checkout root using the project Python:
 python src/prepare_neural_data.py --eid EID --config request.json --access-policy local-only
 ```
 
+The Bash entry point uses `script/environment.sh` to select the project Python
+and checkout root, and forwards every argument and the Python exit status:
+
+```bash
+bash script/prepare_neural_data.sh --eid EID --config request.json --workers 4
+```
+
 Example request JSON:
 
 ```json
@@ -310,7 +343,7 @@ Example request JSON:
   "recordings": [{"pname": "probe01", "collection": "alf/probe01/pykilosort", "revision": ""}],
   "event": "stimOn_times",
   "offsets": [-0.5, 1.5],
-  "bin_size": 0.02
+  "bin_size": 0.016666666666666666
 }
 ```
 
@@ -320,7 +353,10 @@ corresponding dataclass fields. Unknown configuration keys fail. Absolute reques
 use `intervals` and optional `request_ids` instead of `event`/`offsets`.
 
 `--eids-file` and `--n-sessions` use the shared session-selection conventions;
-the same request configuration applies to each selected session. `--cache-dir`
+the same request configuration applies to each selected session. `--workers N`
+sets a positive number of counting/compression threads per session (default one).
+This is a CLI option, not a request JSON field. Session source loading remains
+serial and workers add no ONE/Alyx calls. `--cache-dir`
 defaults to the project dataset cache and `--output-dir` to
 `<VINED_OUTPUT_DIR>/neural`. Access defaults to `local-only`; acquisition requires
 `--access-policy remote-allowed`. Sessions are processed individually. Output

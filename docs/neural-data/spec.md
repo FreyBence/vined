@@ -88,6 +88,16 @@ The initial output preserves unsmoothed, unnormalized counts. A future derived r
 
 Temporal resolution and requested domain must be configurable. Actual interval boundaries in source-session time must be available to consumers; bin centers or a nominal bin size alone are insufficient.
 
+The default temporal bin size is exactly `1/60` second (approximately 16.67 ms,
+60 Hz), matching the confirmed experimental visual projection and replay cadence.
+The previously used 20 ms bin size is the reference temporal resolution;
+candidate sizes for this experiment must remain within ±5 ms of that reference
+(15–25 ms) to avoid substantially changing spike-count sparsity. The selected
+16.67 ms bin is approximately 3.33 ms below the reference and satisfies this
+constraint. This is the experiment's selection rationale, not a measured claim
+that sparsity is unchanged. Explicit alternative resolutions and single-interval
+counting remain supported for other requests.
+
 Use half-open counting intervals `[start, end)`: include a spike at the left boundary and exclude one at the right boundary. Adjacent intervals therefore do not count their shared boundary twice. Record any shortened final interval explicitly; it must not appear to have the full nominal duration.
 
 Overlapping requested windows may legitimately include the same spike in different samples. Preserve their physical intervals so downstream processing can detect that overlap. Processing batches must not introduce accidental duplication or omission within a requested interval.

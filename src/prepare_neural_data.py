@@ -18,7 +18,11 @@ def main():
     parser.add_argument("--output-dir", type=Path, default=output_dir() / "neural")
     parser.add_argument("--cache-dir", type=Path, default=dataset_dir())
     parser.add_argument("--access-policy", choices=("local-only", "remote-allowed"), default="local-only")
+    parser.add_argument("--workers", type=int, default=1,
+                        help="Shared-memory trial/interval counting and compression workers (default: 1)")
     args = parser.parse_args()
+    if args.workers < 1:
+        parser.error("--workers must be positive")
     config = json.loads(args.config.read_text(encoding="utf-8-sig"))
     allowed = {"recordings", "quality", "anatomy", "intervals", "request_ids", "event",
                "offsets", "bin_size", "unit_coverage", "trial_collection", "trial_revision"}
@@ -40,7 +44,7 @@ def main():
     eids = select_sessions(args.eid, args.eids_file, args.n_sessions)
 
     def prepare(eid):
-        generation = generate_neural(access, eid, requests, args.output_dir, **config)
+        generation = generate_neural(access, eid, requests, args.output_dir, workers=args.workers, **config)
         print(json.dumps(dict(eid=eid, generation_id=generation.generation_id,
                               path=str(generation.path), outcomes=generation.manifest["outcomes"])), flush=True)
 

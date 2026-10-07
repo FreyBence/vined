@@ -40,6 +40,17 @@ trial sets must match exactly; no trial is silently skipped or renumbered.
 
 ## Input requirements
 
+The current experimental neural bin size is exactly `1/60` second (approximately
+16.67 ms, 60 Hz), matching visual replay cadence. Alignment reads the supplied
+neural bin size; it does not rebin existing 20 ms counts. Regenerate neural counts
+from source spikes and then regenerate alignment and dependent datasets for the
+new grid. Explicit alternative prepared grids remain supported.
+
+Neural bins are anchored at stimulus onset and visual queries use their centers,
+`stimOn + (k + 0.5) / 60`; replay frames are onset-anchored at `stimOn + k / 60`.
+Equal rates therefore still require the existing timestamp-based visual
+resampling and sufficient source coverage, including the final bin center.
+
 - Neural counts are raw unsmoothed int64 values with session-clock seconds and
   an explicit positive bin size. Unit rows retain their supplied order and
   scoped session/recording/sorting/source-unit identities, including silent units.

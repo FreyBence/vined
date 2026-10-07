@@ -38,10 +38,21 @@ Provide a configurable neural-only generation entry point and loader for T02 out
 
 Migration of historical artifacts, recursive downstream cache invalidation, redesign of the combined preparation pipeline, or changes to alignment and training-dataset behavior.
 
+### [x] T04 — Parallelize independent neural windows
+
+**Summary:**
+
+Expose configurable shared-memory trial/interval counting and staged window compression through the standalone neural API and CLI, preserving source loading, unit and request ordering, count/coverage semantics, and verified publication.
+
+**Out of scope:**
+
+Concurrent source acquisition, spike-sorting changes, downstream alignment changes, and performance benchmarking infrastructure.
+
 ## Dependencies
 
 - T02 depends on T01.
 - T03 depends on T02.
+- T04 depends on T03.
 
 ## Downstream boundary
 

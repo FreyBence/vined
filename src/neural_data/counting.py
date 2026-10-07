@@ -1,6 +1,7 @@
 """Unnormalized spike counts on explicit source-session intervals."""
 
 from copy import deepcopy
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
 
 import numpy as np
@@ -9,6 +10,7 @@ from .sources import Coverage, _coverage
 from .provenance import content_hash
 
 UNKNOWN, VALID, ASSUMED, PARTIAL, INVALID, UNAVAILABLE = range(6)
+DEFAULT_BIN_SIZE = 1 / 60  # Seconds; matches the confirmed experimental projection rate.
 COVERAGE_STATES = dict(enumerate(("unknown", "valid", "assumed", "partial", "invalid", "unavailable")))
 
 
@@ -113,8 +115,8 @@ def _ids(values, count):
     return values.astype(np.int64)
 
 
-def count_intervals(population, intervals, *, bin_size=None, request_ids=None,
-                    unit_coverage=None):
+def count_intervals(population, intervals, *, bin_size=DEFAULT_BIN_SIZE, request_ids=None,
+                    unit_coverage=None, workers=1):
     """Count each requested window; no trial or visual eligibility is imposed.
 
     Coverage overrides are keyed by unit-axis position and may only restrict
@@ -122,6 +124,8 @@ def count_intervals(population, intervals, *, bin_size=None, request_ids=None,
     Nonfinite windows produce explicit unavailable outcomes. Other invalid input
     raises ValueError rather than returning a partially processed result.
     """
+    if type(workers) is not int or workers < 1:
+        raise ValueError("workers must be a positive integer")
     intervals = np.asarray(intervals, dtype=np.float64)
     if intervals.size == 0 and intervals.shape == (0,):
         intervals = intervals.reshape(0, 2)
@@ -168,8 +172,9 @@ def count_intervals(population, intervals, *, bin_size=None, request_ids=None,
         override["invalid"] = list(base["invalid"]) + list(override["invalid"])
         override["provenance"] = repr((base["provenance"], coverage.provenance))
         overrides[int(index)] = override
-    windows = []
-    for request_id, (start, end), available in zip(ids, intervals, finite):
+
+    def count_window(request):
+        request_id, (start, end), available = request
         edges = _edges(start, end, bin_size) if available else np.empty(0, dtype=float)
         n_bins = max(0, len(edges) - 1)
         counts = np.zeros((n_bins, n_units), dtype=np.int64)
@@ -199,8 +204,17 @@ def count_intervals(population, intervals, *, bin_size=None, request_ids=None,
             outcome, reason = "partial", "incomplete_neural_coverage"
         else:
             outcome, reason = "unavailable", ",".join(COVERAGE_STATES[int(code)] for code in np.unique(statuses))
-        windows.append(CountWindow(int(request_id), (float(start), float(end)), edges,
-                                   counts, valid, statuses, duration, outcome, reason))
+        return CountWindow(int(request_id), (float(start), float(end)), edges,
+                           counts, valid, statuses, duration, outcome, reason)
+
+    requests = zip(ids, intervals, finite)
+    if workers > 1 and len(intervals) > 1:
+        # Read shared validated inputs; each worker allocates only its own window.
+        with ThreadPoolExecutor(max_workers=min(workers, len(intervals)),
+                                thread_name_prefix="neural-count") as pool:
+            windows = tuple(pool.map(count_window, requests))
+    else:
+        windows = tuple(map(count_window, requests))
     return NeuralCounts(population.eid, population.units.copy(deep=True),
         deepcopy(population.recordings), tuple(windows), dict(
             representation="unsmoothed_spike_counts", clock="source-session", units="seconds",
@@ -209,7 +223,8 @@ def count_intervals(population, intervals, *, bin_size=None, request_ids=None,
             coverage_policy="Only fully observed bins are valid; assumed/unknown bins remain qualified"))
 
 
-def count_trials(population, trials, *, event, offsets, bin_size=None, unit_coverage=None):
+def count_trials(population, trials, *, event, offsets, bin_size=DEFAULT_BIN_SIZE,
+                 unit_coverage=None, workers=1):
     """Count a LoadedTrials table, preserving its original integer row index."""
     if not trials.sources or any(source.eid != population.eid for source in trials.sources):
         raise ValueError("Trial source identity must match the neural session")
@@ -221,7 +236,8 @@ def count_trials(population, trials, *, event, offsets, bin_size=None, unit_cove
         raise ValueError(f"Required trial event is unavailable: {event}")
     origins = trials.data[event].to_numpy(dtype=float, na_value=np.nan)
     result = count_intervals(population, origins[:, None] + offsets,
-                             bin_size=bin_size, request_ids=ids, unit_coverage=unit_coverage)
+                             bin_size=bin_size, request_ids=ids, unit_coverage=unit_coverage,
+                             workers=workers)
     result.configuration["trial_window"] = dict(event=event, offsets=offsets.tolist(),
                                                 identity="original trial table row index")
     result.configuration["trial_content_sha256"] = content_hash(trials.data)

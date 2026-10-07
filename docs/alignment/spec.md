@@ -214,10 +214,10 @@ with:
 For the current default neural bin size:
 
 ```text
-Δt = 20 ms
+Δt = 1/60 second ≈ 16.67 ms
 ```
 
-the maximum discarded trailing duration is therefore strictly less than 20 ms.
+the maximum discarded trailing duration is therefore strictly less than 1/60 second (approximately 16.67 ms).
 
 ---
 
@@ -229,20 +229,20 @@ For example:
 
 ```text
 stimulus duration = 1013 ms
-bin size          =   20 ms
+bin size          = 1/60 second ≈ 16.67 ms
 ```
 
 produces:
 
 ```text
-50 complete bins = 1000 ms
+60 complete bins = 1000 ms
 discarded tail   =   13 ms
 ```
 
 Conceptually:
 
 ```text
-| 20 | 20 | 20 | ... | 20 | 13 |
+| 16.67 | 16.67 | ... | 16.67 | 13 |
                               ↑
                            discarded
 ```
@@ -297,9 +297,9 @@ For example:
 
 ```text
 physical timestamp:
-stimOn + 10 ms
-stimOn + 30 ms
-stimOn + 50 ms
+stimOn + 1/120 second (≈ 8.33 ms)
+stimOn + 3/120 seconds (25 ms)
+stimOn + 5/120 seconds (≈ 41.67 ms)
 ...
 
 model position:
@@ -332,17 +332,17 @@ The associated alignment timestamp is the bin center.
 For the current default configuration:
 
 ```text
-Δt = 20 ms
+Δt = 1/60 second ≈ 16.67 ms
 ```
 
 the first bins are:
 
 ```text
-bin 0: [stimOn,          stimOn + 20 ms)
-        center = stimOn + 10 ms
+bin 0: [stimOn,          stimOn + 1/60 second)
+        center = stimOn + 1/120 second (≈ 8.33 ms)
 
-bin 1: [stimOn + 20 ms, stimOn + 40 ms)
-        center = stimOn + 30 ms
+bin 1: [stimOn + 1/60 second, stimOn + 2/60 seconds)
+        center = stimOn + 3/120 seconds (25 ms)
 ```
 
 and so on.
@@ -400,7 +400,7 @@ It must not be interpreted as:
 - an independently extracted CLIP feature;
 - evidence that the visual stimulus was sampled at the neural sampling frequency.
 
-For example, visual features sampled at 5 Hz and resampled onto a 50 Hz neural grid remain derived from the original 5 Hz visual observations.
+For example, visual features sampled at 5 Hz and resampled onto a 60 Hz neural grid remain derived from the original 5 Hz visual observations.
 
 ---
 
@@ -756,14 +756,24 @@ Session timestamps and model positional indices must remain distinct concepts.
 The current pipeline uses:
 
 ```text
-neural bin size = 20 ms
+neural bin size = 1/60 second ≈ 16.67 ms
 ```
 
 corresponding to a nominal neural temporal resolution of:
 
 ```text
-50 Hz
+60 Hz
 ```
+
+The previously used 20 ms bin size remains the reference temporal resolution.
+Candidate sizes for this experiment must remain within ±5 ms (15–25 ms) to
+avoid substantially changing neural spike-count sparsity. The selected 1/60-second
+bin is approximately 3.33 ms below the reference and satisfies this constraint
+while matching the confirmed 60 Hz visual projection and replay rate. This is
+the selection rationale, not a measured claim that sparsity is unchanged.
+
+Replay timestamps and neural bin centers have different offsets even at the
+same rate; physical timestamp resampling remains required.
 
 This value is a pipeline configuration, not a permanent architectural constant.
 

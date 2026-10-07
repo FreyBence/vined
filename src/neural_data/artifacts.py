@@ -1,6 +1,7 @@
 """Standalone neural generations with checked, immutable publication."""
 
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
 from importlib.metadata import version
 import json
@@ -11,7 +12,7 @@ import numpy as np
 import pandas as pd
 
 from utils.provenance import file_hash, fingerprint, source_hashes, write_json
-from .counting import CountWindow, NeuralCounts, count_intervals, count_trials
+from .counting import DEFAULT_BIN_SIZE, CountWindow, NeuralCounts, count_intervals, count_trials
 from .provenance import json_value
 from .sources import load_population
 
@@ -110,14 +111,16 @@ def load_generation(path, *, expected_generation_id=None):
 
 
 def generate_neural(access, eid, recordings, output_dir, *, intervals=None,
-                    request_ids=None, event=None, offsets=None, bin_size=None,
+                    request_ids=None, event=None, offsets=None, bin_size=DEFAULT_BIN_SIZE,
                     quality=None, anatomy=None, unit_coverage=None,
-                    trial_collection="alf", trial_revision=None):
+                    trial_collection="alf", trial_revision=None, workers=1):
     """Process one session and atomically publish a new fully accounted generation.
 
     Exactly one of intervals or event is required. Existing generations are never
     returned in place of a new run; an identical destination raises FileExistsError.
     """
+    if type(workers) is not int or workers < 1:
+        raise ValueError("workers must be a positive integer")
     if (intervals is None) == (event is None):
         raise ValueError("Select either absolute intervals or a trial event")
     if event is not None and (offsets is None or request_ids is not None):
@@ -129,12 +132,12 @@ def generate_neural(access, eid, recordings, output_dir, *, intervals=None,
     population = load_population(access, eid, recordings, quality=quality, anatomy=anatomy)
     if event is None:
         data = count_intervals(population, intervals, bin_size=bin_size,
-                               request_ids=request_ids, unit_coverage=unit_coverage)
+                               request_ids=request_ids, unit_coverage=unit_coverage, workers=workers)
         requested_count = len(intervals)
     else:
         trials = access.load_trials(population.eid, collection=trial_collection, revision=trial_revision)
         data = count_trials(population, trials, event=event, offsets=offsets,
-                            bin_size=bin_size, unit_coverage=unit_coverage)
+                            bin_size=bin_size, unit_coverage=unit_coverage, workers=workers)
         requested_count = len(trials.data)
     del population
     if len(data.windows) != requested_count or len(data.recordings) != len(recordings):
@@ -148,13 +151,27 @@ def generate_neural(access, eid, recordings, output_dir, *, intervals=None,
         data.units.to_parquet(staging / "units.parquet", index=False)
         files = {"units.parquet": file_hash(staging / "units.parquet")}
         outcomes = []
-        for index, window in enumerate(data.windows):
+
+        def write_window(item):
+            index, window = item
             name = f"windows/{index:06d}.npz"
             np.savez_compressed(staging / name, interval=np.asarray(window.interval, dtype=np.float64),
                 bin_edges=window.bin_edges, counts=window.counts, valid=window.valid,
                 coverage_status=window.coverage_status, observed_duration=window.observed_duration)
-            files[name] = file_hash(staging / name)
-            outcomes.append(dict(request_id=window.request_id, status=window.status, reason=window.reason))
+            return name, file_hash(staging / name), dict(
+                request_id=window.request_id, status=window.status, reason=window.reason)
+
+        if workers > 1 and len(data.windows) > 1:
+            with ThreadPoolExecutor(max_workers=min(workers, len(data.windows)),
+                                    thread_name_prefix="neural-write") as pool:
+                for name, digest, outcome in pool.map(write_window, enumerate(data.windows)):
+                    files[name] = digest
+                    outcomes.append(outcome)
+        else:
+            for item in enumerate(data.windows):
+                name, digest, outcome = write_window(item)
+                files[name] = digest
+                outcomes.append(outcome)
         if _implementation() != implementation:
             raise ValueError("Neural processing implementation changed during generation")
         manifest = json_value(dict(schema_version=1, complete=True, eid=data.eid,
