@@ -136,6 +136,34 @@ python src/create_dataset.py --alignment-generation PATH --split-strategy within
 
 `bash script/create_dataset.sh` forwards the same arguments using the project environment. Repeat `--alignment-generation` for multiple sessions. Optional repeated `--expected-alignment-generation-id` values must match the number and order of input paths. `--output-dir` defaults to `<VINED_DATA_DIR>/training-dataset`; optional `--max-time-length` and `--max-neuron-count` enable padding without truncation.
 
+The same entry point supports EID-based selection instead of explicit paths:
+
+```bash
+# One session:
+bash script/create_dataset.sh --eid EID --split-strategy within_session --split-ratios 0.7 0.1 0.2 --split-seed 42
+
+# All EIDs in data/eids.txt (or VINED_EIDS_FILE):
+bash script/create_dataset.sh --split-strategy within_session --split-ratios 0.7 0.1 0.2 --split-seed 42
+```
+
+`--eids-file FILE` selects another ordered EID list; `--n-sessions N` limits it
+using the shared session-selection rules. Selected sessions form one combined
+dataset generation, with one shared split configuration. No alignment or neural
+processing is performed. `--alignment-root DIR` defaults to
+`<VINED_OUTPUT_DIR>/alignment`. It accepts the standard
+`DIR/<eid>/<generation_id>/manifest.json` layout, an EID directory, or an explicit
+generation directory for one selected EID. Each EID must resolve to exactly one
+published, completed alignment; missing or multiple generations fail without
+choosing a latest version or skipping sessions. The selected manifest EID is
+checked before normal verified alignment loading. Hidden staging directories
+are excluded. Selected paths are printed before construction.
+
+Explicit repeated `--alignment-generation PATH` remains supported and cannot be
+combined with EID-list selection or `--alignment-root`. Expected generation IDs
+can be supplied in selected EID order in selection mode. `run_create_dataset.sh`
+and the obsolete `utils.sessions --cache` launcher have been removed; use
+`create_dataset.sh` for both single-session and multi-session creation.
+
 For explicit session-held-out membership, use `--split-strategy session_held_out --session-assignments FILE`, with a JSON object mapping every retained session to `train`, `val`, or `test`, instead of ratios/seed. `--exclusions FILE` accepts a JSON list of objects containing `session_id`, integer `trial_id`, and `reason`; duplicate or absent exclusion identities fail.
 
 Success prints generation ID, absolute path, sessions, and split sizes as JSON and exits 0. Input/publication failures report the error and exit 1; CLI argument errors exit 2. The command has no model/trainer configuration dependency or acquisition/network behavior. The old positional `COUNT EID` launcher and objective/masking options are retired.
@@ -191,6 +219,13 @@ loader = make_loader(
 
 True sequence/neuron counts, stimulus/aligned bounds, bin duration, discarded tail, and aligned `intervals` are also exposed. The legacy `bin_size` loader option does not override the persisted scientific bin duration.
 
+`make_loader` and `BaseDataset` default their legacy `bin_size` option to
+`1/60` second (approximately 16.67 ms, 60 Hz). Legacy spike timestamp generation
+uses the same default and produces exactly one timestamp per temporal position.
+These defaults do not rebin previously prepared counts or relabel the recorded
+duration of a verified scientific dataset; regenerate old data upstream to
+use the 60 Hz experimental grid.
+
 `make_loader` retains standard PyTorch tensor collation and its existing sampler behavior. Scientific unit tables and provenance dictionaries travel as lists of per-sample sidecars rather than being coerced into tensors or collated across sessions. Tensor outputs have leading batch axis `B`. Empty selected splits retain the existing `make_loader` explicit empty-dataset error.
 
 For direct evaluation metadata access, `PersistedSplit` supports `cluster_regions`, `cluster_uuids`, `eid`, `intervals`, `sample_id`, `trial_id`, `sequence_length`, `neuron_count`, and `split` column lookups. `cluster_uuids` uses recorded UUIDs when complete; otherwise it exposes stable `unit-<SHA-256>` labels derived from the full scoped unit identity, not invented biological UUIDs. Unit-level evaluation callers that assume one population should select an explicit EID. Arbitrary Hugging Face columns/methods and legacy behavioral modalities are not provided by this view.
@@ -199,4 +234,4 @@ For direct evaluation metadata access, `PersistedSplit` supports `cluster_region
 
 Malformed or duplicate aligned trials, inconsistent session populations, invalid padding configuration, or maxima smaller than source dimensions raise `ValueError`. Unsupported trial/config types raise `TypeError`. Alignment loader verification and filesystem errors propagate. No partial sample tuple is returned and no failed source is skipped.
 
-This API constructs, splits, persists, and exposes scientific datasets without applying prediction objectives. The verified split adapter supports existing training/evaluation loading calls, while legacy rows/caches remain a separate compatibility path. Existing orchestration that supplies the former positional creation arguments must migrate to explicit alignment selections; dataset roots and generation collections are not automatically searched for a generation.
+This API constructs, splits, persists, and exposes scientific datasets without applying prediction objectives. The verified split adapter supports existing training/evaluation loading calls, while legacy rows/caches remain a separate compatibility path. Existing orchestration that supplies the former positional creation arguments must migrate to EID selection or explicit alignment paths. Dataset loading still requires an explicit generation; creation-time alignment selection never chooses between multiple versions.

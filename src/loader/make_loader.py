@@ -38,7 +38,7 @@ def make_loader(
     pad_value=0.,
     max_time_length=5000,
     max_space_length=100,
-    bin_size=0.05,
+    bin_size=1 / 60,
     brain_region='all',
     load_meta=False,
     dataset_name="ibl",

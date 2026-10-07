@@ -36,8 +36,17 @@ Adapt the training-dataset-owned loading boundary to expose persisted splits and
 **Out of scope:**
 Changes to training, evaluation, or model internals; runtime batching redesign; and general cleanup of possibly obsolete helpers.
 
+### [x] T05 — Consolidate dataset creation by session selection
+
+**Summary:**
+Provide one dataset Bash entry point for a single EID or an ordered EID list, resolving one unambiguous prepared alignment per session and creating a combined dataset with explicit split configuration. Retain explicit-generation usage and retire obsolete positional batch orchestration.
+
+**Out of scope:**
+Upstream data preparation, automatic latest-generation selection, and changes to sample or split semantics.
+
 ## Dependencies
 
 - T02 depends on T01.
 - T03 depends on T02.
 - T04 depends on T03.
+- T05 depends on T03.

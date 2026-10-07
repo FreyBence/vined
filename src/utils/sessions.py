@@ -3,7 +3,6 @@ import argparse
 import json
 import os
 from pathlib import Path
-import subprocess
 import sys
 from uuid import UUID
 
@@ -73,13 +72,6 @@ def run_sessions(eids, operation, stage):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     add_session_arguments(parser)
-    parser.add_argument("--cache", action="store_true", help="Run the cache wrapper for each selected EID")
     args = parser.parse_args()
     eids = select_sessions(args.eid, args.eids_file, args.n_sessions)
-    if args.cache:
-        def cache(eid):
-            subprocess.run(["bash", str(REPO_ROOT / "script/create_dataset.sh"), "1", eid],
-                           cwd=REPO_ROOT, check=True)
-        run_sessions(eids, cache, "cache")
-    else:
-        print("\n".join(eids))
+    print("\n".join(eids))

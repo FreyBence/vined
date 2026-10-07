@@ -96,9 +96,9 @@ def _attention_mask(
 
 def _spikes_timestamps(
     seq_length: int,
-    bin_size: float = 0.02,
+    bin_size: float = 1 / 60,
     ) -> np.ndarray:
-    return np.arange(0, seq_length * bin_size, bin_size)
+    return np.arange(seq_length) * bin_size
 
 def _spikes_mask(
     seq_length: int,
@@ -368,7 +368,7 @@ class BaseDataset(torch.utils.data.Dataset):
         pad_value = -1.,
         max_time_length = 5000,
         max_space_length = 1000,
-        bin_size = 0.05,
+        bin_size = 1 / 60,
         mask_ratio = 0.1,
         pad_to_right = True,
         sort_by_depth = False,

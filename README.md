@@ -150,11 +150,10 @@ site-specific. Training enables W&B logging by default; configure your own
 account/project or set `WANDB_MODE=offline` for local runs.
 
 Wrapper arguments (run from the checkout; `--help` shows usage for the positional
-training, evaluation, and cache launchers):
+training and evaluation launchers):
 
 ```text
-bash script/create_dataset.sh COUNT EID
-bash script/run_create_dataset.sh [--eid EID | --eids-file FILE] [--n-sessions COUNT]
+bash script/create_dataset.sh [--eid EID | --eids-file FILE] [--n-sessions COUNT] [--alignment-root DIR] --split-strategy within_session --split-ratios 0.7 0.1 0.2 --split-seed 42
 bash script/prepare_data.sh [--eid EID | --eids-file FILE] [--n-sessions COUNT]
 bash script/prepare_visual_stim.sh [--eid EID] [--replay-dir output/visual_replays/RUN] [--sample-fps 5]
 bash script/generate_replay.sh [--eid EID] [--projection on|off] [--force-reload]
