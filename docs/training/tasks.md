@@ -4,7 +4,7 @@ Implement [spec.md](spec.md) using the gaps identified in [audit.md](audit.md). 
 
 ## Tasks
 
-### [ ] T01 — Configure reproducible training on an explicit dataset generation
+### [x] T01 — Configure reproducible training on an explicit dataset generation
 
 **Summary:**
 
@@ -14,7 +14,7 @@ Make training and fine-tuning select a verified dataset generation and honor its
 
 Dataset construction, resplitting, acquisition, alignment, and new training objectives or search infrastructure.
 
-### [ ] T02 — Execute validity-aware optimization with consistent scheduling
+### [x] T02 — Execute validity-aware optimization with consistent scheduling
 
 **Summary:**
 
@@ -24,7 +24,7 @@ Use explicit temporal and neuron validity to control the training objective whil
 
 Model architecture changes, upstream scientific transformations, numerical recovery strategies, and performance benchmarking.
 
-### [ ] T03 — Validate all eligible observations and select checkpoints explicitly
+### [x] T03 — Validate all eligible observations and select checkpoints explicitly
 
 **Summary:**
 
@@ -34,7 +34,7 @@ Calculate configured validation losses and metrics over valid observations witho
 
 Final scientific evaluation, additional research metrics, and test-driven model selection.
 
-### [ ] T04 — Produce traceable run artifacts and resume compatible training
+### [x] T04 — Produce traceable run artifacts and resume compatible training
 
 **Summary:**
 
@@ -44,7 +44,7 @@ Give each run a stable identity and isolated artifact location that cannot mix i
 
 Historical checkpoint reconstruction, external experiment-management infrastructure, and changes to evaluation implementation.
 
-### [ ] T05 — Adapt compatible pretrained models to an explicitly selected session
+### [x] T05 — Adapt compatible pretrained models to an explicitly selected session
 
 **Summary:**
 

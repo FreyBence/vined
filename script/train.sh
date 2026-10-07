@@ -1,10 +1,16 @@
 #!/bin/bash
 
 set -e
-usage="Usage: bash script/train.sh COUNT EID train|finetune mm|encoding|decoding MASK_RATIO True|False TASK_VAR"
+usage="Usage: bash script/train.sh [--finetune] --dataset-generation PATH [TRAINING_OPTIONS...]\n       bash script/train.sh COUNT EID train|finetune mm|encoding|decoding MASK_RATIO True|False TASK_VAR [TRAINING_OPTIONS...]"
 if [[ "${1:-}" == --help ]]; then echo "$usage"; exit 0; fi
-[[ $# -eq 7 ]] || { echo "$usage" >&2; exit 2; }
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/environment.sh"
+
+if [[ "${1:-}" == --* ]]; then
+    train_mode=train
+    if [[ "$1" == --finetune ]]; then train_mode=finetune; shift; fi
+    exec "$PYTHON" "src/$train_mode.py" "$@"
+fi
+[[ $# -ge 7 ]] || { echo "$usage" >&2; exit 2; }
 
 num_sessions=$1
 eid=$2
@@ -13,6 +19,7 @@ model_mode=$4
 mask_ratio=$5
 search=$6
 task_var=$7
+shift 7
 validate_session "$num_sessions" "$eid"
 validate_model "$model_mode" "$mask_ratio" "$task_var"
 case "$train_mode" in train|finetune) ;; *) fail "train_mode must be train or finetune" ;; esac
@@ -35,4 +42,4 @@ args=(--eid "$eid" --base_path "$base_path" --mask_ratio "$mask_ratio"
       --enc_task_var "$task_var" --config_dir "$config_dir" --data_path "$data_path")
 [[ "$model_mode" != mm ]] || args+=(--mixed_training)
 [[ "$search" != True ]] || args+=(--search --num_tune_sample "$NUM_TUNE_SAMPLES")
-"$PYTHON" "$python_file" "${args[@]}"
+"$PYTHON" "$python_file" "${args[@]}" "$@"

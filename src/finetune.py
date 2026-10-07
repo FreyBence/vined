@@ -1,220 +1,57 @@
 import argparse
 import logging
 import os
-import pickle
+import json
 import threading
-from math import ceil
 
-import numpy as np
 import ray
 import torch
-from accelerate import Accelerator
 from ray import train, tune
 from ray.tune.schedulers import ASHAScheduler
-from torch.optim.lr_scheduler import OneCycleLR
 
 import wandb
 from utils.paths import dataset_dir, output_dir
-from loader.make_loader import make_loader
-from multi_modal.encoder_embeddings import EncoderEmbedding
-from multi_modal.mm import MultiModal
 from trainer.make import make_multimodal_trainer
-from utils.config_utils import config_from_kwargs, update_config
-from utils.dataset_utils import load_ibl_dataset
-from utils.eval_utils import load_model_data_local
-from utils.utils import dummy_load, set_seed
+from trainer.artifacts import new_run_directory, initialize_run
+from trainer.runtime import make_accelerator, prepare_optimization
+from trainer.setup import CONFIG_ROOT, add_setup_arguments, resolve_setup, setup_summary
+from trainer.pretrained import build_model, load_pretrained_model
+from utils.utils import dummy_load
 
 
 def main(tune_config=None):
 
-    if args.num_sessions == 1:
-        model_config = f"{args.config_dir}/multi_modal/mm_single_session.yaml"
-    elif (args.num_sessions < 70) and (args.num_sessions > 10):
-        model_config = f"{args.config_dir}/multi_modal/mm_medium_size.yaml"
-    elif args.num_sessions >= 70:
-        model_config = f"{args.config_dir}/multi_modal/mm_large_size.yaml"
-    else:
-        model_config = f"{args.config_dir}/multi_modal/mm.yaml" # default
+    config, train_dataloader, val_dataloader, meta_data = resolve_setup(args, tune_config)
+    if args.eid in (None, "None") or meta_data["num_sessions"] != 1:
+        raise ValueError("Fine-tuning requires --eid selecting exactly one session")
+    if args.setup_only:
+        print(json.dumps(setup_summary(config, train_dataloader, val_dataloader), indent=2))
+        return
+    args.model_mode = config.training.objective
+    args.mask_mode = config.model.masker.mode
+    args.mask_ratio = config.model.masker.ratio
+    args.enc_task_var = config.training.enc_task_var
+    args.mixed_training = config.training.mixed_training
 
-    kwargs = {"model": f"include:{model_config}"}
-    config = config_from_kwargs(kwargs)
-    config = update_config(f"{args.config_dir}/multi_modal/trainer_mm.yaml", config)
-    set_seed(config.seed)
-
-    best_ckpt_path, last_ckpt_path = "model_best.pt", "model_last.pt"
-
-    # ------ 
-    # SET UP
-    # ------ 
+    if not args.resume_checkpoint and not args.pretrained_checkpoint:
+        raise ValueError("Fine-tuning requires --pretrained-checkpoint PATH or --resume-checkpoint PATH")
     eid = args.eid
     base_path = args.base_path
-    model_mode = args.model_mode
-    modality = args.modality
-    num_sessions = args.num_sessions
+    lr, wd = config.optimizer.lr, config.optimizer.wd
+    neural_mods, static_mods, dynamic_mods = ["spike"], [], ["vision-clip"]
+    modal_filter = dict(config.training.modal_filter)
 
-    if args.search:
-        config["wandb"]["use"] = False
-        config["model"]["masker"]["ratio"] = tune_config["mask_ratio"]
-        lr = tune_config["learning_rate"]
-        wd = tune_config["weight_decay"]
-    else:
-        config["model"]["masker"]["ratio"] = args.mask_ratio
-        lr = config.optimizer.lr
-        wd = config.optimizer.wd
-
-    mask_mode = args.mask_mode
-    mask_name = f"mask_{mask_mode}"
-    config["model"]["masker"]["mode"] = args.mask_mode
-    logging.info(f"EID: {eid} model mode: {args.model_mode} mask ratio: {args.mask_ratio}")
-    logging.info(f"Available modality: {modality}")
-
-    neural_mods, static_mods, dynamic_mods = [], [], []
-    for mod in modality:
-        if mod in neural_acronyms:
-            neural_mods.append(neural_acronyms[mod])
-        elif mod in static_acronyms:
-            static_mods.append(static_acronyms[mod])   
-        elif mod in dynamic_acronyms:
-            dynamic_mods.append(dynamic_acronyms[mod])   
-
-    if model_mode == "mm":
-        input_mods = output_mods = neural_mods + static_mods + dynamic_mods
-    elif model_mode == "decoding":
-        input_mods = neural_mods
-        output_mods = static_mods + dynamic_mods
-    elif model_mode == "encoding":
-        input_mods = static_mods + dynamic_mods
-        output_mods = neural_mods
-    else:
-        raise ValueError(f"Model mode {model_mode} not supported.")
-
-    modal_filter = {"input": input_mods, "output": output_mods}
+    accelerator = make_accelerator()
+    log_dir = new_run_directory(base_path, accelerator)
+    log_name = os.path.basename(log_dir)
+    logging.info("Run artifacts: %s", log_dir)
 
 
-    # ---------
-    # LOAD DATA
-    # ---------
-    train_dataset, val_dataset, test_dataset, meta_data = load_ibl_dataset(
-        args.data_path, 
-        args.data_path,
-        num_sessions=1,
-        eid=eid,
-        use_re=True,
-        split_method="predefined",
-        test_session_eid=[],
-        batch_size=config.training.train_batch_size,
-        seed=config.seed
-    )
-
-    train_dataloader = make_loader(
-        train_dataset, 
-        target=[mod for mod in modality if mod in dynamic_acronyms],
-        load_meta=config.data.load_meta,
-        batch_size=config.training.train_batch_size, 
-        pad_to_right=True, 
-        pad_value=-1.,
-        max_time_length=config.data.max_time_length,
-        max_space_length=meta_data["num_neurons"][0],
-        dataset_name=config.data.dataset_name,
-        sort_by_depth=config.data.sort_by_depth,
-        sort_by_region=config.data.sort_by_region,
-        stitching=True,
-        seed=config.seed,
-        data_dir=f"{args.data_path}/ibl_mm",
-        mode="train",
-        eids=list(meta_data["eids"]),
-        shuffle=True
-    )
-
-    val_dataloader = make_loader(
-        val_dataset, 
-        target=[mod for mod in modality if mod in dynamic_acronyms],
-        load_meta=config.data.load_meta,
-        batch_size=config.training.test_batch_size, 
-        pad_to_right=True, 
-        pad_value=-1.,
-        max_time_length=config.data.max_time_length,
-        max_space_length=meta_data["num_neurons"][0],
-        dataset_name=config.data.dataset_name,
-        sort_by_depth=config.data.sort_by_depth,
-        sort_by_region=config.data.sort_by_region,
-        stitching=True,
-        seed=config.seed,
-        data_dir=f"{args.data_path}/ibl_mm",
-        mode="val",
-        eids=list(meta_data["eids"]),
-        shuffle=False
-    )
-
-    test_dataloader = make_loader(
-        test_dataset, 
-        target=[mod for mod in modality if mod in dynamic_acronyms],
-        load_meta=config.data.load_meta,
-        batch_size=config.training.test_batch_size, 
-        pad_to_right=True, 
-        pad_value=-1.,
-        max_time_length=config.data.max_time_length,
-        max_space_length=meta_data["num_neurons"][0],
-        dataset_name=config.data.dataset_name,
-        sort_by_depth=config.data.sort_by_depth,
-        sort_by_region=config.data.sort_by_region,
-        stitching=True,
-        seed=config.seed,
-        data_dir=f"{args.data_path}/ibl_mm",
-        mode="test",
-        eids=list(meta_data["eids"]),
-        shuffle=False
-    )
-
-    # --------
-    # SET PATH
-    # --------
-    num_sessions = args.num_sessions
-    eid_ = "multi" if num_sessions > 1 else eid[:5]
-
-    pretrain_path = \
-    "sesNum-{}_ses-{}_set-train_inModal-{}_outModal-{}_mask-{}_mode-{}_ratio-{}_taskVar-all".format(
-        num_sessions,
-        eid_, 
-        "-".join(modal_filter["input"]),
-        "-".join(modal_filter["output"]),
-        config.training.mask_type, 
-        args.mask_mode,
-        args.mask_ratio,
-        args.pretrain_task_var,
-    )
-
-    log_name = \
-    "sesNum-{}_ses-{}_set-finetune_inModal-{}_outModal-{}_mask-{}_mode-{}_ratio-{}_taskVar-{}".format(
-        num_sessions,
-        eid[:5], 
-        "-".join(modal_filter["input"]),
-        "-".join(modal_filter["output"]),
-        config.training.mask_type, 
-        args.mask_mode,
-        args.mask_ratio,
-        args.enc_task_var,
-    )
-
-    if args.search:
-        trial_dir = train.get_context().get_trial_dir()
-        trial_name = os.path.basename(trial_dir)
-        log_dir = os.path.join(ray_path, f"{eid[:5]}_{model_mode}", trial_name)
-    else:
-        log_dir = os.path.join(base_path, "results", log_name)
-
-    logging.info(f"Save model to {log_dir}")
-
-    final_checkpoint = os.path.join(log_dir, last_ckpt_path)
-    assert not os.path.exists(final_checkpoint) or args.overwrite, \
-        "Last checkpoint exists and overwrite is False"
-    os.makedirs(log_dir, exist_ok=True)
-
-    if config.wandb.use:
+    if config.wandb.use and accelerator.is_main_process:
         wandb.init(
             dir=base_path,
-            project=config.wandb.project, 
-            entity=config.wandb.entity, 
+            project=config.wandb.project,
+            entity=config.wandb.entity,
             config=config,
             name=log_name
         )
@@ -225,116 +62,22 @@ def main(tune_config=None):
     # ----------
     logging.info(f"Start model finetuning:")
 
-    accelerator = Accelerator()
-
-    if args.model_mode == "mm":
-        best_ckpt_path = [
-            "model_best_avg.pt"
-        ]
+    if args.resume_checkpoint:
+        model = build_model(config=config, metadata=meta_data, modal_filter=modal_filter)
     else:
-        best_ckpt_path = ["model_best_avg.pt"]
-
-    avg_state_dict = []
-    for ckpt_path in best_ckpt_path:
-        model_path = os.path.join(
-            base_path, "results", pretrain_path, ckpt_path
-        )    
-        configs = {
-            "model_config": model_config,
-            "model_path": model_path,
-            "trainer_config": f"{args.config_dir}/multi_modal/trainer_mm.yaml",
-            "dataset_path": None, 
-            "seed": 42,
-            "mask_name": mask_name,
-            "eid": eid,
-            "neural_mods": neural_mods,
-            "static_mods": static_mods,
-            "dynamic_mods": dynamic_mods,
-            "modal_filter": modal_filter,
-            "model_mode": model_mode,
-            "num_sessions": num_sessions,
-            "data_path": args.data_path,
-        }      
-        model, accelerator, dataset, dataloader = load_model_data_local(**configs)
-        model_state_dict = model.state_dict()
-        avg_state_dict.append(model_state_dict)
-
-    # Model Averaging
-    for key in model_state_dict:
-        model_state_dict[key] = sum(
-            [state_dict[key] for state_dict in avg_state_dict]
-        ) / len(avg_state_dict)
-    model.load_state_dict(model_state_dict)
-
-    model.masker.ratio = args.mask_ratio
-    logging.info(f"Reset mask ratio to {model.masker.ratio} for fine-tuning.")
-
-    # ------------------
-    # STITCH NEW SESSION
-    # ------------------
-    if num_sessions > 1:
-
-        hidden_size = config.model.encoder.transformer.hidden_size
-
-        for mod in neural_mods + static_mods + dynamic_mods:
-            print(f"Stitching {mod} embedding for the new session")
-            pos_embed = model.encoder_embeddings[mod].embedder.pos_embed.state_dict()
-            mod_emb = model.encoder_embeddings[mod].embedder.mod_emb.state_dict()
-            session_emb = model.encoder_embeddings[mod].embedder.session_emb.state_dict()
-            model.encoder_embeddings[mod] = EncoderEmbedding(
-                hidden_size = hidden_size,
-                n_channel = hidden_size,
-                output_channel = hidden_size,
-                stitching = True,
-                eid_list = meta_data["eid_list"],
-                mod = mod,
-                config = config.model.encoder,
-            )
-            model.encoder_embeddings[mod].embedder.pos_embed.load_state_dict(pos_embed)
-            model.encoder_embeddings[mod].embedder.mod_emb.load_state_dict(mod_emb)
-            model.encoder_embeddings[mod].embedder.session_emb.load_state_dict(session_emb)
-
-    # -----------------------
-    # TRACK MODEL & DATA SIZE
-    # -----------------------
-    modal_filter = {"input": input_mods, "output": output_mods}
-
-    n_mods = len(modal_filter["input"])
-    n_tokens_per_mod = config.model.encoder.embedder.max_F
-    n_batches = len(train_dataloader)
-    batch_size = config.training.train_batch_size
-    logging.info(f"Total modality: {n_mods} Total tokens per modality: {n_tokens_per_mod}")
-    logging.info(f"Total batch: {n_batches} batch size: {batch_size}")
-
-    total_tokens = n_mods*n_tokens_per_mod*n_batches*batch_size
-    logging.info(f"Total tokens: {total_tokens}")
-
-    total_params = sum(p.numel() for p in model.parameters())
-    logging.info(f"Total parameters: {total_params}")
-
-    # ------------
-    # SET UP MODEL
-    # ------------
-    model = accelerator.prepare(model)
-
-    total_params = sum(p.numel() for p in model.parameters())
-    logging.info(f"Total parameters: {total_params}")
+        model = load_pretrained_model(args.pretrained_checkpoint, config=config,
+                                      metadata=meta_data, modal_filter=modal_filter)
+    logging.info("Total parameters: %s", sum(parameter.numel() for parameter in model.parameters()))
 
     optimizer = torch.optim.AdamW(
-        model.parameters(), 
-        lr=lr, 
-        weight_decay=wd, 
+        model.parameters(),
+        lr=lr,
+        weight_decay=wd,
         eps=config.optimizer.eps
     )
 
-    grad_accum_steps = config.optimizer.gradient_accumulation_steps
-
-    lr_scheduler = OneCycleLR(
-        optimizer = optimizer,
-        total_steps = config.training.num_epochs*len(train_dataloader)//grad_accum_steps,
-        max_lr = config.optimizer.lr,
-        pct_start = config.optimizer.warmup_pct,
-        div_factor = config.optimizer.div_factor,
+    model, optimizer, train_dataloader, lr_scheduler = prepare_optimization(
+        accelerator, model, optimizer, train_dataloader, config
     )
 
     print("modal_filter: ")
@@ -358,11 +101,12 @@ def main(tune_config=None):
         model=model,
         train_dataloader=train_dataloader,
         eval_dataloader=val_dataloader,
-        test_dataloader=test_dataloader,
         optimizer=optimizer,
         **trainer_kwargs,
         **meta_data
     )
+
+    initialize_run(trainer_, kind="finetune", resume_checkpoint=args.resume_checkpoint, pretrained_checkpoint=args.pretrained_checkpoint)
 
     if args.dummy_load:
         logging.info(f"Starting dummy load with {args.dummy_size} samples")
@@ -375,34 +119,26 @@ def main(tune_config=None):
             dummy_thread.join()
     else:
         validation_metrics = trainer_.train()
-    train.report(validation_metrics)
+    if args.search:
+        train.report(validation_metrics)
 
-    
+
 if __name__ == "__main__":
 
-    logging.basicConfig(level=logging.INFO) 
-
-    neural_acronyms = {
-        "ap": "spike",
-    }
-    static_acronyms = {}
-    dynamic_acronyms = {
-        "vision-clip": "vision-clip",
-    }
+    logging.basicConfig(level=logging.INFO)
 
     ap = argparse.ArgumentParser()
-    ap.add_argument("--eid", type=str, default="EXAMPLE_EID")
+    ap.add_argument("--eid", type=str, default=None)
     ap.add_argument("--base_path", type=str, default=str(output_dir()))
     ap.add_argument("--data_path", type=str, default=str(dataset_dir()))
-    ap.add_argument("--num_sessions", type=int, default=1)
-    ap.add_argument("--model_mode", type=str, default="mm")
-    ap.add_argument("--mask_mode", type=str, default="temporal")
-    ap.add_argument("--mask_ratio", type=float, default=0.1)
+    ap.add_argument("--num_sessions", type=int, default=None)
+    ap.add_argument("--model_mode", type=str, default=None)
+    ap.add_argument("--mask_mode", type=str, default=None)
+    ap.add_argument("--mask_ratio", type=float, default=None)
     ap.add_argument("--mixed_training", action="store_true")
-    ap.add_argument("--pretrain_task_var", type=str, default="random")
-    ap.add_argument("--enc_task_var", type=str, default="all")
+    ap.add_argument("--enc_task_var", type=str, default=None)
     ap.add_argument(
-        "--modality", nargs="+", 
+        "--modality", nargs="+",
         default=["ap", "vision-clip"]
     )
     ap.add_argument("--overwrite", action="store_true")
@@ -410,11 +146,13 @@ if __name__ == "__main__":
     ap.add_argument("--dummy_size", type=int, default=50000)
     ap.add_argument("--search", action="store_true")
     ap.add_argument("--num_tune_sample", type=int, default=10)
-    ap.add_argument("--config_dir", type=str, default="src/configs")
+    ap.add_argument("--config_dir", type=str, default=str(CONFIG_ROOT))
+    ap.add_argument("--pretrained-checkpoint", help="Explicit pretrained checkpoint")
+    add_setup_arguments(ap)
     args = ap.parse_args()
 
     if args.search:
-        ray.init(address="auto")  
+        ray.init(address="auto")
         search_space = {
             "learning_rate": tune.loguniform(1e-4, 1e-3),
             "weight_decay": tune.loguniform(0.001, 0.1),
@@ -430,13 +168,13 @@ if __name__ == "__main__":
         print("Starting hyperparameter search")
         print(f"saving to {ray_path}")
 
-        eid_ = args.eid[:5]
-        
+        eid_ = args.eid[:5] if args.eid else "session"
+
         analysis = tune.run(
             main,
             resources_per_trial={
                 "cpu": 1,
-                "gpu": 1  
+                "gpu": 1
             },
             config=search_space,
             num_samples=args.num_tune_sample,
@@ -457,4 +195,4 @@ if __name__ == "__main__":
         logging.info(f"No hyperparameter search, Starting training")
         main()
 
-        
+

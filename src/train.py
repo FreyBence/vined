@@ -1,27 +1,23 @@
 import argparse
 import logging
 import os
-import pickle
+import json
 import threading
 
-import numpy as np
 import ray
 import torch
-from accelerate import Accelerator
-from accelerate.utils import DistributedDataParallelKwargs
 from ray import train, tune
 from ray.tune.schedulers import ASHAScheduler
-from torch.optim.lr_scheduler import LinearLR, OneCycleLR
 
 import wandb
 from utils.paths import dataset_dir, output_dir
-from loader.make_loader import make_loader
 from multi_modal.encoder_embeddings import EncoderEmbedding
 from multi_modal.mm import MultiModal
 from trainer.make import make_multimodal_trainer
-from utils.config_utils import config_from_kwargs, update_config
-from utils.dataset_utils import load_ibl_dataset
-from utils.utils import dummy_load, set_seed
+from trainer.artifacts import new_run_directory, initialize_run
+from trainer.runtime import make_accelerator, prepare_optimization, register_runtime_modules
+from trainer.setup import CONFIG_ROOT, add_setup_arguments, resolve_setup, setup_summary
+from utils.utils import dummy_load
 
 
 def main(tune_config=None):
@@ -34,56 +30,27 @@ def main(tune_config=None):
         "vision-clip": "vision-clip",
     }
 
-    if args.num_sessions == 1:
-        model_config = f"{args.config_dir}/multi_modal/mm_single_session.yaml"
-    elif (args.num_sessions < 70) and (args.num_sessions > 10):
-        model_config = f"{args.config_dir}/multi_modal/mm_medium_size.yaml"
-    elif args.num_sessions >= 70:
-        model_config = f"{args.config_dir}/multi_modal/mm_large_size.yaml"
-    else:
-        model_config = f"{args.config_dir}/multi_modal/mm.yaml" # default
+    config, train_dataloader, val_dataloader, meta_data = resolve_setup(args, tune_config)
+    if args.setup_only:
+        print(json.dumps(setup_summary(config, train_dataloader, val_dataloader), indent=2))
+        return
+    args.model_mode = config.training.objective
+    args.mask_mode = config.model.masker.mode
+    args.mask_ratio = config.model.masker.ratio
+    args.enc_task_var = config.training.enc_task_var
+    args.mixed_training = config.training.mixed_training
 
-    kwargs = {"model": f"include:{model_config}"}
-    config = config_from_kwargs(kwargs)
-    
-    if args.num_sessions <= 40:
-        config = update_config(f"{args.config_dir}/multi_modal/trainer_mm.yaml", config)
-    else:
-        config = update_config(f"{args.config_dir}/multi_modal/trainer_multi_session.yaml", config)
-        
-    if args.model_mode == "encoding":
-        config["training"]["num_epochs"] = 130
-
-    set_seed(config.seed)
-
-    best_ckpt_path, last_ckpt_path = "model_best.pt", "model_last.pt"
-
-    # ------ 
+    # ------
     # SET UP
-    # ------ 
+    # ------
     eid = args.eid
     base_path = args.base_path
     model_mode = args.model_mode
-    modality = list(neural_acronyms.keys()) + list(static_acronyms.keys()) + list(dynamic_acronyms.keys())
+    modality = ["ap", "vision-clip"]
 
-    if args.search:
-        config["wandb"]["use"] = False
-        mask_ratio = tune_config["mask_ratio"]
-        lr = tune_config["learning_rate"]
-        wd = tune_config["weight_decay"]
-        hidden_size = tune_config["hidden_size"]
-        inter_size = tune_config["inter_size"]
-        n_layers = tune_config["n_layers"]
-        config["model"]["encoder"]["transformer"]["hidden_size"] = hidden_size
-        config["model"]["encoder"]["transformer"]["inter_size"] = inter_size
-        config["model"]["encoder"]["transformer"]["n_layers"] = n_layers
-    else:
-        mask_ratio = args.mask_ratio
-        lr = config.optimizer.lr
-        wd = config.optimizer.wd
-        hidden_size = config.model.encoder.transformer.hidden_size
-        inter_size = config.model.encoder.transformer.inter_size
-
+    mask_ratio = config.model.masker.ratio
+    lr = config.optimizer.lr
+    wd = config.optimizer.wd
     logging.info(f"EID: {eid} model mode: {args.model_mode} mask ratio: {mask_ratio}")
     logging.info(f"Available modality: {modality}")
 
@@ -92,9 +59,9 @@ def main(tune_config=None):
         if mod in neural_acronyms:
             neural_mods.append(neural_acronyms[mod])
         elif mod in static_acronyms:
-            static_mods.append(static_acronyms[mod])   
+            static_mods.append(static_acronyms[mod])
         elif mod in dynamic_acronyms:
-            dynamic_mods.append(dynamic_acronyms[mod])   
+            dynamic_mods.append(dynamic_acronyms[mod])
 
     if model_mode == "mm":
         input_mods = output_mods = neural_mods + static_mods + dynamic_mods
@@ -109,140 +76,18 @@ def main(tune_config=None):
 
     modal_filter = {"input": input_mods, "output": output_mods}
 
-    if args.multi_gpu:
-        kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
-        accelerator = Accelerator(kwargs_handlers=[kwargs])
-    else:
-        accelerator = Accelerator()
-
-    max_num_processes = 30
+    accelerator = make_accelerator()
 
     batch_size = config.training.train_batch_size
-    global_batch_size = batch_size
-    num_epochs = 4_000 if model_mode == "encoding" else config.training.num_epochs
-    max_lr = 5e-4 if model_mode == "encoding" else lr
-
-    if args.multi_gpu:
-        num_epochs *= accelerator.num_processes
-        if accelerator.num_processes > max_num_processes:
-            max_lr *= max_num_processes / 2
-            global_batch_size = 512
-        elif args.num_sessions >= 70:
-            max_lr = 0.003
-            global_batch_size = 1024
-        else:
-            max_lr *= accelerator.num_processes
-            global_batch_size *= accelerator.num_processes 
-
-    # ---------
-    # LOAD DATA
-    # ---------
-    train_dataset, val_dataset, test_dataset, meta_data = load_ibl_dataset(
-        args.data_path, 
-        args.data_path,
-        num_sessions=args.num_sessions,
-        eid = eid if args.num_sessions == 1 else None,
-        use_re=True,
-        split_method="predefined",
-        test_session_eid=[],
-        batch_size=batch_size,
-        seed=config.seed
-    )
-
-    max_space_length = max(list(meta_data["eid_list"].values()))
-    logging.info(f"MAX space length to pad spike data to: {max_space_length}")
-
-    local_data_dir = "ibl_mm" if args.num_sessions == 1 else f"ibl_mm_{args.num_sessions}"
-
-    target_behavior_lst = [mod for mod in modality if mod in dynamic_acronyms]
-
-    train_dataloader = make_loader(
-        train_dataset, 
-        target=target_behavior_lst,
-        load_meta=config.data.load_meta,
-        batch_size=batch_size, 
-        pad_to_right=True, 
-        pad_value=-1.,
-        max_time_length=config.data.max_time_length,
-        max_space_length=max_space_length,
-        dataset_name=config.data.dataset_name,
-        sort_by_depth=config.data.sort_by_depth,
-        sort_by_region=config.data.sort_by_region,
-        stitching=True,
-        seed=config.seed,
-        data_dir=f"{args.data_path}/{local_data_dir}",
-        mode="train",
-        eids=list(meta_data["eids"]),
-        shuffle=True,
-    )
-    val_dataloader = make_loader(
-        val_dataset, 
-        target=target_behavior_lst,
-        load_meta=config.data.load_meta,
-        batch_size=batch_size, 
-        pad_to_right=True, 
-        pad_value=-1.,
-        max_time_length=config.data.max_time_length,
-        max_space_length=max_space_length,
-        dataset_name=config.data.dataset_name,
-        sort_by_depth=config.data.sort_by_depth,
-        sort_by_region=config.data.sort_by_region,
-        stitching=True,
-        seed=config.seed,
-        data_dir=f"{args.data_path}/{local_data_dir}",
-        mode="val",
-        eids=list(meta_data["eids"]),
-        shuffle=False,
-    )
-    test_dataloader = make_loader(
-        test_dataset, 
-        target=target_behavior_lst,
-        load_meta=config.data.load_meta,
-        batch_size=batch_size, 
-        pad_to_right=True, 
-        pad_value=-1.,
-        max_time_length=config.data.max_time_length,
-        max_space_length=max_space_length,
-        dataset_name=config.data.dataset_name,
-        sort_by_depth=config.data.sort_by_depth,
-        sort_by_region=config.data.sort_by_region,
-        stitching=True,
-        seed=config.seed,
-        data_dir=f"{args.data_path}/{local_data_dir}",
-        mode="test",
-        eids=list(meta_data["eids"]),
-        shuffle=False,
-    )
+    num_epochs = config.training.num_epochs
+    max_lr = config.optimizer.lr
 
     # --------
     # SET PATH
     # --------
-    num_sessions = len(meta_data["eid_list"])
-    eid_ = "multi" if num_sessions > 1 else eid[:5]
-
-    log_name = \
-    "sesNum-{}_ses-{}_set-train_inModal-{}_outModal-{}_mask-{}_mode-{}_ratio-{}_taskVar-{}".format(
-        num_sessions,
-        eid_, 
-        "-".join(modal_filter["input"]),
-        "-".join(modal_filter["output"]),
-        config.training.mask_type, 
-        args.mask_mode,
-        mask_ratio,
-        args.enc_task_var,
-    )
-    if args.search:
-        trial_dir = train.get_context().get_trial_dir()
-        trial_name = os.path.basename(trial_dir)
-        log_dir = os.path.join(ray_path, f"{eid_}_{model_mode}", trial_name)
-    else: 
-        log_dir = os.path.join(base_path, "results", log_name)
-
-    logging.info(f"Save model to {log_dir}")
-    final_checkpoint = os.path.join(log_dir, last_ckpt_path)
-    assert not os.path.exists(final_checkpoint) or args.overwrite, \
-        "Last checkpoint exists and overwrite is False"
-    os.makedirs(log_dir, exist_ok=True)
+    log_dir = new_run_directory(base_path, accelerator)
+    log_name = os.path.basename(log_dir)
+    logging.info("Run artifacts: %s", log_dir)
 
 
     # ------------
@@ -255,8 +100,8 @@ def main(tune_config=None):
         if accelerator.is_main_process:
             wandb.init(
                 dir=base_path,
-                project=config.wandb.project, 
-                entity=config.wandb.entity, 
+                project=config.wandb.project,
+                entity=config.wandb.entity,
                 config=config,
                 name=log_name
             )
@@ -283,68 +128,22 @@ def main(tune_config=None):
         avail_mod = neural_mods + static_mods + dynamic_mods,
         avail_beh = dynamic_mods,
         model_mode = model_mode,
-        config = config.model, 
-        **config.method.model_kwargs, 
+        config = config.model,
+        **config.method.model_kwargs,
         **meta_data
     )
 
+    model = register_runtime_modules(model)
     optimizer = torch.optim.AdamW(
-        model.parameters(), 
-        lr=max_lr, 
-        weight_decay=wd, 
+        model.parameters(),
+        lr=max_lr,
+        weight_decay=wd,
         eps=config.optimizer.eps
     )
 
-    num_train = len(train_dataset["eid"])
-    grad_accum_steps = config.optimizer.gradient_accumulation_steps
-    total_steps=int(num_epochs*(num_train//global_batch_size))//grad_accum_steps
-    if config.optimizer.scheduler == "linear":
-        lr_scheduler = LinearLR(
-            optimizer, 
-            total_iters=total_steps
-        )
-    elif config.optimizer.scheduler == "cosine":
-        lr_scheduler = OneCycleLR(
-            optimizer = optimizer,
-            total_steps = total_steps,
-            max_lr = max_lr,
-            pct_start = config.optimizer.warmup_pct,
-            div_factor = config.optimizer.div_factor,
-            anneal_strategy="cos",
-        )
-
-    if args.continue_pretrain:
-        best_pretrain_ckpt = "model_epoch.pt"
-        pretrain_path = \
-        "sesNum-{}_ses-{}_set-train_inModal-{}_outModal-{}_mask-{}_mode-{}_ratio-{}_taskVar-{}".format(
-            num_sessions,
-            "multi", 
-            "-".join(modal_filter["input"]),
-            "-".join(modal_filter["output"]),
-            config.training.mask_type, 
-            args.mask_mode,
-            mask_ratio,
-            args.enc_task_var,
-        )
-        pretrained_model_path = os.path.join(
-            base_path, "results", pretrain_path, "pretrained", best_pretrain_ckpt
-        )       
-
-        checkpoint = torch.load(pretrained_model_path)
-        model_state_dict = checkpoint["model"]
-        optimizer_state_dict = checkpoint["optimizer"]
-        lr_scheduler_state_dict = checkpoint["lr_sched"]
-        start_epoch = checkpoint["epoch"] + 1
-    
-        model.load_state_dict(model_state_dict)
-        optimizer.load_state_dict(optimizer_state_dict)
-        lr_scheduler.load_state_dict(lr_scheduler_state_dict)
-        print(f"Resume training from epoch {start_epoch}.")
-    else:
-        start_epoch = 0
-
-    model, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
-        model, optimizer, train_dataloader, lr_scheduler
+    start_epoch = 0
+    model, optimizer, train_dataloader, lr_scheduler = prepare_optimization(
+        accelerator, model, optimizer, train_dataloader, config
     )
 
     # -----------------------
@@ -352,7 +151,7 @@ def main(tune_config=None):
     # -----------------------
     n_mods = len(modal_filter["input"])
     n_tokens_per_mod = config.model.encoder.embedder.max_F
-    num_train = len(train_dataset["eid"])
+    num_train = len(train_dataloader.dataset)
     logging.info(f"Total modality: {n_mods} Total tokens per modality: {n_tokens_per_mod}")
     logging.info(f"Total trials: {num_train}")
 
@@ -371,7 +170,7 @@ def main(tune_config=None):
     logging.info(f"Total parameters: {total_params}")
 
     total_capacity = sum(
-        p.numel() for name, p in model.named_parameters() 
+        p.numel() for name, p in model.named_parameters()
         if "stitch" not in name and "static_weight" not in name
     )
     logging.info(f"Total parameters (excluding stitcher): {total_capacity}")
@@ -391,7 +190,7 @@ def main(tune_config=None):
         "enc_task_var": args.enc_task_var,
         "config": config,
         "multi_gpu": args.multi_gpu,
-        "start_epoch": start_epoch, 
+        "start_epoch": start_epoch,
     }
 
     stop_dummy_load = threading.Event()
@@ -400,11 +199,12 @@ def main(tune_config=None):
         model=model,
         train_dataloader=train_dataloader,
         eval_dataloader=val_dataloader,
-        test_dataloader=test_dataloader,
         optimizer=optimizer,
         **trainer_kwargs,
         **meta_data
     )
+
+    initialize_run(trainer_, kind="train", resume_checkpoint=args.resume_checkpoint)
 
     if args.dummy_load:
         logging.info(f"Starting dummy load with {args.dummy_size} samples")
@@ -417,24 +217,25 @@ def main(tune_config=None):
             dummy_thread.join()
     else:
         validation_metrics = trainer_.train()
-    train.report(validation_metrics)
+    if args.search:
+        train.report(validation_metrics)
 
 
 if __name__ == "__main__":
 
-    logging.basicConfig(level=logging.INFO) 
+    logging.basicConfig(level=logging.INFO)
     ap = argparse.ArgumentParser()
-    ap.add_argument("--eid", type=str, default="EXAMPLE_EID")
+    ap.add_argument("--eid", type=str, default=None)
     ap.add_argument("--base_path", type=str, default=str(output_dir()))
     ap.add_argument("--data_path", type=str, default=str(dataset_dir()))
-    ap.add_argument("--num_sessions", type=int, default=1)
-    ap.add_argument("--model_mode", type=str, default="mm")
-    ap.add_argument("--mask_mode", type=str, default="temporal")
-    ap.add_argument("--mask_ratio", type=float, default=0.1)
+    ap.add_argument("--num_sessions", type=int, default=None)
+    ap.add_argument("--model_mode", type=str, default=None)
+    ap.add_argument("--mask_mode", type=str, default=None)
+    ap.add_argument("--mask_ratio", type=float, default=None)
     ap.add_argument("--mixed_training", action="store_true")
-    ap.add_argument("--enc_task_var", type=str, default="all")
+    ap.add_argument("--enc_task_var", type=str, default=None)
     ap.add_argument(
-        "--modality", nargs="+", 
+        "--modality", nargs="+",
         default=["ap", "vision-clip"]
     )
     ap.add_argument("--continue_pretrain", action="store_true")
@@ -445,7 +246,8 @@ if __name__ == "__main__":
     ap.add_argument("--dummy_size", type=int, default=50000)
     ap.add_argument("--search", action="store_true")
     ap.add_argument("--num_tune_sample", type=int, default=50)
-    ap.add_argument("--config_dir", type=str, default="configs")
+    ap.add_argument("--config_dir", type=str, default=str(CONFIG_ROOT))
+    add_setup_arguments(ap)
     args = ap.parse_args()
 
     if args.debug:
@@ -455,9 +257,9 @@ if __name__ == "__main__":
         torch.backends.cudnn.deterministic = True
         os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
         logging.info("Deterministic mode is activated. This will negatively impact performance.")
-        
+
     if args.search:
-        ray.init(address="auto")  
+        ray.init(address="auto")
         search_space = {
             "learning_rate": tune.loguniform(1e-4, 1e-3),
             "weight_decay": tune.loguniform(0.001, 0.1),
@@ -476,13 +278,13 @@ if __name__ == "__main__":
         print("Starting hyperparameter search")
         print(f"Saving to {ray_path}")
 
-        eid_ = "multi" if args.num_sessions > 1 else args.eid[:5]
-        
+        eid_ = args.eid[:5] if args.eid and args.eid != "None" else "multi"
+
         analysis = tune.run(
             main,
             resources_per_trial={
                 "cpu": 1,
-                "gpu": 1  
+                "gpu": 1
             },
             config=search_space,
             num_samples=args.num_tune_sample,
@@ -502,4 +304,4 @@ if __name__ == "__main__":
         current_path = os.path.dirname(os.path.realpath(__file__))
         logging.info(f"No hyperparameter search, Starting training")
         main()
-        
+
