@@ -61,8 +61,12 @@ def main(argv=None):
     parser.add_argument("--sample-fps", "--sample_fps", type=float, default=None,
                         help="Explicit source-time subsampling rate; default selects all observations")
     parser.add_argument("--batch-size", "--batch_size", type=int, default=32)
+    parser.add_argument("--workers", type=int, default=1,
+                        help="Image-preparation threads; above one also overlaps replay reads with inference")
     parser.add_argument("--device", help="Torch device; default auto-selects CUDA/CPU")
     args = parser.parse_args(argv)
+    if args.workers < 1:
+        parser.error("--workers must be positive")
     if args.batch_size <= 0 or (args.sample_fps is not None
                               and (not math.isfinite(args.sample_fps) or args.sample_fps <= 0)):
         parser.error("batch size and sample FPS must be positive and finite")
@@ -83,8 +87,10 @@ def main(argv=None):
                 raise ValueError("Selected replay belongs to another EID")
             with ObservationSelection(replay, sample_fps=args.sample_fps) as observations:
                 if encoder is None:
-                    encoder = ClipEncoder(args.clip_model, revision=args.clip_revision, device=args.device)
-                manifest = write_features(observations, encoder, destination, batch_size=args.batch_size)
+                    encoder = ClipEncoder(args.clip_model, revision=args.clip_revision, device=args.device,
+                                          workers=args.workers)
+                manifest = write_features(observations, encoder, destination, batch_size=args.batch_size,
+                                          workers=args.workers)
         status = manifest["replay_completion"]["reconstruction_status"]
         if status != "success":
             partial.append(eid)

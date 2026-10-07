@@ -73,11 +73,16 @@ with ObservationSelection(ReplayArtifactReader(generation_directory),
 ## CLIP encoding
 
 `ClipEncoder(model_name="openai/clip-vit-large-patch14", *, revision="main",
-device=None)` resolves the model revision to an immutable commit and loads model
+device=None, workers=1)` resolves the model revision to an immutable commit and loads model
 and image processor from that snapshot. The default device is CUDA when
 available, otherwise CPU. The supported model has a square image input and
 768 projected features. Weights are frozen; execution uses evaluation and
 inference modes. Loading/download failures propagate.
+
+`workers` is a positive integer (default one). Above one, full-view image fitting
+uses ordered parallel CPU threads, capped at the batch's image count. CLIP and its
+processor remain shared; only one inference batch runs at a time. Worker count
+does not change the representation or spatial preparation policy.
 
 `prepare_image(rgb, size, *, fill=(128,128,128))` accepts nonempty RGB8 pixels
 and returns a square PIL RGB image. It fits the entire source image with one
@@ -100,9 +105,16 @@ revision, snapshot file hashes, exact extracted output, width/dtype/normalizatio
 effective spatial preparation and processor settings, device, package versions,
 and implementation hashes.
 
-`iter_encoded_observations(observations, encoder, *, batch_size=32)` takes a fresh
+`iter_encoded_observations(observations, encoder, *, batch_size=32, workers=1)` takes a fresh
 `ObservationSelection` and yields records in source order, flushing before each
-trial outcome. At most `batch_size` observation records are buffered. It yields:
+trial outcome. Sequential mode buffers at most `batch_size` observation records.
+With positive integer `workers > 1`, one reader thread prepares the next bounded
+batch while the current batch is encoded. Ordered consumption preserves trial
+boundaries, source timestamps, selection decisions, and completion verification.
+Readers are joined before source closure, including early generator closure or
+failure. No model copies or concurrent inference calls are created. Configure
+the encoder's `workers` constructor argument for parallel image fitting as well.
+It yields:
 
 - `EncodedObservation(metadata, selected, feature, status)`, retaining the full
   source metadata. Status is `encoded`, `not_selected`, or `source_unavailable`.
@@ -120,8 +132,10 @@ issued here.
 
 ## Feature publication
 
-`write_features(observations, encoder, output, *, batch_size=32)` consumes a fresh
+`write_features(observations, encoder, output, *, batch_size=32, workers=1)` consumes a fresh
 observation selector with the encoder and returns the completed artifact manifest.
+`workers` controls bounded read-ahead as described above; image fitting follows
+the encoder's constructor configuration.
 It retains metadata for every source observation and every original trial outcome,
 including zero-feature trials, alongside the selected valid feature vectors.
 Vectors are spooled to disk; all session images or features need not fit in RAM.
@@ -228,6 +242,11 @@ Explicit EID selection still rejects ambiguous or unfinished session directories
 The chosen source is printed and its EID is verified.
 
 `--sample-fps` defaults to no subsampling; `--batch-size` defaults to 32.
+`--workers N` (positive integer, default one) configures parallel CPU image fitting
+and bounded replay read-ahead together. One CLIP model is shared across batches
+and sessions, with sequential inference on the selected device. The shell wrapper
+forwards the same option. Worker count is an execution setting and does not alter
+representation identity or selection; batch size retains its existing provenance.
 `--clip-model`, `--clip-revision`, and `--device` configure the encoder. A revision
 name resolves once when the encoder is loaded, and that encoder is shared across
 the selected sessions. An immutable SHA can reproduce a chosen model revision.

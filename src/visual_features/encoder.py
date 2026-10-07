@@ -1,6 +1,8 @@
 """Fixed-weight CLIP encoding with explicit full-view image preparation."""
 
 from copy import deepcopy
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
 import re
@@ -46,7 +48,10 @@ class ClipEncoder:
     """Load one immutable model/processor snapshot and encode bounded batches."""
 
     def __init__(self, model_name="openai/clip-vit-large-patch14", *, revision="main",
-                 device=None):
+                 device=None, workers=1):
+        if type(workers) is not int or workers < 1:
+            raise ValueError("workers must be a positive integer")
+        self._workers = workers
         import torch
         from huggingface_hub import HfApi, snapshot_download
         from transformers import CLIPModel, CLIPImageProcessor
@@ -96,7 +101,11 @@ class ClipEncoder:
         if not frames:
             raise ValueError("Cannot encode an empty batch")
         try:
-            images = [prepare_image(rgb, self._size) for rgb in frames]
+            if self._workers > 1 and len(frames) > 1:
+                with ThreadPoolExecutor(max_workers=min(self._workers, len(frames))) as pool:
+                    images = list(pool.map(prepare_image, frames, [self._size] * len(frames)))
+            else:
+                images = [prepare_image(rgb, self._size) for rgb in frames]
             inputs = self._processor(images=images, return_tensors="pt")
             with torch.inference_mode():
                 features = self._model.get_image_features(
@@ -113,7 +122,38 @@ class ClipEncoder:
             raise FeatureExtractionError(f"CLIP extraction failed: {exc}") from exc
 
 
-def iter_encoded_observations(observations, encoder, *, batch_size=32):
+def _observation_batches(observations, batch_size):
+    records = []
+    for item in observations:
+        if isinstance(item, TrialOutcome):
+            yield records, item
+            records = []
+        else:
+            records.append(item)
+            if len(records) == batch_size:
+                yield records, None
+                records = []
+    if records:
+        yield records, None
+
+
+def _prefetch_batches(batches):
+    """One reader thread and at most one batch ahead of the consumer."""
+    with ThreadPoolExecutor(max_workers=1, thread_name_prefix="feature-reader") as pool:
+        pending = pool.submit(next, batches, None)
+        try:
+            while True:
+                batch = pending.result()
+                if batch is None:
+                    break
+                pending = pool.submit(next, batches, None)
+                yield batch
+        finally:
+            pending.cancel()
+        # Executor joins before the caller closes the source iterator.
+
+
+def iter_encoded_observations(observations, encoder, *, batch_size=32, workers=1):
     """Preserve record order and all source metadata while encoding selected pixels.
 
     Yield EncodedObservation or unchanged TrialOutcome. Source completion is
@@ -123,6 +163,8 @@ def iter_encoded_observations(observations, encoder, *, batch_size=32):
         raise ValueError("Expected a fresh ObservationSelection")
     if type(batch_size) is not int or batch_size <= 0:
         raise ValueError("batch_size must be a positive integer")
+    if type(workers) is not int or workers < 1:
+        raise ValueError("workers must be a positive integer")
 
     def encode_batch(records):
         frames = [record.rgb for record in records if record.selected and record.rgb is not None]
@@ -147,15 +189,10 @@ def iter_encoded_observations(observations, encoder, *, batch_size=32):
             yield EncodedObservation(deepcopy(record.metadata), record.selected, feature, status)
 
     with observations:
-        records = []
-        for item in observations:
-            if isinstance(item, TrialOutcome):
-                yield from encode_batch(records)
-                records = []
-                yield item
-            else:
-                records.append(item)
-                if len(records) == batch_size:
+        with closing(_observation_batches(observations, batch_size)) as batches:
+            stream = _prefetch_batches(batches) if workers > 1 else batches
+            with closing(stream):
+                for records, outcome in stream:
                     yield from encode_batch(records)
-                    records = []
-        yield from encode_batch(records)
+                    if outcome is not None:
+                        yield outcome

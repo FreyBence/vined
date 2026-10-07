@@ -38,7 +38,18 @@ Connect the extraction CLI and shell wrapper to unambiguous replay-generation se
 
 Alignment implementation changes, recursive downstream cache invalidation, automatic legacy archive conversion, dataset construction, and training.
 
+### [x] VF04 — Parallelize feature input preparation
+
+**Summary:**
+
+Expose configurable parallel image fitting and bounded replay read-ahead through extraction and its CLI, sharing one CLIP encoder and preserving record ordering, trial boundaries, sampling, and verified publication.
+
+**Out of scope:**
+
+Multiple model replicas, distributed inference, encoder precision changes, and performance benchmarking infrastructure.
+
 ## Dependencies
 
 - VF02 depends on VF01.
 - VF03 depends on VF01 and VF02.
+- VF04 depends on VF03.

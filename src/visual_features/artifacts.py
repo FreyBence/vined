@@ -34,7 +34,7 @@ def _check_identity(value, field):
         raise ValueError(f"Invalid {field}")
 
 
-def write_features(observations, encoder, output, *, batch_size=32):
+def write_features(observations, encoder, output, *, batch_size=32, workers=1):
     """Publish a new archive only after extraction, source completion and readback.
 
     Existing destinations are refused. A failed run never returns an old result.
@@ -55,7 +55,8 @@ def write_features(observations, encoder, output, *, batch_size=32):
     with tempfile.TemporaryDirectory(prefix=".features-", dir=output.parent) as temporary:
         staging = Path(temporary)
         with (staging / "records.jsonl").open("wb") as records, (staging / "pixels-free-features").open("wb") as values:
-            with closing(iter_encoded_observations(observations, encoder, batch_size=batch_size)) as stream:
+            with closing(iter_encoded_observations(observations, encoder, batch_size=batch_size,
+                                                   workers=workers)) as stream:
                 for item in stream:
                     if isinstance(item, EncodedObservation):
                         index = None
