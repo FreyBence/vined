@@ -150,7 +150,7 @@ def _configuration(config, eid):
         surround_provenance="Neutral project backdrop; not measured room illumination",
     )
     observation = config["observation"]
-    if not isinstance(observation, dict) or set(observation) != {
+    if not isinstance(observation, dict) or set(observation) - {"max_frames_per_trial"} != {
         "cadence_hz",
         "domain",
         "evidence",
@@ -159,6 +159,9 @@ def _configuration(config, eid):
     observation["cadence_hz"] = _number(
         observation["cadence_hz"], "cadence_hz", positive=True
     )
+    maximum = observation.setdefault("max_frames_per_trial", 10_000)
+    if type(maximum) is not int or maximum <= 0:
+        raise ValueError("max_frames_per_trial must be a positive integer")
     if (
         observation["domain"] != "visible_interval"
         or not isinstance(observation["evidence"], str)

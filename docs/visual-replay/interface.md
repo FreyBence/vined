@@ -61,6 +61,7 @@ explicit approximate setup, not recovered session calibration:
   },
   "observation": {
     "cadence_hz": 60,
+    "max_frames_per_trial": 10000,
     "domain": "visible_interval",
     "evidence": "Experiment projection rate confirmed by the researcher as 60 Hz; onset-aligned frame times are reconstructed, not individually measured display refreshes."
   },
@@ -106,6 +107,13 @@ projection rate. Frames are scheduled at `stimulus_onset + index / 60` strictly
 before stimulus offset, and remain classified as reconstructed. Optional video
 and previews use 60 FPS for this configuration. Explicit alternative cadences
 are supported as sampling overrides and recorded in timing provenance.
+`observation.max_frames_per_trial` is an optional positive integer, defaulting
+to 10,000. Scheduling rejects a visibility duration × cadence above this limit
+before allocating timestamps or rendering images. The stream records a failed
+trial outcome with the scheduling reason and continues request accounting, so
+the generation can publish its manifest. This is a resource limit, not a claim
+that longer source trials are invalid; explicitly raise it for a known long
+trial. Frames are never silently truncated to the limit.
 No frame support interval is implied by cadence. `wheel_sign` is `-1` or `1`;
 the declared displacement interpretation is sign × wheel delta in radians ×
 radius in millimeters × signed gain in degrees/millimeter. The baseline is the

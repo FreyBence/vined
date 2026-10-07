@@ -233,6 +233,20 @@ def schedule_trial(timeline, *, cadence_hz=None):
     record = timeline.record
     times = np.empty(0, dtype=np.float64)
     domain = record.get("requested_domain")
+    if record["status"] == "prepared":
+        start, end = map(_time, domain)
+        if end <= start:
+            raise ValueError("Stimulus offset must follow onset")
+        maximum = timing.get("max_frames_per_trial", 10_000)
+        if type(maximum) is not int or maximum <= 0:
+            raise ValueError("max_frames_per_trial must be a positive integer")
+        frame_count = (end - start) * cadence
+        if not math.isfinite(frame_count) or frame_count > maximum:
+            raise ValueError(
+                f"Requested visibility duration {end - start:g} seconds at {cadence:g} Hz "
+                f"exceeds max_frames_per_trial={maximum}; check source onset/offset "
+                "or explicitly raise the configured limit for a known long trial"
+            )
     coverage = timeline.coverage()
     status, reason = record["status"], record["reason"]
     if status == "prepared":

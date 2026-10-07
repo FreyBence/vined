@@ -19,6 +19,7 @@
   },
   "observation": {
     "cadence_hz": 60,
+    "max_frames_per_trial": 10000,
     "domain": "visible_interval",
     "evidence": "Experiment projection rate confirmed by the researcher as 60 Hz; onset-aligned frame times are reconstructed, not individually measured display refreshes."
   },
