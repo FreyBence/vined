@@ -12,7 +12,7 @@ import pandas as pd
 
 from utils.provenance import file_hash, fingerprint, source_hashes, write_json
 from .inputs import prepare_inputs, _id
-from .temporal import AlignedTrial, align_trials
+from .temporal import AlignedTrial, align_trials, HELD_STATE_POLICY
 
 
 @dataclass(frozen=True)
@@ -95,6 +95,9 @@ def _validate(trials):
                     "neural_source_bin_slice", "visual_definition", "visual_completion",
                     "visual_outcome", "visual_resampling", "resampling")).issubset(metadata):
             raise ValueError("Incomplete alignment source/resampling provenance")
+        if metadata["visual_resampling"] not in (
+                HELD_STATE_POLICY, "L2-normalized linear interpolation at neural bin centers"):
+            raise ValueError("Unsupported alignment visual mapping policy")
         resampling = metadata["resampling"]
         times = np.asarray(resampling["source_times"])
         left = np.asarray(resampling["left_source_indices"])
@@ -109,6 +112,26 @@ def _validate(trials):
                 or np.any(left < 0) or np.any(right < left) or np.any(right >= len(times))
                 or not np.isfinite(weights).all() or np.any(weights < 0) or np.any(weights > 1)):
             raise ValueError("Invalid visual interpolation provenance")
+        if metadata["visual_resampling"] == HELD_STATE_POLICY:
+            support_ends = np.asarray(resampling.get("source_interval_end_times"))
+            timing = resampling.get("timing_classification")
+            if (resampling.get("policy") != HELD_STATE_POLICY
+                    or support_ends.shape != times.shape or support_ends.dtype.kind not in "fiu"
+                    or not np.isfinite(support_ends).all() or np.any(support_ends < times)
+                    or np.any(support_ends[:-1] > times[1:] + tolerance)
+                    or np.any(support_ends > trial.stim_off + tolerance)
+                    or not np.array_equal(left, right) or np.any(weights != 0)
+                    or np.any(times[left] > starts + tolerance)
+                    or np.any(support_ends[left] < ends - tolerance)
+                    or not isinstance(timing, dict)
+                    or timing != metadata["visual_outcome"].get("timing")
+                    or timing.get("time_kind") != "reconstructed"
+                    or resampling.get("verified_display_bin_alignment") is not False
+                    or resampling.get("update_bin_boundaries_coincident") != bool(
+                        np.all(np.abs(times[left] - starts) <= tolerance))):
+                raise ValueError("Invalid held-state interval associations or timing provenance")
+        elif resampling.get("policy") == HELD_STATE_POLICY:
+            raise ValueError("Held-state associations disagree with declared visual mapping policy")
 
 
 def _load_alignment(path, *, expected_generation_id=None):
@@ -141,6 +164,9 @@ def _load_alignment(path, *, expected_generation_id=None):
             resampling = metadata["resampling"]
             for name in ("source_times", "interpolation_weights"):
                 resampling[name] = np.asarray(resampling[name], dtype=np.float64)
+            if "source_interval_end_times" in resampling:
+                resampling["source_interval_end_times"] = np.asarray(
+                    resampling["source_interval_end_times"], dtype=np.float64)
             for name in ("left_source_indices", "right_source_indices"):
                 resampling[name] = np.asarray(resampling[name], dtype=np.int64)
             trials.append(AlignedTrial(
@@ -150,6 +176,9 @@ def _load_alignment(path, *, expected_generation_id=None):
                 arrays["bin_start_times"], arrays["bin_center_times"], arrays["bin_end_times"],
                 arrays["neural_activity"], units.copy(deep=True), arrays["visual_features"], metadata))
     _validate(trials)
+    if ("visual_mapping_policies" in manifest and manifest["visual_mapping_policies"] !=
+            sorted({trial.alignment_metadata["visual_resampling"] for trial in trials})):
+        raise ValueError("Alignment visual mapping policy accounting mismatch")
     if manifest["requested_trial_ids"] != [trial.trial_id for trial in trials]:
         raise ValueError("Alignment trial accounting mismatch")
     return AlignmentGeneration(manifest["generation_id"], path, tuple(trials), manifest)
@@ -186,6 +215,7 @@ def publish_alignment(trials, output_dir):
         files = {name: file_hash(staging / name) for name in
                  ["units.parquet"] + [f"trials/{index:06d}.npz" for index in range(len(trials))]}
         manifest = dict(schema_version=1, kind="aligned_trials", complete=True,
+                        visual_mapping_policies=sorted({trial.alignment_metadata["visual_resampling"] for trial in trials}),
                         eid=trials[0].session_id, requested_trial_ids=[trial.trial_id for trial in trials],
                         trials=entries, implementation=implementation, files=files)
         manifest["generation_id"] = fingerprint(manifest)
