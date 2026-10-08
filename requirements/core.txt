@@ -32,8 +32,7 @@ transformers==4.38.2
 opencv-python-headless==4.10.0.84
 Pillow
 
-# Prepared trial datasets and model/dataset downloads.
-datasets==2.17.1
+# Frozen CLIP model downloads.
 huggingface_hub<1
-# Ray 2.10 and Datasets 2.17 use older Arrow APIs.
+# Ray 2.10 uses older Arrow APIs.
 pyarrow==14.0.2

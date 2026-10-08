@@ -98,7 +98,7 @@ The requirements describe this repository's visualâ€“neural workflow:
 | Numerical processing and plots | NumPy 1.26.4, pandas, SciPy, scikit-learn, Matplotlib, tqdm, PyYAML |
 | IBL sessions and processed spikes | ONE-api, ibllib/Brainbox, iblatlas, iblutil |
 | Replay videos and CLIP images | opencv-python-headless 4.10.0.84, Pillow |
-| Dataset storage and downloads | Datasets 2.17.1, PyArrow 14.0.2, huggingface_hub |
+| CLIP model downloads | huggingface_hub |
 | Optional raw LFP processing | Additional dependencies in [requirements/lfp.txt](requirements/lfp.txt) |
 
 [requirements/core.txt](requirements/core.txt) declares the core dependencies;
