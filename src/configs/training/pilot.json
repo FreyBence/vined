@@ -1,0 +1,23 @@
+{
+  "training": {
+    "save_every": 10
+  },
+  "optimizer": {
+    "gradient_accumulation_steps": 4,
+    "warmup_pct": 0.1
+  },
+  "model": {
+    "encoder": {
+      "embedder": {
+        "dropout": 0.1
+      },
+      "transformer": {
+        "n_layers": 2,
+        "hidden_size": 128,
+        "inter_size": 256,
+        "n_heads": 4,
+        "dropout": 0.1
+      }
+    }
+  }
+}

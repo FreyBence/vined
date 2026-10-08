@@ -4,11 +4,24 @@
   "eid": null,
   "train": {
     "base_path": null,
-    "training_config": null,
-    "setup_only": false
+    "training_config": "src/configs/training/pilot.json",
+    "setup_only": false,
+    "seed": 42,
+    "epochs": 30,
+    "batch_size": 2,
+    "validation_batch_size": 2,
+    "learning_rate": 0.0002,
+    "weight_decay": 0.01,
+    "scheduler": "cosine",
+    "eval_every": 1,
+    "checkpoint_selection": "validation_metric",
+    "num_sessions": 1
   },
   "eval": {
     "checkpoint": null,
-    "setup_only": false
+    "setup_only": false,
+    "batch_size": 2,
+    "device": "cuda",
+    "seed": 42
   }
 }
