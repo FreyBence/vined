@@ -1,361 +1,48 @@
+"""Evaluate a fixed checkpoint on its verified scientific test split."""
+
 import argparse
-import logging
-import os
-import pickle
-from math import ceil
-
-import numpy as np
-import torch
-import torch.nn.functional as F
-from accelerate import Accelerator
-
-import wandb
-from utils.paths import dataset_dir, output_dir
-from multi_modal.mm import MultiModal
-from utils.config_utils import config_from_kwargs, update_config
-from utils.dataset_utils import load_ibl_dataset
-from utils.eval_utils import co_smoothing_eval, load_model_data_local
-from utils.utils import set_seed
-
-logging.basicConfig(
-    level=logging.WARNING, format="%(asctime)s - %(levelname)s - %(message)s"
-) 
-
-ap = argparse.ArgumentParser()
-ap.add_argument("--eid", type=str, default="EXAMPLE_EID")
-ap.add_argument("--base_path", type=str, default=str(output_dir()))
-ap.add_argument("--data_path", type=str, default=str(dataset_dir()))
-ap.add_argument("--num_sessions", type=int, default=1)
-ap.add_argument("--model_mode", type=str, default="mm")
-ap.add_argument("--mask_mode", type=str, default="temporal")
-ap.add_argument("--mask_ratio", type=float, default=0.1)
-ap.add_argument("--mixed_training", action="store_true")
-ap.add_argument("--enc_task_var", type=str, default="all")
-ap.add_argument("--finetune", action="store_true")
-ap.add_argument("--param_search", action="store_true")
-ap.add_argument(
-    "--modality", nargs="+", 
-    default=["ap", "vision-clip"]
-)
-ap.add_argument("--overwrite", action="store_true")
-ap.add_argument("--save_plot", action="store_true")
-ap.add_argument("--seed", type=int, default=42)
-ap.add_argument("--wandb", action="store_true")
-args = ap.parse_args()
-
-if args.num_sessions == 1:
-    model_config = f"src/configs/multi_modal/mm_single_session.yaml"
-elif (args.num_sessions < 70) and (args.num_sessions > 10):
-    model_config = f"src/configs/multi_modal/mm_medium_size.yaml"
-elif args.num_sessions >= 70:
-    model_config = f"src/configs/multi_modal/mm_large_size.yaml"
-else:
-    model_config = f"src/configs/multi_modal/mm.yaml" # default
-
-kwargs = {"model": f"include:{model_config}"}
-config = config_from_kwargs(kwargs)
-config = update_config("src/configs/multi_modal/trainer_mm.yaml", config)
-set_seed(config.seed)
-
-best_ckpt_path, last_ckpt_path = "model_best.pt", "model_last.pt"
-
-neural_acronyms = {
-    "ap": "spike", 
-}
-static_acronyms = {}
-dynamic_acronyms = {
-    "vision-clip": "vision-clip",
-}
+from contextlib import redirect_stdout
+import json
+import sys
+from evaluation.setup import resolve_setup
+from evaluation.predictions import collect_predictions
+from evaluation.metrics import MetricConfig
+from evaluation.artifacts import publish_evaluation
+from utils.paths import output_dir
 
 
-# ------ 
-# SET UP
-# ------
-eid = args.eid
-base_path = args.base_path
-model_mode = args.model_mode
-modality = list(neural_acronyms.keys()) + list(static_acronyms.keys()) + list(dynamic_acronyms.keys())
-mask_mode = args.mask_mode
-mask_name = f"mask_{mask_mode}"
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--checkpoint", required=True, help="Explicit selected training checkpoint")
+    parser.add_argument("--dataset-generation", "--data_path", dest="dataset_generation", required=True)
+    parser.add_argument("--expected-dataset-generation-id")
+    parser.add_argument("--eid", action="append", help="Select a persisted session; repeat for multiple sessions")
+    parser.add_argument("--batch-size", type=int, default=32)
+    parser.add_argument("--device", default="cpu")
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--setup-only", action="store_true", help="Verify inputs and restore model without inference")
+    parser.add_argument("--aggregation", choices=["session_weighted", "neuron_weighted"], default="session_weighted")
+    parser.add_argument("--bps-baseline", choices=["test_mean_count"], default="test_mean_count")
+    parser.add_argument("--psth-grouping", choices=["all_trials"], default="all_trials")
+    parser.add_argument("--output-dir", default=str(output_dir() / "evaluation"))
+    parser.add_argument("--no-predictions", action="store_true", help="Publish metrics/provenance without raw prediction arrays")
+    parser.add_argument("--save-plot", "--save_plot", dest="save_plot", action="store_true")
+    args = parser.parse_args()
+    # Dataset/model diagnostics belong on stderr; stdout is the structured result.
+    with redirect_stdout(sys.stderr):
+        setup = resolve_setup(checkpoint_path=args.checkpoint, dataset_generation=args.dataset_generation,
+                              expected_generation_id=args.expected_dataset_generation_id,
+                              session_ids=args.eid, batch_size=args.batch_size, device=args.device, seed=args.seed)
+    if args.setup_only:
+        print(json.dumps(setup.summary(), indent=2, allow_nan=False))
+        return
 
-logging.info(f"EID: {eid} model mode: {args.model_mode} mask ratio: {args.mask_ratio}")
-logging.info(f"Available modality: {modality}")
-
-neural_mods, static_mods, dynamic_mods = [], [], []
-for mod in modality:
-    if mod in neural_acronyms:
-        neural_mods.append(neural_acronyms[mod])
-    elif mod in static_acronyms:
-        static_mods.append(static_acronyms[mod])   
-    elif mod in dynamic_acronyms:
-        dynamic_mods.append(dynamic_acronyms[mod])   
-
-if model_mode == "mm":
-    input_mods = output_mods = neural_mods + static_mods + dynamic_mods
-elif model_mode == "decoding":
-    input_mods = neural_mods
-    output_mods = static_mods + dynamic_mods
-elif model_mode == "encoding":
-    input_mods = static_mods + dynamic_mods
-    output_mods = neural_mods
-else:
-    raise ValueError(f"Model mode {model_mode} not supported.")
-
-modal_filter = {"input": input_mods, "output": output_mods}
+    collection = collect_predictions(setup)
+    artifact = publish_evaluation(collection, args.output_dir,
+                                  metric_config=MetricConfig(args.aggregation, args.bps_baseline, args.psth_grouping),
+                                  persist_predictions=not args.no_predictions, save_plots=args.save_plot)
+    print(json.dumps(dict(artifact.result, artifact_path=str(artifact.path)), indent=2, allow_nan=False))
 
 
-# --------
-# SET PATH
-# --------
-num_sessions = args.num_sessions
-if num_sessions > 1:
-    logging.warning("num_sessions > 1: ensure the model is trained with multiple sessions.")
-    eid_ = "multi"
-    eid = None
-else:
-    eid_ = eid[:5]
-
-log_name = \
-"sesNum-{}_ses-{}_set-eval_inModal-{}_outModal-{}_mask-{}_mode-{}_ratio-{}_taskVar-{}".format(
-    num_sessions,
-    eid_[:5], 
-    "-".join(modal_filter["input"]),
-    "-".join(modal_filter["output"]),
-    config.training.mask_type, 
-    mask_mode,
-    args.mask_ratio,
-    args.enc_task_var,
-)
-
-save_path = os.path.join(base_path, "results", log_name).replace("\\", "/")
-
-if args.finetune:
-    pretrain_path = save_path.replace("eval", "finetune")
-else:
-    pretrain_path = save_path.replace("eval", "train")
-
-if args.param_search:
-    log_name = f"{eid_}_{model_mode}"
-    save_path = os.path.join(base_path, "results", log_name)
-    tune_path = os.path.join(base_path, "tune", f"session_{num_sessions}", "ray_results", log_name)
-    print(f"Load ray tune model from: {tune_path}")
-    if not os.path.exists(tune_path):
-        tune_path = os.path.join(base_path, "ray_results", log_name)
-    pretrain_path = [
-        f for f in os.listdir(tune_path) if os.path.isdir(os.path.join(tune_path, f))
-    ][0]
-    pretrain_path = os.path.join(tune_path, pretrain_path)
-    logging.info(f"Load best hyperparams model from {pretrain_path}.")
-    with open(f"{pretrain_path}/params.pkl", "rb") as file:
-        params = pickle.load(file)
-    if not args.finetune:
-        config["model"]["encoder"]["transformer"]["hidden_size"] = params["hidden_size"]
-        config["model"]["encoder"]["transformer"]["inter_size"] = params["inter_size"]
-        config["model"]["encoder"]["transformer"]["n_layers"] = params["n_layers"]
-    model_config = config
-
-logging.info(f"Save results to {save_path}.")
-
-if args.wandb:
-    os.makedirs(base_path, exist_ok=True)
-    wandb.init(
-        dir=base_path,
-        project=config.wandb.project, 
-        entity=config.wandb.entity, 
-        config=args,
-        name=log_name
-    )
-
-# ----------
-# LOAD MODEL
-# ----------
-if args.model_mode == "mm":
-    if args.enc_task_var in ["all", "random"]:
-        best_ckpt_path = [
-            "model_best_avg.pt", 
-        ]
-    else:
-        best_ckpt_path = ["model_best_avg.pt"]
-else:
-    best_ckpt_path = ["model_best_avg.pt"]
-
-avg_state_dict = []
-for ckpt_path in best_ckpt_path:
-    model_path = os.path.join(pretrain_path, ckpt_path)    
-    configs = {
-        "model_config": model_config,
-        "model_path": model_path,
-        "trainer_config": "src/configs/multi_modal/trainer_mm.yaml",
-        "dataset_path": None, 
-        "seed": 42,
-        "mask_name": mask_name,
-        "eid": eid,
-        "neural_mods": neural_mods,
-        "static_mods": static_mods,
-        "dynamic_mods": dynamic_mods,
-        "modal_filter": modal_filter,
-        "model_mode": model_mode,
-        "data_path": args.data_path,
-    }      
-    model, accelerator, dataset, dataloader = load_model_data_local(**configs)
-    model_state_dict = model.state_dict()
-    avg_state_dict.append(model_state_dict)
-
-# Model Averaging
-for key in model_state_dict:
-    model_state_dict[key] = sum(
-        [state_dict[key] for state_dict in avg_state_dict]
-    ) / len(avg_state_dict)
-model.load_state_dict(model_state_dict)
-
-
-# ----------
-# EVAL MODEL
-# ----------
-eval_vision = True if model_mode in ["mm", "encoding"] else False
-eval_spike = True if model_mode in ["mm", "decoding"] else False
-logging.info(f"Start model evaluation:")
-
-if eval_spike:
-    eval_spike_bps_file = f"{save_path}/eval_spike/bps.npy"
-    eval_spike_r2_file = f"{save_path}/eval_spike/r2.npy"
-    if not os.path.exists(eval_spike_bps_file) or \
-        not os.path.exists(eval_spike_r2_file) or args.overwrite:
-        logging.info(f"Start neural reconstruction evaluation:")
-        co_smoothing_configs = {
-            "subtract": "task",
-            "onset_alignment": [40],
-            "method_name": mask_name, 
-            "save_path": f"{save_path}/eval_spike",
-            "mode": "eval_spike",
-            "n_time_steps": model.encoder_embeddings[modal_filter["input"][0]].max_F,  
-            "held_out_list": list(range(model.encoder_embeddings[modal_filter["input"][0]].max_F)),
-            "is_aligned": True,
-            "target_regions": None,
-            "enc_task_var": args.enc_task_var,
-        }
-        results = co_smoothing_eval(
-            model=model, 
-            accelerator=accelerator, 
-            test_dataloader=dataloader, 
-            test_dataset=dataset, 
-            is_multimodal=True if model_mode == "mm" else False,
-            save_plot=args.save_plot,
-            **co_smoothing_configs
-        )
-        logging.info(results)
-        wandb.log(results) if args.wandb else None
-    else:
-        logging.info("Skip evaluation for encoding since files exist or overwrite is False.")
-
-# ----------
-# EVAL MODEL
-# ----------
-
-# Encoding:
-# spikes -> visual stimulus representation
-eval_vision = True if model_mode in ["mm", "encoding"] else False
-
-# Decoding:
-# visual stimulus -> spikes
-eval_spike = True if model_mode in ["mm", "decoding"] else False
-
-logging.info(f"Start model evaluation:")
-
-# -----------------
-# VISION EVALUATION
-# -----------------
-if eval_vision:
-
-    eval_vision_cosine_file = f"{save_path}/eval_vision/cosine.npy"
-    eval_vision_r2_file = f"{save_path}/eval_vision/r2.npy"
-
-    if not os.path.exists(eval_vision_cosine_file) or \
-        not os.path.exists(eval_vision_r2_file) or args.overwrite:
-
-        logging.info(f"Start evaluation for visual stimulus encoding:")
-
-        co_smoothing_configs = {
-            "subtract": "task",
-            "onset_alignment": [40],
-            "method_name": mask_name,
-            "save_path": f"{save_path}/eval_vision",
-            "mode": "eval_vision",
-            "n_time_steps": model.encoder_embeddings["spike"].max_F,
-            "held_out_list": list(range(model.encoder_embeddings["spike"].max_F)),
-            "is_aligned": True,
-            "target_regions": None,
-            "avail_beh": static_mods + dynamic_mods,
-        }
-
-        results = co_smoothing_eval(
-            model=model,
-            accelerator=accelerator,
-            test_dataloader=dataloader,
-            test_dataset=dataset,
-            is_multimodal=True if model_mode == "mm" else False,
-            save_plot=args.save_plot,
-            **co_smoothing_configs
-        )
-
-        logging.info(results)
-
-        wandb.log(results) if args.wandb else None
-
-    else:
-        logging.info("Skip evaluation for vision since files exist or overwrite is False.")
-
-if (args.enc_task_var == "random"):
-    # Mask selected modalities for encoding
-    for mod in static_mods + dynamic_mods:
-
-        model_path = os.path.join(pretrain_path, f"model_best_enc_{mod}.pt")    
-        configs = {
-            "model_config": model_config,
-            "model_path": model_path,
-            "trainer_config": "src/configs/multi_modal/trainer_mm.yaml",
-            "dataset_path": None, 
-            "seed": 42,
-            "mask_name": mask_name,
-            "eid": eid,
-            "neural_mods": neural_mods,
-            "static_mods": static_mods,
-            "dynamic_mods": dynamic_mods,
-            "modal_filter": modal_filter,
-            "model_mode": model_mode,
-            "data_path": args.data_path,
-        }      
-        model, accelerator, dataset, dataloader = load_model_data_local(**configs)
-
-        eval_spike_bps_file = f"{save_path}/eval_spike_{mod}/bps.npy"
-        eval_spike_r2_file = f"{save_path}/eval_spike_{mod}/cosine.npy"
-        if not os.path.exists(eval_spike_bps_file) or \
-            not os.path.exists(eval_spike_r2_file) or args.overwrite:
-            logging.info(f"Start evaluation for encoding using {mod}:")
-            co_smoothing_configs = {
-                "subtract": "task",
-                "onset_alignment": [40],
-                "method_name": mask_name, 
-                "save_path": f"{save_path}/eval_spike_{mod}",
-                "mode": "eval_spike",
-                "n_time_steps": model.encoder_embeddings["spike"].max_F,  
-                "held_out_list": list(range(model.encoder_embeddings["spike"].max_F)),
-                "is_aligned": True,
-                "target_regions": None,
-                "enc_task_var": mod,
-            }
-            results = co_smoothing_eval(
-                model=model, 
-                accelerator=accelerator, 
-                test_dataloader=dataloader, 
-                test_dataset=dataset, 
-                is_multimodal=True if model_mode == "mm" else False,
-                save_plot=args.save_plot,
-                **co_smoothing_configs
-            )
-            logging.info(results)
-            wandb.log(results) if args.wandb else None
-        else:
-            logging.info("Skip evaluation for encoding since files exist or overwrite is False.")
-
-logging.info("Finish model evaluation")
+if __name__ == "__main__":
+    main()
