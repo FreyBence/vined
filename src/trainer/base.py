@@ -7,6 +7,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from tqdm import tqdm
+from utils.progress import Progress, iter_progress, logger
 
 import wandb
 from trainer.artifacts import capture_rank_states, save_training_checkpoint
@@ -141,6 +142,9 @@ class MultiModalTrainer():
                     plt.close(figure)
 
     def train(self):
+        if self.accelerator.is_main_process:
+            logger.info("training: starting epochs %d-%d (%d batches per epoch)",
+                        self.start_epoch + 1, self.config.training.num_epochs, len(self.train_dataloader))
         for epoch in range(self.start_epoch, self.config.training.num_epochs):
             train_results = self.train_epoch(epoch)
             self.accelerator.wait_for_everyone()
@@ -212,6 +216,7 @@ class MultiModalTrainer():
         report = {key: value for key, value in best.items()
                   if key == "eval_loss" or key.endswith("_metric")}
         if self.accelerator.is_main_process:
+            logger.info("training: finished; selected checkpoint %s", selected)
             print({"selected_checkpoint": selected})
             if self.config.wandb.use:
                 wandb.log(dict(best_epoch=selected["epoch"], **{f"best_{k}": v for k, v in report.items()}))
@@ -228,7 +233,10 @@ class MultiModalTrainer():
         self.model.train()
         iterator = iter(self.train_dataloader)
         updates_before = self.optimizer_steps
-        with tqdm(total=len(self.train_dataloader), disable=not self.accelerator.is_local_main_process) as progress:
+        epoch_progress = (Progress(f"training: epoch {epoch + 1}/{self.config.training.num_epochs}",
+                          len(self.train_dataloader), "batches") if self.accelerator.is_main_process else None)
+        with tqdm(total=len(self.train_dataloader), desc=f"Train epoch {epoch + 1}/{self.config.training.num_epochs}",
+                  disable=not self.accelerator.is_local_main_process) as progress:
             while True:
                 error = None
                 try:
@@ -255,6 +263,8 @@ class MultiModalTrainer():
                     if self.accelerator.is_main_process:
                         print("Skipping accumulation window: no eligible objective targets")
                     progress.update(len(window))
+                    if epoch_progress is not None:
+                        epoch_progress.update(epoch_progress.count + len(window), "no eligible targets; update skipped")
                     continue
                 for index, (data, selectors) in enumerate(prepared):
                     context = self.accelerator.no_sync(self.model) if index < len(prepared) - 1 else nullcontext()
@@ -285,6 +295,9 @@ class MultiModalTrainer():
                 self.lr_scheduler.step()
                 self.scheduler_steps += 1
                 self.optimizer.zero_grad(set_to_none=True)
+                if epoch_progress is not None:
+                    epoch_progress.update(epoch_progress.count + len(window),
+                        f"optimizer_step={self.optimizer_steps}, lr={self.optimizer.param_groups[0]['lr']:.6g}")
         totals = self.accelerator.reduce(totals, reduction="sum")
         if any(totals[1, i] == 0 for i in range(len(mods))):
             raise ValueError("Training epoch has no eligible targets for an active objective")
@@ -295,6 +308,7 @@ class MultiModalTrainer():
                        valid_target_counts={mod: int(totals[1,i]) for i, mod in enumerate(mods)},
                        learning_rate=self.optimizer.param_groups[0]["lr"])
         if self.accelerator.is_main_process:
+            epoch_progress.finish()
             print({"epoch": epoch, **results})
         return results
 
@@ -307,7 +321,8 @@ class MultiModalTrainer():
         totals = {mod: [0., 0] for mod in components}
         records = {}
         seen = set()
-        for batch in self.eval_dataloader:
+        for batch in iter_progress(self.eval_dataloader, "training: validation inference",
+                                   total=len(self.eval_dataloader), unit="batches"):
             for sample_id in batch["sample_id"]:
                 if sample_id in seen:
                     raise ValueError("Validation sample was visited more than once")
@@ -346,7 +361,8 @@ class MultiModalTrainer():
             losses[f"eval_{mod}_loss"] = numerator / count
         gt, preds, metrics, unavailable = {}, {}, {}, {}
         session_metrics = {}
-        for session, modalities in records.items():
+        for session, modalities in iter_progress(records.items(), "training: validation metrics",
+                                                total=len(records), unit="sessions"):
             idx = self.eid_list.index(session)
             gt[idx], preds[idx], session_metrics[session] = {}, {}, {}
             self.session_active_neurons[session] = {}

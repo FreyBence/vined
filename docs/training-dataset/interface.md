@@ -1,5 +1,13 @@
 # Training-dataset interface
 
+## Console progress
+
+The CLI emits timestamped stderr progress for alignment generation loading,
+sample construction, split sizes, sample writing, hashing, verification, and
+publication. Session/sample counts update after the first item, approximately
+every ten seconds as work completes, and at the end, with elapsed time and
+estimated remaining time when the total is known.
+
 ## Sample construction
 
 With `src/` on the Python path, `training_dataset` exposes scientific sample construction in `src/training_dataset/samples.py`:

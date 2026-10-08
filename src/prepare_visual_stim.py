@@ -9,6 +9,7 @@ from uuid import UUID
 
 from utils.paths import replay_dir, visual_dir
 from utils.sessions import run_sessions
+from utils.progress import configure_progress
 from visual_replay import ReplayArtifactReader
 from visual_features import ClipEncoder, ObservationSelection, write_features
 
@@ -50,6 +51,7 @@ def discover_replays(root):
 
 
 def main(argv=None):
+    configure_progress()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--eid", type=UUID,
                         help="Process this session; omit to process all published replays")

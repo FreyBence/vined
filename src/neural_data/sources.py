@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 from iblatlas.regions import BrainRegions
 from .provenance import content_hash
+from utils.progress import logger
 
 
 @dataclass(frozen=True)
@@ -232,7 +233,9 @@ def load_population(access, eid, recordings, *, quality=None, anatomy=None):
     resolved = []
     seen = set()
     regions = BrainRegions()
-    for request in requests:
+    for index, request in enumerate(requests, 1):
+        logger.info("neural-data %s: loading recording %d/%d (probe=%s, pid=%s)",
+                    eid, index, len(requests), request.pname, request.pid)
         coverage = _coverage(request.coverage)
         result = access.load_spike_sorting(eid, pid=request.pid, pname=request.pname,
                                           collection=request.collection, revision=request.revision)

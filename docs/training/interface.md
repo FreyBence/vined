@@ -1,5 +1,14 @@
 # Training interface
 
+## Console progress
+
+Training and fine-tuning emit timestamped stderr setup messages. The main process
+reports epoch/batch progress, optimizer steps, learning rate, validation batches,
+validation metric sessions, and final checkpoint selection. Counts update after
+the first completed work, approximately every ten seconds as work completes, and
+at the end, with elapsed time and estimated remaining time. Existing training
+progress bars and epoch metrics remain available, including when W&B is enabled.
+
 ## Scenario launcher
 
 From the checkout root, `python src/run.py train 3` selects scenario 3 from

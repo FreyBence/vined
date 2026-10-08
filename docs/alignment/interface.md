@@ -1,5 +1,13 @@
 # Alignment interface
 
+## Console progress
+
+The CLI emits timestamped stderr progress for neural/visual input verification,
+visual record reading, trial pairing/resampling, compression, and publication.
+Counts update after the first item, approximately every ten seconds as work
+completes, and at the end, with elapsed time and estimated remaining time when the
+total is known. Structured result output remains on stdout.
+
 ## Prepared input boundary
 
 With `src/` on the Python path, `alignment.prepare_inputs` exposes the implemented

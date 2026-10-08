@@ -6,9 +6,11 @@ from pathlib import Path
 
 from alignment import generate_alignment
 from utils.paths import output_dir
+from utils.progress import configure_progress
 
 
 def main(argv=None):
+    configure_progress()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--neural-generation", required=True, type=Path)
     parser.add_argument("--visual-features", required=True, type=Path)

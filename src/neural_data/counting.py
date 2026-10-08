@@ -2,6 +2,7 @@
 
 from copy import deepcopy
 from concurrent.futures import ThreadPoolExecutor
+from utils.progress import iter_progress
 from dataclasses import asdict, dataclass
 
 import numpy as np
@@ -212,9 +213,11 @@ def count_intervals(population, intervals, *, bin_size=DEFAULT_BIN_SIZE, request
         # Read shared validated inputs; each worker allocates only its own window.
         with ThreadPoolExecutor(max_workers=min(workers, len(intervals)),
                                 thread_name_prefix="neural-count") as pool:
-            windows = tuple(pool.map(count_window, requests))
+            windows = tuple(iter_progress(pool.map(count_window, requests),
+                f"neural-data {population.eid}: counting", total=len(intervals), unit="windows"))
     else:
-        windows = tuple(map(count_window, requests))
+        windows = tuple(iter_progress(map(count_window, requests),
+            f"neural-data {population.eid}: counting", total=len(intervals), unit="windows"))
     return NeuralCounts(population.eid, population.units.copy(deep=True),
         deepcopy(population.recordings), tuple(windows), dict(
             representation="unsmoothed_spike_counts", clock="source-session", units="seconds",

@@ -9,9 +9,11 @@ from evaluation.predictions import collect_predictions
 from evaluation.metrics import MetricConfig
 from evaluation.artifacts import publish_evaluation
 from utils.paths import output_dir
+from utils.progress import configure_progress, logger
 
 
 def main():
+    configure_progress()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--checkpoint", required=True, help="Explicit selected training checkpoint")
     parser.add_argument("--prediction-direction", choices=["encoding", "decoding"])
@@ -35,6 +37,7 @@ def main():
     parser.add_argument("--save-plot", "--save_plot", dest="save_plot", action="store_true")
     args = parser.parse_args()
     # Dataset/model diagnostics belong on stderr; stdout is the structured result.
+    logger.info("evaluation: verifying dataset and restoring checkpoint %s", args.checkpoint)
     with redirect_stdout(sys.stderr):
         setup = resolve_setup(checkpoint_path=args.checkpoint, dataset_generation=args.dataset_generation,
                               context_mode=args.context_mode, context_bins=args.context_bins,
@@ -42,6 +45,7 @@ def main():
                               session_ids=args.eid, batch_size=args.batch_size, device=args.device, seed=args.seed,
                               prediction_direction=args.prediction_direction,
                               neural_region_selection=args.neural_region_selection)
+    logger.info("evaluation: setup complete on %s (%d test samples)", args.device, len(setup.dataset.samples))
     if args.setup_only:
         print(json.dumps(setup.summary(), indent=2, allow_nan=False))
         return

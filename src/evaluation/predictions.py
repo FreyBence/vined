@@ -9,6 +9,7 @@ import torch
 
 from evaluation.setup import EvaluationSetup
 from training_dataset import temporal_context_view
+from utils.progress import Progress
 
 
 @dataclass(frozen=True)
@@ -112,6 +113,7 @@ def collect_predictions(setup: EvaluationSetup) -> PredictionCollection:
     device = next(model.parameters()).device
     expected = setup.dataset.samples
     records, seen = [], set()
+    progress = Progress(f"evaluation: {model.model_mode} inference on {device}", len(expected), "samples")
     with torch.inference_mode():
         for batch in setup.dataloader:
             batch_size = len(batch["sample_id"])
@@ -175,6 +177,8 @@ def collect_predictions(setup: EvaluationSetup) -> PredictionCollection:
                     predicted_neural=None if neural_prediction is None else neural_prediction[index].cpu().numpy().copy(),
                     predicted_visual=None if visual_prediction is None else visual_prediction[index].cpu().numpy().copy(),
                     metadata=deepcopy(source.metadata)))
+            progress.update(len(records), f"batch_size={batch_size}, session={batch['session_id'][-1]}")
     if len(records) != len(expected):
         raise ValueError(f"Incomplete test coverage: collected {len(records)} of {len(expected)} samples")
+    progress.finish()
     return PredictionCollection(tuple(records), deepcopy(setup.configuration), deepcopy(setup.provenance))

@@ -10,6 +10,7 @@ import re
 import numpy as np
 
 from utils.provenance import file_hash, package_versions, source_hashes
+from utils.progress import logger
 from visual_replay import TrialOutcome
 from .observations import ObservationSelection
 
@@ -56,13 +57,16 @@ class ClipEncoder:
         from huggingface_hub import HfApi, snapshot_download
         from transformers import CLIPModel, CLIPImageProcessor
 
+        logger.info("visual-features: resolving CLIP %s revision %s", model_name, revision)
         if not re.fullmatch(r"[0-9a-f]{40}", revision):
             revision = HfApi().model_info(model_name, revision=revision).sha
         if not re.fullmatch(r"[0-9a-f]{40}", revision or ""):
             raise ValueError("CLIP revision must resolve to an immutable commit")
+        logger.info("visual-features: loading/downloading CLIP snapshot %s", revision)
         snapshot = Path(snapshot_download(model_name, revision=revision,
             allow_patterns=["*.json", "pytorch_model.bin", "model.safetensors"]))
         self._device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        logger.info("visual-features: loading CLIP weights on %s", self._device)
         self._model = CLIPModel.from_pretrained(str(snapshot), local_files_only=True).to(self._device)
         self._model.eval()
         self._model.requires_grad_(False)
@@ -89,6 +93,8 @@ class ClipEncoder:
                 input="uint8 RGB [0,255], top row first"),
             processor=self._processor.to_dict(), packages=package_versions(), device=str(self._device),
             sources=source_hashes("src/visual_features/encoder.py", "src/visual_features/observations.py"))
+        logger.info("visual-features: CLIP ready on %s (%d features, %d image workers)",
+                    self._device, self._width, self._workers)
 
     @property
     def provenance(self):

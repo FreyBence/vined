@@ -1,5 +1,13 @@
 # Neural-data interface
 
+## Console progress
+
+The CLI emits timestamped stderr messages for recording loading, selected unit
+counts, trial timing loading, window counting/compression, verification, and
+publication. Window counts report completed/total work, elapsed time, and estimated
+remaining time after the first item, approximately every ten seconds as work
+completes, and at the end. Parallel processing retains ordered progress reporting.
+
 ## Scope and entry point
 
 `src/neural_data` exposes validated source populations, in-memory spike counts,

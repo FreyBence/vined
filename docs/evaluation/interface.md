@@ -1,5 +1,14 @@
 # Evaluation interface
 
+## Console progress
+
+The CLI emits timestamped stderr progress for checkpoint/dataset setup, inference
+samples, session/neuron metric calculation, artifact writing, optional plotting,
+verification, and publication. Counts update after the first completed work,
+approximately every ten seconds as work completes, and at the end, with elapsed
+time and estimated remaining time when the total is known. Stdout remains the
+structured JSON result, including in setup-only mode.
+
 ## Scenario launcher
 
 `python src/run.py eval 3` dispatches evaluation for scenario 3, using

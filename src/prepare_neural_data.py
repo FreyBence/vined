@@ -9,9 +9,11 @@ from neural_data import (Coverage, QualitySelection, RecordingRequest, RegionSel
 from session_data import SessionAccess
 from utils.paths import dataset_dir, output_dir
 from utils.sessions import add_session_arguments, run_sessions, select_sessions
+from utils.progress import configure_progress
 
 
 def main():
+    configure_progress()
     parser = argparse.ArgumentParser(description=__doc__)
     add_session_arguments(parser)
     parser.add_argument("--config", type=Path, required=True, help="Neural request JSON; see neural-data/interface.md")

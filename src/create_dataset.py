@@ -8,6 +8,7 @@ from uuid import UUID
 from training_dataset import AlignmentSource, SampleConfig, SplitConfig, generate_dataset
 from utils.paths import dataset_dir, output_dir
 from utils.sessions import add_session_arguments, select_sessions
+from utils.progress import configure_progress
 
 
 def resolve_alignment(root, eid):
@@ -34,6 +35,7 @@ def resolve_alignment(root, eid):
 
 
 def main(argv=None):
+    configure_progress()
     parser = argparse.ArgumentParser(description=__doc__)
     add_session_arguments(parser)
     parser.set_defaults(eids_file=None)

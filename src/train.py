@@ -11,6 +11,7 @@ from ray.tune.schedulers import ASHAScheduler
 
 import wandb
 from utils.paths import dataset_dir, output_dir
+from utils.progress import configure_progress, logger
 from multi_modal.encoder_embeddings import EncoderEmbedding
 from multi_modal.mm import MultiModal
 from trainer.make import make_multimodal_trainer
@@ -21,6 +22,8 @@ from utils.utils import dummy_load
 
 
 def main(tune_config=None):
+    configure_progress()
+    logger.info("training: resolving configuration and verifying dataset")
 
     neural_acronyms = {
         "ap": "spike"

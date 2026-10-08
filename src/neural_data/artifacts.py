@@ -12,6 +12,7 @@ import numpy as np
 import pandas as pd
 
 from utils.provenance import file_hash, fingerprint, source_hashes, write_json
+from utils.progress import iter_progress, logger
 from .counting import DEFAULT_BIN_SIZE, CountWindow, NeuralCounts, count_intervals, count_trials
 from .provenance import json_value
 from .sources import load_population
@@ -130,11 +131,14 @@ def generate_neural(access, eid, recordings, output_dir, *, intervals=None,
     recordings = tuple(recordings)
     implementation = _implementation()
     population = load_population(access, eid, recordings, quality=quality, anatomy=anatomy)
+    logger.info("neural-data %s: selected %d units from %d recordings", population.eid,
+                len(population.units), len(population.recordings))
     if event is None:
         data = count_intervals(population, intervals, bin_size=bin_size,
                                request_ids=request_ids, unit_coverage=unit_coverage, workers=workers)
         requested_count = len(intervals)
     else:
+        logger.info("neural-data %s: loading trial timings", population.eid)
         trials = access.load_trials(population.eid, collection=trial_collection, revision=trial_revision)
         data = count_trials(population, trials, event=event, offsets=offsets,
                             bin_size=bin_size, unit_coverage=unit_coverage, workers=workers)
@@ -164,11 +168,13 @@ def generate_neural(access, eid, recordings, output_dir, *, intervals=None,
         if workers > 1 and len(data.windows) > 1:
             with ThreadPoolExecutor(max_workers=min(workers, len(data.windows)),
                                     thread_name_prefix="neural-write") as pool:
-                for name, digest, outcome in pool.map(write_window, enumerate(data.windows)):
+                for name, digest, outcome in iter_progress(pool.map(write_window, enumerate(data.windows)),
+                        f"neural-data {eid}: compressing", total=len(data.windows), unit="windows"):
                     files[name] = digest
                     outcomes.append(outcome)
         else:
-            for item in enumerate(data.windows):
+            for item in iter_progress(enumerate(data.windows), f"neural-data {eid}: compressing",
+                                      total=len(data.windows), unit="windows"):
                 name, digest, outcome = write_window(item)
                 files[name] = digest
                 outcomes.append(outcome)
@@ -184,6 +190,7 @@ def generate_neural(access, eid, recordings, output_dir, *, intervals=None,
         manifest["generation_id"] = generation_id
         write_json(staging / "manifest.json", manifest)
         # The consumer loader checks the complete artifact before publication.
+        logger.info("neural-data %s: verifying staged generation", eid)
         del data
         verified = load_generation(staging, expected_generation_id=generation_id)
         destination = destination_root / generation_id
@@ -191,4 +198,5 @@ def generate_neural(access, eid, recordings, output_dir, *, intervals=None,
             raise FileExistsError(f"Neural generation already exists; load it explicitly: {destination}")
         staging.rename(destination)
     verified.path = destination
+    logger.info("neural-data %s: published %s (outcomes: %s)", eid, destination, manifest["outcomes"])
     return verified

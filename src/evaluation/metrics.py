@@ -2,6 +2,7 @@
 
 from copy import deepcopy
 from dataclasses import asdict, dataclass
+from utils.progress import iter_progress, logger
 
 import numpy as np
 import pandas as pd
@@ -217,14 +218,17 @@ def compute_metrics(collection: PredictionCollection, *, config=None):
     if not any(getattr(row, active_mask).any() for row in collection.predictions):
         raise ValueError("Evaluation has no eligible H=12 targets")
     results = {}
-    for session, rows in sessions.items():
+    for session, rows in iter_progress(sessions.items(), "evaluation: computing metrics",
+                                       total=len(sessions), unit="sessions"):
+        logger.info("evaluation %s: computing metrics for %d trials", session, len(rows))
         units = rows[0].neuron_identity
         if any(not row.neuron_identity.equals(units) or row.bin_size != rows[0].bin_size for row in rows):
             raise ValueError(f"Inconsistent ordered population or bin duration for session {session}")
         neural, visual = mode == "encoding", mode == "decoding"
         if any((neural and row.predicted_neural is None) or (visual and row.predicted_visual is None) for row in rows):
             raise ValueError("Missing required prediction modality")
-        neurons = [_neuron_metrics(rows, neuron) for neuron in range(len(units))] if neural else []
+        neurons = [_neuron_metrics(rows, neuron) for neuron in iter_progress(range(len(units)),
+            f"evaluation {session}: neural metrics", total=len(units), unit="neurons")] if neural else []
         # Complete scoped unit records remain available alongside positional metric columns.
         from trainer.artifacts import plain
         for neuron in neurons:

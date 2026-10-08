@@ -1,6 +1,7 @@
 """Stimulus-bounded, count-preserving alignment on supplied neural bins."""
 
 from copy import deepcopy
+from utils.progress import iter_progress
 from dataclasses import dataclass
 
 import numpy as np
@@ -161,7 +162,8 @@ def align_trials(inputs):
     if len(set(identities)) != len(identities):
         raise ValueError("Duplicate original trial IDs")
     aligned = []
-    for trial in sorted(inputs.trials, key=lambda item: item.trial_id):
+    for trial in iter_progress(sorted(inputs.trials, key=lambda item: item.trial_id),
+            f"alignment {inputs.session_id}: resampling", total=len(inputs.trials), unit="trials"):
         try:
             if (trial.session_id != inputs.session_id or not inputs.units.eid.eq(inputs.session_id).all()
                     or not np.isfinite([trial.stim_on, trial.stim_off]).all()

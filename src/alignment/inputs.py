@@ -9,6 +9,7 @@ import numpy as np
 
 from neural_data import CountWindow, NeuralCounts, load_generation
 from visual_features import EncodedObservation, FeatureArtifactReader
+from utils.progress import iter_progress, logger
 
 
 @dataclass(frozen=True)
@@ -94,6 +95,7 @@ def prepare_inputs(neural, visual_path, *, request_trial_ids=None,
     """
     generation_id = None
     if isinstance(neural, (str, Path)):
+        logger.info("alignment: loading and verifying neural generation %s", neural)
         loaded = load_generation(neural, expected_generation_id=expected_neural_generation_id)
         generation_id, neural = loaded.generation_id, loaded.data
     elif expected_neural_generation_id is not None:
@@ -134,11 +136,12 @@ def prepare_inputs(neural, visual_path, *, request_trial_ids=None,
         raise ValueError("request_trial_ids must map every neural request to one unique original trial")
     by_trial = {mapping[key]: window for key, window in windows.items()}
     observations, outcomes = {}, {}
+    logger.info("alignment %s: loading and verifying visual features %s", neural.eid, visual_path)
     with FeatureArtifactReader(visual_path, eid=neural.eid) as reader:
         definition = reader.definition
         records = definition["replay_definition"]["inputs"]["trials"]
         timing_records = {_id(record["trial_id"]): record for record in records}
-        for item in reader:
+        for item in iter_progress(reader, f"alignment {neural.eid}: reading visual features", unit="records"):
             metadata = deepcopy(item.metadata)
             tid = _id(metadata["trial_id"])
             if metadata["eid"] != neural.eid:
@@ -161,7 +164,8 @@ def prepare_inputs(neural, visual_path, *, request_trial_ids=None,
     if set(outcomes) != set(by_trial) or set(timing_records) != set(outcomes):
         raise ValueError("Visual and neural original trial sets differ; supply matching prepared inputs")
     trials = []
-    for tid in sorted(by_trial):
+    for tid in iter_progress(sorted(by_trial), f"alignment {neural.eid}: pairing inputs",
+                             total=len(by_trial), unit="trials"):
         record, outcome = timing_records[tid], outcomes[tid]
         events = record.get("events", {})
         bounds = np.asarray([events.get("onset", np.nan), events.get("offset", np.nan)], dtype=float)

@@ -15,6 +15,7 @@ import zipfile
 import numpy as np
 
 from utils.provenance import file_hash, fingerprint
+from utils.progress import Progress, iter_progress, logger
 from visual_replay import TrialOutcome
 from .encoder import EncodedObservation, iter_encoded_observations
 
@@ -52,6 +53,11 @@ def write_features(observations, encoder, output, *, batch_size=32, workers=1):
     summaries = []
     trial_count = 0
     selected_count = 0
+    eid = observations.definition["inputs"]["eid"]
+    progress = Progress(f"visual-features {eid}: extracting", unit="observations")
+    trials_progress = Progress(f"visual-features {eid}: extracting trials",
+        len(observations.definition["inputs"]["requested_trial_ids"]), "trials")
+    observation_count = 0
     with tempfile.TemporaryDirectory(prefix=".features-", dir=output.parent) as temporary:
         staging = Path(temporary)
         with (staging / "records.jsonl").open("wb") as records, (staging / "pixels-free-features").open("wb") as values:
@@ -74,9 +80,19 @@ def write_features(observations, encoder, output, *, batch_size=32, workers=1):
                         trial_count = selected_count = 0
                         record = dict(kind="trial_outcome", metadata=item.metadata)
                     records.write(_json(record) + b"\n")
+                    if isinstance(item, EncodedObservation):
+                        observation_count += 1
+                        progress.update(observation_count,
+                            f"{count} features, {len(summaries)} trials completed, trial_id={item.metadata['trial_id']}")
+                    else:
+                        trials_progress.update(len(summaries), f"{count} features")
         completion = observations.completion
         if completion is None:
             raise ValueError("Cannot publish features without verified replay completion")
+        progress.finish()
+        trials_progress.finish()
+        logger.info("visual-features %s: extraction complete (%d/%d trials, %d features); hashing and compressing %s",
+                    eid, len(summaries), len(completion["requested_trial_ids"]), count, output)
         manifest = dict(schema_version=1, kind="visual_feature_artifacts", definition_id=definition_id,
             replay_completion=completion, feature_count=count, trials=summaries,
             records_sha256=file_hash(staging / "records.jsonl"),
@@ -93,11 +109,14 @@ def write_features(observations, encoder, output, *, batch_size=32, workers=1):
                     shutil.copyfileobj(source, member, length=1024 * 1024)
             archive.writestr("manifest.json", _json(manifest))
         # Exercise the public reader before exposing the completed generation.
+        logger.info("visual-features %s: verifying compressed archive", eid)
         with FeatureArtifactReader(archive_path) as reader:
-            for _ in reader:
+            for _ in iter_progress(reader, f"visual-features {eid}: verifying archive",
+                                   total=observation_count + len(summaries), unit="records"):
                 pass
         # Same-filesystem hard-link publication is atomic and refuses replacement.
         os.link(archive_path, output)
+    logger.info("visual-features %s: published %s", eid, output)
     return manifest
 
 

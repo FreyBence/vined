@@ -12,6 +12,7 @@ import pandas as pd
 
 from alignment import AlignedTrial
 from utils.provenance import file_hash, fingerprint, source_hashes, write_json
+from utils.progress import Progress, logger
 from .samples import SampleConfig, TrainingSample, build_samples, load_samples, _integer
 from .splits import DatasetSplits, SPLITS, SplitConfig, assign_splits, _record, _session
 
@@ -191,6 +192,7 @@ def load_dataset(path, *, expected_generation_id=None):
 
 def publish_dataset(dataset, output_dir):
     """Publish only after payload verification and a complete consumer readback."""
+    logger.info("training-dataset: validating samples and split memberships")
     populations = _validate_dataset(dataset)
     implementation = _implementation()
     root = Path(output_dir).resolve() / "generations"
@@ -202,12 +204,16 @@ def publish_dataset(dataset, output_dir):
         for eid, (units, _) in sorted(populations.items()):
             units.to_parquet(staging / "units" / f"{eid}.parquet", index=True)
         entries = []
+        progress = Progress("training-dataset: writing", sum(len(getattr(dataset, name)) for name in SPLITS), "samples")
         for split in SPLITS:
             for sample in getattr(dataset, split):
                 np.savez(staging / "samples" / f"{len(entries):06d}.npz",
                          **{name: getattr(sample, name) for name in ARRAY_FIELDS})
                 entries.append(dict(**{name: getattr(sample, name) for name in SCALAR_FIELDS},
                                     metadata=_json(sample.metadata)))
+                progress.update(len(entries), f"split={split}, session={sample.session_id}")
+        progress.finish()
+        logger.info("training-dataset: hashing payloads")
         manifest = dict(schema_version=1, kind="training_dataset", complete=True,
                         sessions=sorted(populations), samples=entries,
                         dataset_metadata=_json(dataset.metadata), implementation=implementation,
@@ -215,6 +221,7 @@ def publish_dataset(dataset, output_dir):
                                for file in sorted(staging.rglob("*")) if file.is_file()})
         manifest["generation_id"] = fingerprint(manifest)
         write_json(staging / "manifest.json", manifest)
+        logger.info("training-dataset: verifying staged generation")
         loaded = load_dataset(staging, expected_generation_id=manifest["generation_id"])
         if _implementation() != implementation:
             raise ValueError("Dataset implementation changed during publication")
@@ -222,10 +229,14 @@ def publish_dataset(dataset, output_dir):
         if destination.exists():
             raise FileExistsError(f"Dataset generation already exists: {destination}; load it explicitly")
         staging.rename(destination)
+    logger.info("training-dataset: published %s", destination)
     return replace(loaded, path=destination)
 
 
 def generate_dataset(sources, output_dir, *, split_config, sample_config=None):
     """Load selected alignment inputs, package and split samples, and publish."""
     samples = load_samples(sources, config=sample_config)
-    return publish_dataset(assign_splits(samples, config=split_config), output_dir)
+    logger.info("training-dataset: assigning %s splits", split_config.strategy)
+    dataset = assign_splits(samples, config=split_config)
+    logger.info("training-dataset: split sizes %s", {name: len(getattr(dataset, name)) for name in SPLITS})
+    return publish_dataset(dataset, output_dir)

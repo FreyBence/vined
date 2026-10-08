@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from copy import deepcopy
+from utils.progress import iter_progress, logger
 from importlib.metadata import version
 from pathlib import Path
 import tempfile
@@ -204,7 +205,8 @@ def publish_alignment(trials, output_dir):
         (staging / "trials").mkdir(parents=True)
         trials[0].neuron_identity.to_parquet(staging / "units.parquet", index=False)
         entries = []
-        for index, trial in enumerate(trials):
+        for index, trial in iter_progress(enumerate(trials),
+                f"alignment {trials[0].session_id}: compressing", total=len(trials), unit="trials"):
             np.savez_compressed(staging / f"trials/{index:06d}.npz",
                 bin_start_times=trial.bin_start_times, bin_center_times=trial.bin_center_times,
                 bin_end_times=trial.bin_end_times, neural_activity=trial.neural_activity,
@@ -220,6 +222,7 @@ def publish_alignment(trials, output_dir):
                         trials=entries, implementation=implementation, files=files)
         manifest["generation_id"] = fingerprint(manifest)
         write_json(staging / "manifest.json", manifest)
+        logger.info("alignment %s: verifying staged generation", trials[0].session_id)
         verified = load_alignment(staging, expected_generation_id=manifest["generation_id"])
         destination = parent / manifest["generation_id"]
         if destination.exists():
@@ -227,6 +230,7 @@ def publish_alignment(trials, output_dir):
         if _implementation() != implementation:
             raise ValueError("Alignment implementation changed during publication")
         staging.rename(destination)
+    logger.info("alignment %s: published %s", trials[0].session_id, destination)
     return AlignmentGeneration(verified.generation_id, destination, verified.trials, verified.manifest)
 
 

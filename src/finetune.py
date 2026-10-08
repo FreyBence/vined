@@ -11,6 +11,7 @@ from ray.tune.schedulers import ASHAScheduler
 
 import wandb
 from utils.paths import dataset_dir, output_dir
+from utils.progress import configure_progress, logger
 from trainer.make import make_multimodal_trainer
 from trainer.artifacts import new_run_directory, initialize_run
 from trainer.runtime import make_accelerator, prepare_optimization
@@ -20,6 +21,8 @@ from utils.utils import dummy_load
 
 
 def main(tune_config=None):
+    configure_progress()
+    logger.info("fine-tuning: resolving configuration and verifying dataset")
 
     config, train_dataloader, val_dataloader, meta_data = resolve_setup(args, tune_config)
     if args.eid in (None, "None") or meta_data["num_sessions"] != 1:

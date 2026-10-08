@@ -18,6 +18,7 @@ from evaluation.predictions import EvaluationPrediction, PredictionCollection
 from trainer.artifacts import plain
 from utils.paths import REPO_ROOT
 from utils.provenance import file_hash, fingerprint, write_json
+from utils.progress import iter_progress, logger
 
 
 ARRAY_FIELDS = ("temporal_positions", "physical_timestamps", "bin_start_times", "bin_end_times",
@@ -129,7 +130,8 @@ def publish_evaluation(collection, output_dir, *, metric_config=None,
         (staging / "units").mkdir()
         if persist_predictions:
             (staging / "predictions").mkdir()
-        for index, row in enumerate(collection.predictions):
+        for index, row in iter_progress(enumerate(collection.predictions), "evaluation: writing artifact",
+                                       total=len(collection.predictions), unit="samples"):
             session = row.session_id
             if session not in manifest["units"]:
                 relative = f"units/{len(manifest['units']):06d}.parquet"
@@ -148,6 +150,7 @@ def publish_evaluation(collection, output_dir, *, metric_config=None,
         result.update(evaluation_id=evaluation_id, evaluation_configuration=plain(collection.configuration),
                       software=software, prediction_artifact="predictions" if persist_predictions else None)
         if save_plots:
+            logger.info("evaluation: rendering diagnostic plots")
             _plots(result, staging / "plots")
         result["plots"] = [str(path.relative_to(staging)).replace("\\", "/")
                            for path in sorted((staging / "plots").glob("*.png"))]
@@ -156,6 +159,7 @@ def publish_evaluation(collection, output_dir, *, metric_config=None,
                              for path in sorted(staging.rglob("*")) if path.is_file()}
         manifest["manifest_id"] = fingerprint(manifest)
         write_json(staging / "manifest.json", manifest)
+        logger.info("evaluation: verifying staged artifact")
         load_evaluation(staging, expected_evaluation_id=evaluation_id)
         if final.exists():
             raise FileExistsError(final)
@@ -164,6 +168,7 @@ def publish_evaluation(collection, output_dir, *, metric_config=None,
         if staging.parent == root and staging.name == ".staging-" + evaluation_id:
             shutil.rmtree(staging)
         raise
+    logger.info("evaluation: published %s", final)
     return EvaluationArtifact(final, manifest, result, collection if persist_predictions else None)
 
 

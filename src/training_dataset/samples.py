@@ -1,6 +1,7 @@
 """Count-preserving trial packaging, independent of model and split objectives."""
 
 from copy import deepcopy
+from utils.progress import iter_progress, logger
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Iterable, Optional, Union
@@ -230,7 +231,9 @@ def load_samples(sources: Iterable[AlignmentSource], *, config: Optional[SampleC
     if not sources or not all(isinstance(source, AlignmentSource) for source in sources):
         raise ValueError("Provide a nonempty collection of AlignmentSource selections")
     trials, provenance = [], {}
-    for source in sources:
+    for source in iter_progress(sources, "training-dataset: loading alignment generations",
+                                total=len(sources), unit="sessions"):
+        logger.info("training-dataset: verifying alignment %s", source.path)
         generation = load_alignment(source.path, expected_generation_id=source.expected_generation_id)
         session_id = generation.trials[0].session_id
         if session_id in provenance:
@@ -239,4 +242,7 @@ def load_samples(sources: Iterable[AlignmentSource], *, config: Optional[SampleC
                                       path=str(generation.path),
                                       schema_version=generation.manifest["schema_version"])
         trials.extend(generation.trials)
-    return _build(trials, config, provenance)
+    logger.info("training-dataset: constructing %d samples from %d sessions", len(trials), len(sources))
+    samples = _build(trials, config, provenance)
+    logger.info("training-dataset: constructed %d samples", len(samples))
+    return samples
