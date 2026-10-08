@@ -9,17 +9,11 @@ import torch.nn.functional as F
 from transformers.activations import ACT2FN
 
 ACT2FN["softsign"] = nn.Softsign
-from models.stitcher import StitchDecoder, StitchEncoder
+from models.stitcher import StitchDecoder, StitchEncoder, session_indices, session_populations
 from multi_modal.mm_utils import MLP, Attention, ScaleNorm
 from utils.config_utils import DictConfig, update_config
 
 DEFAULT_CONFIG = "src/configs/multi_modal/mm.yaml"
-
-PROJ_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-with open(f"{PROJ_DIR}/data/train_eids.txt") as file:
-    INCLUDE_EIDS = [line.rstrip() for line in file]
-with open(f"{PROJ_DIR}/data/test_eids.txt") as file:
-    INCLUDE_EIDS += [line.rstrip() for line in file]
 
 STATIC_VARS = []
 VISION_VARS = ["vision-clip"]
@@ -32,19 +26,20 @@ class EncoderEmbeddingLayer(nn.Module):
         super().__init__()
 
         self.bias = config.bias
-        self.n_channels = n_channels
+        self.n_channels = config.get("visual_dim", 768) if mod in VISION_VARS else n_channels
         self.input_dim = self.n_channels*config.mult
         self.max_F = max_F
 
         self.mod_emb = nn.Embedding(config.n_modality, hidden_size)
 
-        self.eid_lookup = INCLUDE_EIDS
+        self.eid_list = session_populations(eid_list)
+        self.eid_lookup = list(self.eid_list)
         self.eid_to_indx = {r: i for i, r in enumerate(self.eid_lookup)}
         self.session_emb = nn.Embedding(len(self.eid_lookup), hidden_size)
 
         self.pos = config.pos
         if self.pos:
-            self.pos_embed = nn.Embedding(config.max_F, hidden_size)
+            self.pos_embed = nn.Embedding(max_F, hidden_size)
 
         self.dropout = nn.Dropout(config.dropout)
 
@@ -54,7 +49,8 @@ class EncoderEmbeddingLayer(nn.Module):
                 eid_list=eid_list,
                 n_channels=hidden_size,
                 mod=mod,
-                max_F=max_F
+                max_F=max_F,
+                visual_dim=config.get("visual_dim", 768),
             )
 
         elif mod in VISION_VARS:
@@ -94,10 +90,19 @@ class EncoderEmbeddingLayer(nn.Module):
 
         inputs, inputs_timestamp, inputs_modality, eid = \
         d["inputs"], d["inputs_timestamp"], d["inputs_modality"], d["eid"]
-        if d["inputs_modality"] == self.mod_emb.weight.device:
-            pass
+        if (not isinstance(inputs_modality, torch.Tensor) or inputs_modality.ndim != 0
+                or inputs_modality.dtype != torch.long or inputs_modality.device != inputs.device
+                or not 0 <= inputs_modality.item() < self.mod_emb.num_embeddings):
+            raise ValueError("inputs_modality must be a valid scalar int64 index on the input device")
         B, N, D = inputs.size()
-        N = self.max_F
+        if not 0 < N <= self.max_F:
+            raise ValueError("Input sequence length exceeds configured max_F")
+        if (not isinstance(inputs_timestamp, torch.Tensor)
+                or inputs_timestamp.shape != (B, N) or inputs_timestamp.dtype != torch.long
+                or inputs_timestamp.device != inputs.device
+                or torch.any(inputs_timestamp < 0) or torch.any(inputs_timestamp >= self.max_F)):
+            raise ValueError("Positions must be int64 [B,T] within configured max_F")
+        session_indices(eid, self.eid_list, B, inputs.device)
         if hasattr(self, "mod_stitch_encoder"):
 
             x = self.mod_stitch_encoder(inputs, eid)
@@ -119,13 +124,13 @@ class EncoderEmbeddingLayer(nn.Module):
         if self.pos:
             x_embed += self.pos_embed(inputs_timestamp)
 
-        eid = np.array(eid)
-        unique_eids = np.unique(eid)
-        for group_eid in unique_eids:
-            mask = torch.tensor(np.argwhere(eid==group_eid), device=x.device).squeeze()
-            if mask.dim() > 0:
-                session_idx = torch.tensor(self.eid_to_indx[group_eid]).to(x.device, torch.int64)
-                x_embed[mask] += self.session_emb(session_idx)[None,None,:].expand(mask.size(0),N,-1)
+        if (len(self.eid_lookup) != self.session_emb.num_embeddings
+                or set(self.eid_lookup) != set(self.eid_list)
+                or self.eid_to_indx != {session: index for index, session in enumerate(self.eid_lookup)}):
+            raise ValueError("Session embedding identities do not match configured sessions")
+        session_idx = torch.tensor([self.eid_to_indx[session] for session in eid],
+                                   device=x.device, dtype=torch.long)
+        x_embed += self.session_emb(session_idx)[:, None, :]
 
         return self.dropout(x), x_embed
 
@@ -149,6 +154,13 @@ class EncoderEmbedding(nn.Module):
         self.max_F = max_F
         self.n_channel = n_channel
         self.output_channel = output_channel
+        self.visual_dim = config.embedder.get("visual_dim", 768)
+        if (isinstance(self.visual_dim, bool) or not isinstance(self.visual_dim, int)
+                or self.visual_dim <= 0 or isinstance(max_F, bool)
+                or not isinstance(max_F, int) or max_F <= 0):
+            raise ValueError("visual_dim and max_F must be positive integers")
+        if mod in VISION_VARS:
+            self.output_channel = self.visual_dim
 
         self.embedder = EncoderEmbeddingLayer(
             self.hidden_size, self.n_channel, config.embedder, stitching, eid_list, mod, max_F
@@ -158,9 +170,10 @@ class EncoderEmbedding(nn.Module):
 
             self.mod_stitcher_proj_dict = StitchDecoder(
                 eid_list=eid_list,
-                n_channels=self.n_channel,
+                n_channels=self.hidden_size,
                 mod=mod,
-                max_F=max_F
+                max_F=max_F,
+                visual_dim=self.visual_dim,
             )
 
             if mod in STATIC_VARS:
@@ -183,7 +196,9 @@ class EncoderEmbedding(nn.Module):
     def forward(self, d : Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:    
                         
         x, x_emb = self.embedder(d)
-        d["x"], d["emb"], d["gt"] = x, x_emb, d["targets"]
+        d["x"], d["emb"] = x, x_emb
+        if "targets" in d:
+            d["gt"] = d["targets"]
         
         return d
 
@@ -224,7 +239,7 @@ class EncoderEmbedding(nn.Module):
 
 class EncoderLayer(nn.Module):
     
-    def __init__(self, idx, config: DictConfig):
+    def __init__(self, idx, config: DictConfig, max_F=100):
         super().__init__()
 
         self.idx = idx
@@ -234,6 +249,7 @@ class EncoderLayer(nn.Module):
         self.attn = Attention(
             idx, config.hidden_size, config.n_heads, config.attention_bias, 
             config.dropout, config.use_rope, 
+            max_F=max_F, n_mod=1,
         )
         self.ln2 = ScaleNorm(config.hidden_size ** 0.5) \
             if config.use_scalenorm else nn.LayerNorm(config.hidden_size) 
@@ -267,5 +283,4 @@ class EncoderLayer(nn.Module):
         for name in self.state_dict():
             if name not in temp_state_dic:
                 temp_state_dic[name] = self.state_dict()[name]
-        self.load_state_dict(temp_state_dic)   
-        
+        self.load_state_dict(temp_state_dic)

@@ -23,6 +23,7 @@ encoder:
   from_pt: null
 
   embedder:
+    visual_dim: 768       # visual input/output feature width
     n_modality: 5         # 2
     n_channels: 668       # number of neurons recorded 
     max_F: 100            # max feature len in timesteps
@@ -45,4 +46,3 @@ encoder:
     mlp_bias: true        # learn bias in the mlp layers
     dropout: 0.4          # dropout in transformer layers
     fixup_init: true      # modify weight initialization
-    

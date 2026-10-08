@@ -45,18 +45,17 @@ def apply_rotary_pos_emb(q, k, pos_ids, cos, sin, unsqueeze_dim=1):
     return q_embed, k_embed
     
 
-def create_context_mask(context_forward, context_backward, max_F) -> torch.LongTensor: 
-    
-    if context_forward == -1 and context_backward == -1:
-        return torch.ones(max_F, max_F).to(torch.int64)
-
-    context_forward = context_forward if context_forward >= 0 else max_F
-    context_backward = context_backward if context_backward >= 0 else max_F
-    mask = (torch.triu(torch.ones(max_F, max_F), diagonal=-context_forward).to(torch.int64)).transpose(0, 1)
-    if context_backward > 0:
-        back_mask = (torch.triu(torch.ones(max_F, max_F), diagonal=-context_backward).to(torch.int64))
-        mask = mask & back_mask
-    return mask
+def create_context_mask(context_forward, context_backward, max_F, positions=None):
+    """Allowed keys relative to each query's model-grid coordinate."""
+    if positions is None:
+        positions = torch.arange(max_F)
+    delta = positions.unsqueeze(-2) - positions.unsqueeze(-1)
+    allowed = torch.ones_like(delta, dtype=torch.bool)
+    if context_forward >= 0:
+        allowed &= delta <= context_forward
+    if context_backward >= 0:
+        allowed &= delta >= -context_backward
+    return allowed
 
 
 class ScaleNorm(nn.Module):
@@ -119,8 +118,13 @@ class Attention(nn.Module):
 
         self.hidden_size = hidden_size
         self.n_heads = n_heads
-        assert self.hidden_size % self.n_heads == 0, "Hidden dim is not multiple of head size"
+        if (isinstance(hidden_size, bool) or not isinstance(hidden_size, int) or hidden_size <= 0
+                or isinstance(n_heads, bool) or not isinstance(n_heads, int) or n_heads <= 0
+                or hidden_size % n_heads):
+            raise ValueError("Positive hidden width must be divisible by a positive head count")
         self.head_size = self.hidden_size // self.n_heads
+        if use_rope and self.head_size % 2:
+            raise ValueError("Rotary attention requires an even head width")
 
         # Attention parameters
         self.query = nn.Linear(self.hidden_size, self.hidden_size, bias=use_bias)
@@ -188,8 +192,6 @@ class Attention(nn.Module):
         out = out.transpose(1, 2).contiguous().view(B, T, self.hidden_size) 
 
         return self.out_proj(self.dropout(out)) 
-
-
 class CrossAttention(nn.Module):
     def __init__(
         self, idx, hidden_size, n_heads, use_bias, dropout, 
@@ -262,7 +264,4 @@ class CrossAttention(nn.Module):
         )
         out = out.transpose(1, 2).contiguous().view(B, T, self.hidden_size) 
 
-        return self.out_proj(self.dropout(out)) 
-
-    
-        
+        return self.out_proj(self.dropout(out))
