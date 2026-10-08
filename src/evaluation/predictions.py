@@ -8,6 +8,7 @@ import pandas as pd
 import torch
 
 from evaluation.setup import EvaluationSetup
+from training_dataset import temporal_context_view
 
 
 @dataclass(frozen=True)
@@ -27,6 +28,10 @@ class EvaluationPrediction:
     aligned_end: float
     temporal_mask: np.ndarray
     neuron_mask: np.ndarray
+    neural_prediction_mask: np.ndarray
+    visual_prediction_mask: np.ndarray
+    encoding_target_mask: np.ndarray
+    decoding_target_mask: np.ndarray
     observed_neural: np.ndarray
     observed_visual: np.ndarray
     predicted_neural: np.ndarray | None
@@ -52,7 +57,7 @@ class PredictionCollection:
                     neural_output="log_expected_spike_count", metrics_computed=False)
 
 
-def _dictionary_prediction(model, batch, direction, device):
+def _dictionary_prediction(model, batch, direction, device, view):
     target = "spike" if direction == "encoding" else "vision-clip"
     data = {}
     for mod in model.encoder_embeddings:
@@ -65,30 +70,38 @@ def _dictionary_prediction(model, batch, direction, device):
                          training_mask=temporal if mod == target else torch.zeros_like(temporal))
         if mod == "spike":
             data[mod]["neuron_mask"] = batch["neuron_mask"].to(device)
-    output = model(data)
+    output = model(data, context_view=view)
     if not torch.equal(output.temporal_mask.cpu(), batch["temporal_mask"]):
         raise ValueError("Model output temporal validity differs from scientific batch validity")
     if target == "spike" and not torch.equal(output.neuron_mask.cpu(), batch["neuron_mask"]):
         raise ValueError("Model output neuron validity differs from scientific batch validity")
+    _verify_support(output, view)
     return output.mod_preds[target]
 
 
+def _verify_support(output, view):
+    if (not torch.equal(output.prediction_mask, view.context_valid)
+            or not torch.equal(output.target_eligibility, view.target_mask)):
+        raise ValueError("Model prediction/support masks differ from the dataset context view")
+
+
 def _infer(model, batch, device):
+    view = temporal_context_view(batch["temporal_positions"].to(device), batch["temporal_mask"].to(device),
+        direction=model.model_mode, mode=model.context_mode, context_bins=model.context_bins)
     if model.model_mode == "encoding":
         output = model(visual_features=batch["vision-clip"].to(device),
                        temporal_positions=batch["temporal_positions"].to(device),
                        temporal_mask=batch["temporal_mask"].to(device),
                        neuron_mask=batch["neuron_mask"].to(device),
+                       context_view=view,
                        session_id=list(batch["session_id"]))
         if (not torch.equal(output.temporal_mask.cpu(), batch["temporal_mask"])
                 or not torch.equal(output.neuron_mask.cpu(), batch["neuron_mask"])):
             raise ValueError("Model output validity differs from scientific batch validity")
-        return output.neural_prediction, None
+        _verify_support(output, view)
+        return output.neural_prediction, None, view
     if model.model_mode == "decoding":
-        return None, _dictionary_prediction(model, batch, "decoding", device)
-    if model.model_mode == "mm":
-        return (_dictionary_prediction(model, batch, "encoding", device),
-                _dictionary_prediction(model, batch, "decoding", device))
+        return None, _dictionary_prediction(model, batch, "decoding", device, view), view
     raise ValueError(f"Unsupported checkpoint direction: {model.model_mode}")
 
 
@@ -131,7 +144,7 @@ def collect_predictions(setup: EvaluationSetup) -> PredictionCollection:
                 if float(batch["bin_size"][index]) != source.bin_size:
                     raise ValueError(f"Inference bin duration differs for scientific sample {sample_id}")
                 seen.add(sample_id)
-            neural_prediction, visual_prediction = _infer(model, batch, device)
+            neural_prediction, visual_prediction, view = _infer(model, batch, device)
             for name, prediction, shape in (
                     ("neural", neural_prediction, batch["neural"].shape),
                     ("visual", visual_prediction, batch["visual"].shape)):
@@ -141,6 +154,9 @@ def collect_predictions(setup: EvaluationSetup) -> PredictionCollection:
                 source = expected[offset + index]
                 def array(key):
                     return batch[key][index].detach().cpu().numpy().copy()
+                prediction_mask = view.context_valid[index].cpu().numpy().copy()
+                target_mask = view.target_mask[index].cpu().numpy().copy()
+                empty = np.zeros_like(target_mask)
                 records.append(EvaluationPrediction(
                     sample_id=source.sample_id, session_id=source.session_id, trial_id=source.trial_id,
                     neuron_identity=source.neuron_identity.copy(deep=True),
@@ -151,6 +167,10 @@ def collect_predictions(setup: EvaluationSetup) -> PredictionCollection:
                     aligned_start=source.aligned_start, aligned_end=source.aligned_end,
                     temporal_mask=array("temporal_mask"),
                     neuron_mask=array("neuron_mask"), observed_neural=array("neural"),
+                    neural_prediction_mask=empty.copy() if neural_prediction is None else prediction_mask.copy(),
+                    visual_prediction_mask=empty.copy() if visual_prediction is None else prediction_mask.copy(),
+                    encoding_target_mask=empty.copy() if neural_prediction is None else target_mask.copy(),
+                    decoding_target_mask=empty.copy() if visual_prediction is None else target_mask.copy(),
                     observed_visual=array("visual"),
                     predicted_neural=None if neural_prediction is None else neural_prediction[index].cpu().numpy().copy(),
                     predicted_visual=None if visual_prediction is None else visual_prediction[index].cpu().numpy().copy(),

@@ -14,6 +14,10 @@ from utils.paths import output_dir
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--checkpoint", required=True, help="Explicit selected training checkpoint")
+    parser.add_argument("--context-mode", required=True, choices=["strict", "full_trial"],
+                        help="Required intended context; must match checkpoint")
+    parser.add_argument("--context-bins", type=int, choices=[1, 3, 6, 9, 12],
+                        help="Required for strict; omitted for full_trial; must match checkpoint")
     parser.add_argument("--dataset-generation", "--data_path", dest="dataset_generation", required=True)
     parser.add_argument("--expected-dataset-generation-id")
     parser.add_argument("--eid", action="append", help="Select a persisted session; repeat for multiple sessions")
@@ -31,6 +35,7 @@ def main():
     # Dataset/model diagnostics belong on stderr; stdout is the structured result.
     with redirect_stdout(sys.stderr):
         setup = resolve_setup(checkpoint_path=args.checkpoint, dataset_generation=args.dataset_generation,
+                              context_mode=args.context_mode, context_bins=args.context_bins,
                               expected_generation_id=args.expected_dataset_generation_id,
                               session_ids=args.eid, batch_size=args.batch_size, device=args.device, seed=args.seed)
     if args.setup_only:

@@ -4,8 +4,10 @@ from copy import deepcopy
 from dataclasses import asdict, dataclass
 
 import numpy as np
+import pandas as pd
 
 from evaluation.predictions import PredictionCollection
+from training_dataset import temporal_context_view, TARGET_SUPPORT_BINS
 
 
 NEURAL_METRICS = ("trial_r2", "psth_r2", "bits_per_spike")
@@ -16,12 +18,32 @@ class MetricConfig:
     aggregation: str = "session_weighted"
     bps_baseline: str = "test_mean_count"
     psth_grouping: str = "all_trials"
+    region_bps: bool = True
 
     def __post_init__(self):
         if self.aggregation not in ("session_weighted", "neuron_weighted"):
             raise ValueError("Unsupported neural metric aggregation")
         if self.bps_baseline != "test_mean_count" or self.psth_grouping != "all_trials":
             raise ValueError("Unsupported BPS baseline or PSTH grouping")
+        if type(self.region_bps) is not bool:
+            raise ValueError("region_bps must be boolean")
+
+
+def _region_bps(units, neurons):
+    column = "selected_region" if "selected_region" in units else "acronym" if "acronym" in units else None
+    groups, unassigned = {}, []
+    for index in range(len(units)):
+        label = units.iloc[index][column] if column is not None else None
+        if pd.isna(label) or not isinstance(label, str) or not label.strip() or label == "void":
+            unassigned.append(index)
+        else:
+            groups.setdefault(label, []).append(index)
+    scores = {}
+    for label, indices in sorted(groups.items()):
+        scores[label] = dict(_aggregate([neurons[index]["metrics"]["bits_per_spike"] for index in indices]),
+                             neuron_columns=indices, neuron_count=len(indices))
+    return scores, dict(label_column=column, assigned_neurons=len(units) - len(unassigned),
+                        unassigned_neurons=len(unassigned), unassigned_neuron_columns=unassigned)
 
 
 def _result(value=None, reason=None, **coverage):
@@ -84,7 +106,7 @@ def _psth(rows, neuron):
     for row in rows:
         if not row.neuron_mask[neuron]:
             continue
-        for index in np.flatnonzero(row.temporal_mask):
+        for index in np.flatnonzero(row.encoding_target_mask):
             position = int(row.temporal_positions[index])
             coordinate = np.array([row.bin_start_times[index] - row.stim_on,
                                    row.bin_end_times[index] - row.stim_on])
@@ -117,8 +139,8 @@ def _neuron_metrics(rows, neuron):
     for row in rows:
         if not row.neuron_mask[neuron]:
             continue
-        valid_y = row.observed_neural[row.temporal_mask, neuron]
-        valid_p = row.predicted_neural[row.temporal_mask, neuron]
+        valid_y = row.observed_neural[row.encoding_target_mask, neuron]
+        valid_p = row.predicted_neural[row.encoding_target_mask, neuron]
         y.extend(valid_y)
         logp.extend(valid_p)
         with np.errstate(over="ignore", invalid="ignore"):
@@ -134,7 +156,7 @@ def _neuron_metrics(rows, neuron):
         metrics["trial_r2"] = _result(reason="nonfinite_observations_or_predictions", observations=len(y))
         metrics["psth_r2"], profile = _result(reason="nonfinite_observations_or_predictions"), None
     for item in metrics.values():
-        item["sample_ids"] = [row.sample_id for row in rows if row.neuron_mask[neuron]]
+        item["sample_ids"] = [row.sample_id for row in rows if row.neuron_mask[neuron] and row.encoding_target_mask.any()]
         item["nonfinite_sample_ids"] = affected
     return dict(column=neuron, metrics=metrics, psth=profile)
 
@@ -142,8 +164,8 @@ def _neuron_metrics(rows, neuron):
 def _visual_metric(rows):
     scores, affected = [], []
     for row in rows:
-        y = np.asarray(row.observed_visual[row.temporal_mask], dtype=np.float64)
-        p = np.asarray(row.predicted_visual[row.temporal_mask], dtype=np.float64)
+        y = np.asarray(row.observed_visual[row.decoding_target_mask], dtype=np.float64)
+        p = np.asarray(row.predicted_visual[row.decoding_target_mask], dtype=np.float64)
         with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
             norms = np.linalg.norm(y, axis=-1) * np.linalg.norm(p, axis=-1)
             cosines = np.sum(y * p, axis=-1) / norms
@@ -163,6 +185,11 @@ def compute_metrics(collection: PredictionCollection, *, config=None):
     config = MetricConfig() if config is None else config
     if not isinstance(config, MetricConfig) or not collection.predictions:
         raise ValueError("Metrics require a nonempty collection and MetricConfig")
+    mode = collection.configuration["model_mode"]
+    context = collection.configuration.get("temporal_context", {})
+    if (mode not in ("encoding", "decoding") or context.get("target_support_bins") != TARGET_SUPPORT_BINS
+            or context.get("boundary_policy") != "complete"):
+        raise ValueError("Metrics require explicit directional context with complete H=12 support")
     sessions = {}
     for row in collection.predictions:
         if (row.temporal_mask.dtype != np.bool_ or row.neuron_mask.dtype != np.bool_
@@ -173,16 +200,28 @@ def compute_metrics(collection: PredictionCollection, *, config=None):
                 or (row.predicted_neural is not None and row.predicted_neural.shape != row.observed_neural.shape)
                 or (row.predicted_visual is not None and row.predicted_visual.shape != row.observed_visual.shape)):
             raise ValueError(f"Malformed prediction masks, dimensions or bin duration for {row.sample_id}")
+        view = temporal_context_view(row.temporal_positions, row.temporal_mask, direction=mode,
+                                     mode=context.get("mode"), context_bins=context.get("bins"))
+        empty = np.zeros_like(row.temporal_mask)
+        prediction = view.context_valid[0].numpy()
+        target = view.target_mask[0].numpy()
+        for name, expected in (("neural_prediction_mask", prediction if mode == "encoding" else empty),
+                               ("visual_prediction_mask", prediction if mode == "decoding" else empty),
+                               ("encoding_target_mask", target if mode == "encoding" else empty),
+                               ("decoding_target_mask", target if mode == "decoding" else empty)):
+            actual = getattr(row, name)
+            if actual.dtype != np.bool_ or actual.shape != expected.shape or not np.array_equal(actual, expected):
+                raise ValueError(f"Prediction/support mask {name} differs from recorded context for {row.sample_id}")
         sessions.setdefault(row.session_id, []).append(row)
+    active_mask = "encoding_target_mask" if mode == "encoding" else "decoding_target_mask"
+    if not any(getattr(row, active_mask).any() for row in collection.predictions):
+        raise ValueError("Evaluation has no eligible H=12 targets")
     results = {}
     for session, rows in sessions.items():
         units = rows[0].neuron_identity
         if any(not row.neuron_identity.equals(units) or row.bin_size != rows[0].bin_size for row in rows):
             raise ValueError(f"Inconsistent ordered population or bin duration for session {session}")
-        mode = collection.configuration["model_mode"]
-        neural, visual = mode in ("encoding", "mm"), mode in ("decoding", "mm")
-        if mode not in ("encoding", "decoding", "mm"):
-            raise ValueError("Unsupported metric prediction direction")
+        neural, visual = mode == "encoding", mode == "decoding"
         if any((neural and row.predicted_neural is None) or (visual and row.predicted_visual is None) for row in rows):
             raise ValueError("Missing required prediction modality")
         neurons = [_neuron_metrics(rows, neuron) for neuron in range(len(units))] if neural else []
@@ -195,8 +234,16 @@ def compute_metrics(collection: PredictionCollection, *, config=None):
         if visual:
             metrics["visual_cosine"] = _visual_metric(rows)
         results[session] = dict(trial_count=len(rows), neuron_count=len(units),
+                                target_coverage={direction: dict(
+                                    eligible_temporal_targets=sum(int(getattr(row, field).sum()) for row in rows),
+                                    excluded_temporal_targets=sum(int(row.temporal_mask.sum()) - int(getattr(row, field).sum()) for row in rows),
+                                    trials_without_targets=sum(not getattr(row, field).any() for row in rows))
+                                    for direction, field in (("encoding", "encoding_target_mask"), ("decoding", "decoding_target_mask"))},
                                 sample_ids=[row.sample_id for row in rows],
                                 neurons=neurons, metrics=metrics, bin_size=rows[0].bin_size)
+        if neural and config.region_bps:
+            scores, coverage = _region_bps(units, neurons)
+            results[session].update(bits_per_spike_by_region=scores, region_coverage=coverage)
     names = next(iter(results.values()))["metrics"]
     global_metrics = {}
     for name in names:
@@ -207,13 +254,33 @@ def compute_metrics(collection: PredictionCollection, *, config=None):
         global_metrics[name] = _aggregate(items)
         global_metrics[name]["unavailable_sessions"] = [key for key, value in results.items()
                                                         if value["metrics"][name]["value"] is None]
-    definitions = dict(asdict(config), trial_r2_axes="valid trial/time cells pooled per session neuron",
-                       psth_axes="mean across all session trials per matching stimulus-relative position, then R2 over positions",
+    definitions = dict(asdict(config), target_support_bins=TARGET_SUPPORT_BINS, boundary_policy="complete",
+                       trial_r2_axes="H=12 eligible trial/time cells pooled per session neuron",
+                       psth_axes="mean across eligible session trials per matching stimulus-relative position, then R2 over positions",
                        bps_formula="sum(y*(log_count-log(test_mean_count))-(exp(log_count)-test_mean_count))/sum(y)/log(2)",
-                       bps_baseline_source="valid test observations per session neuron; test statistics explicitly permitted",
+                       bps_baseline_source="H=12 eligible test observations per session neuron; test statistics explicitly permitted",
                        units="counts per persisted bin; no Hz conversion or firing-rate gate",
                        invalidity_policy="metric-specific unavailable values; average available contributors with explicit coverage",
-                       visual_aggregation="valid vectors pooled within session, then equal session weighting",
+                       visual_aggregation="H=12 eligible vectors pooled within session, then equal session weighting",
                        negative_values="retained", numeric_precision="float64")
-    return dict(configuration=definitions, session_results=results, global_metrics=global_metrics,
-                provenance=deepcopy(collection.provenance))
+    output = dict(configuration=definitions, session_results=results, global_metrics=global_metrics,
+                  provenance=deepcopy(collection.provenance))
+    if config.region_bps:
+        definitions.update(region_labels="checkpoint ordered units: selected_region when present, otherwise acronym; missing/empty/void labels unassigned",
+                           region_bps_aggregation="same per-neuron BPS and baselines; available neurons averaged within region/session; global follows aggregation policy")
+        regional = {}
+        labels = sorted({label for session in results.values() for label in session.get("bits_per_spike_by_region", {})})
+        for label in labels:
+            contributors = {sid: session for sid, session in results.items() if label in session.get("bits_per_spike_by_region", {})}
+            items = ([neuron["metrics"]["bits_per_spike"] for session in contributors.values()
+                      for neuron in session["neurons"] if neuron["column"] in session["bits_per_spike_by_region"][label]["neuron_columns"]]
+                     if config.aggregation == "neuron_weighted" else
+                     [session["bits_per_spike_by_region"][label] for session in contributors.values()])
+            regional[label] = dict(_aggregate(items), session_ids=list(contributors),
+                                   neuron_count=sum(session["bits_per_spike_by_region"][label]["neuron_count"] for session in contributors.values()),
+                                   unavailable_sessions=[sid for sid, session in contributors.items() if session["bits_per_spike_by_region"][label]["value"] is None])
+        output["bits_per_spike_by_region"] = regional
+    else:
+        # Older schema-2 artifacts predate the additive regional result contract.
+        definitions.pop("region_bps")
+    return output

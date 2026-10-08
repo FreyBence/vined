@@ -22,6 +22,7 @@ from utils.provenance import file_hash, fingerprint, write_json
 
 ARRAY_FIELDS = ("temporal_positions", "physical_timestamps", "bin_start_times", "bin_end_times",
                 "temporal_mask", "neuron_mask", "observed_neural", "observed_visual",
+                "neural_prediction_mask", "visual_prediction_mask", "encoding_target_mask", "decoding_target_mask",
                 "predicted_neural", "predicted_visual")
 
 
@@ -74,6 +75,21 @@ def _plots(result, directory):
     figure.tight_layout()
     figure.savefig(directory / "session_metrics.png", dpi=150)
     plt.close(figure)
+    regions = result.get("bits_per_spike_by_region", {})
+    if regions:
+        figure, axis = plt.subplots(figsize=(max(6, len(regions) * 0.6), 3))
+        for index, (label, score) in enumerate(regions.items()):
+            if score["value"] is None:
+                axis.text(index, 0.9, "unavailable", transform=axis.get_xaxis_transform(), ha="center", fontsize=8)
+            else:
+                axis.bar(index, score["value"], color="steelblue")
+        axis.set_xticks(range(len(regions)), list(regions), rotation=45, ha="right")
+        axis.axhline(0, color="black", linewidth=0.6)
+        axis.set_ylabel("Bits per spike")
+        axis.set_title("BPS by trained brain region")
+        figure.tight_layout()
+        figure.savefig(directory / "region_bits_per_spike.png", dpi=150)
+        plt.close(figure)
     for session, data in sessions.items():
         # One explicitly identified representative profile per session avoids
         # producing an unbounded figure set for large neural populations.
@@ -106,7 +122,7 @@ def publish_evaluation(collection, output_dir, *, metric_config=None,
     staging.mkdir(exist_ok=False)
     try:
         software = _software()
-        manifest = dict(schema_version=1, kind="evaluation", complete=True, evaluation_id=evaluation_id,
+        manifest = dict(schema_version=2, kind="evaluation", complete=True, evaluation_id=evaluation_id,
                         configuration=plain(collection.configuration), provenance=plain(collection.provenance),
                         metric_configuration=plain(result["configuration"]), software=software,
                         predictions_persisted=bool(persist_predictions), samples=[], units={})
@@ -163,7 +179,7 @@ def load_evaluation(path, *, expected_evaluation_id=None, expected_checkpoint_sh
     path = Path(path).resolve()
     manifest = _read_json(path / "manifest.json")
     identity = manifest.pop("manifest_id", None)
-    if (manifest.get("schema_version") != 1 or manifest.get("kind") != "evaluation"
+    if (manifest.get("schema_version") != 2 or manifest.get("kind") != "evaluation"
             or manifest.get("complete") is not True or fingerprint(manifest) != identity):
         raise ValueError("Incomplete, unsupported or corrupt evaluation manifest")
     manifest["manifest_id"] = identity
@@ -226,7 +242,11 @@ def load_evaluation(path, *, expected_evaluation_id=None, expected_checkpoint_sh
             raise ValueError("Empty persisted prediction collection")
         # Validate readback semantics and metric association using the stored policy.
         config = manifest["metric_configuration"]
-        recomputed = compute_metrics(collection, config=MetricConfig(config["aggregation"], config["bps_baseline"], config["psth_grouping"]))
-        if recomputed["session_results"] != result["session_results"] or recomputed["global_metrics"] != result["global_metrics"]:
+        recomputed = compute_metrics(collection, config=MetricConfig(config["aggregation"], config["bps_baseline"], config["psth_grouping"],
+                                                                     region_bps=config.get("region_bps", False)))
+        if (recomputed["configuration"] != manifest["metric_configuration"]
+                or recomputed["session_results"] != result["session_results"]
+                or recomputed.get("bits_per_spike_by_region") != result.get("bits_per_spike_by_region")
+                or recomputed["global_metrics"] != result["global_metrics"]):
             raise ValueError("Persisted metrics do not match associated scientific predictions")
     return EvaluationArtifact(path, manifest, result, collection)
