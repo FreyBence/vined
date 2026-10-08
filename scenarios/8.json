@@ -1,0 +1,103 @@
+{
+  "id": 8,
+  "name": "S8_decoding_60Hz_6bin",
+  "status": "active",
+  "prediction": {
+    "task": "decoding",
+    "model_mode": "decoding",
+    "direction": "neural_to_vision",
+    "input_modalities": [
+      "neural_spikes"
+    ],
+    "target_modalities": [
+      "vision_clip"
+    ]
+  },
+  "data": {
+    "inputs": [
+      "neural_spikes"
+    ],
+    "targets": [
+      "vision_clip"
+    ]
+  },
+  "alignment": {
+    "sampling_frequency_hz": 60.0,
+    "bin_size_ms": 16.6666667,
+    "time_reference": "session_time",
+    "interval_convention": "[t_i, t_{i+1})",
+    "visual_state_semantics": "visual state sampled at t_i is valid on [t_i, t_{i+1})",
+    "neural_bin_semantics": "spikes are aggregated on [t_i, t_{i+1})",
+    "base_index_pairing": "vision_clip[i] and neural_spikes[i] share the same physical interval",
+    "gap_policy": {
+      "visual_gap": "invalid",
+      "zero_spike_bin": "valid"
+    }
+  },
+  "representation": {
+    "vision": {
+      "type": "clip_embedding_sequence",
+      "embedding_dim": 768
+    },
+    "neural": {
+      "type": "spike_count_per_bin"
+    },
+    "temporal_context": {
+      "context_modality": "neural_spikes",
+      "context_bins": 6,
+      "context_ms": 100.0,
+      "relative_to_target": "current_and_future",
+      "offsets_in_bins": {
+        "start_bins": 0,
+        "end_bins": 5
+      },
+      "include_target_interval": true,
+      "notes": "Offline decoding: predict a visual state from neural activity measured in the same and subsequent intervals, allowing for neural response latency."
+    }
+  },
+  "model": {
+    "mode": "decoding",
+    "temporal_context_bins": 6
+  },
+  "training": {
+    "seed": 42,
+    "batch_size": null,
+    "epochs": null,
+    "optimizer": null,
+    "learning_rate": null,
+    "loss": null,
+    "masking": {
+      "enabled": true,
+      "mask_type": "embd",
+      "mask_mode": [
+        "temporal"
+      ],
+      "mask_ratio": 0.1,
+      "use_mtm": false
+    }
+  },
+  "evaluation": {
+    "comparison_group": "decoding_temporal_context_60hz",
+    "common_target_policy": "evaluate only target positions valid for every scenario in the comparison group",
+    "metrics": {
+      "primary": [
+        "bits_per_spike_or_poisson_deviance"
+      ],
+      "secondary": [
+        "correlation",
+        "r2"
+      ]
+    },
+    "report_per_brain_region": true,
+    "report_per_session": true
+  },
+  "axes": {
+    "prediction_direction": "decoding",
+    "temporal_context": 6,
+    "neural_region_selection": "all_recorded"
+  },
+  "neural_region_selection": {
+    "mode": "all_recorded",
+    "region_set": null
+  }
+}
