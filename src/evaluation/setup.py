@@ -12,6 +12,7 @@ from trainer.pretrained import model_from_checkpoint
 from training_dataset.handoff import load_dataset_splits
 from training_dataset import TARGET_SUPPORT_BINS
 from training_dataset.context import STRICT_CONTEXT_BINS
+from trainer.selection import select_neural_regions
 
 
 @dataclass
@@ -65,7 +66,8 @@ def _consumed_observations(checkpoint, path, visited=None, lineage=None):
 
 
 def resolve_setup(*, checkpoint_path, dataset_generation, context_mode, context_bins=None, expected_generation_id=None,
-                  session_ids=None, batch_size=32, device="cpu", seed=42):
+                  session_ids=None, batch_size=32, device="cpu", seed=42,
+                  prediction_direction=None, neural_region_selection=None):
     if isinstance(batch_size, bool) or not isinstance(batch_size, int) or batch_size <= 0:
         raise ValueError("Inference batch size must be a positive integer")
     if isinstance(seed, bool) or not isinstance(seed, int) or seed < 0:
@@ -73,6 +75,11 @@ def resolve_setup(*, checkpoint_path, dataset_generation, context_mode, context_
     checkpoint_path = Path(checkpoint_path).resolve()
     checkpoint = load_training_checkpoint(checkpoint_path)
     config = checkpoint["config"]
+    if prediction_direction is not None and prediction_direction != config["training"]["objective"]:
+        raise ValueError("Requested prediction direction differs from the checkpoint")
+    recorded_selection = config["dataset"].get("neural_region_selection", "all_recorded")
+    if neural_region_selection is not None and neural_region_selection != recorded_selection:
+        raise ValueError("Requested neural region selection differs from the checkpoint")
     context = config["training"].get("temporal_context")
     if (context_mode not in ("strict", "full_trial")
             or (context_mode == "strict" and (type(context_bins) is not int or context_bins not in STRICT_CONTEXT_BINS))
@@ -83,8 +90,16 @@ def resolve_setup(*, checkpoint_path, dataset_generation, context_mode, context_
             or context.get("target_support_bins") != TARGET_SUPPORT_BINS
             or context.get("boundary_policy") != "complete"):
         raise ValueError("Requested evaluation context/support differs from the checkpoint; legacy checkpoints require a separate protocol")
-    _, _, test, metadata = load_dataset_splits(
+    train, val, test, metadata = load_dataset_splits(
         dataset_generation, session_ids=session_ids, expected_generation_id=expected_generation_id)
+    recorded_policy = config["dataset"].get("neural_selection_policy")
+    if recorded_selection == "visual_only" and not isinstance(recorded_policy, dict):
+        raise ValueError("Visual-only checkpoint lacks its anatomical selection policy")
+    _, _, test, metadata = select_neural_regions(
+        (train, val, test), metadata, recorded_selection,
+        regions=recorded_policy["regions"] if recorded_selection == "visual_only" else None)
+    if recorded_selection == "visual_only" and metadata["neural_selection_policy"] != recorded_policy:
+        raise ValueError("Runtime atlas descendants differ from the checkpoint selection policy")
     if not test:
         raise ValueError("Selected persisted test split is empty")
     # Generation identity binds timing, alignment, feature representation and split
@@ -148,6 +163,7 @@ def resolve_setup(*, checkpoint_path, dataset_generation, context_mode, context_
                          dataset_name=config["data"]["dataset_name"], stitching=True,
                          shuffle=False, seed=seed, mode="test", eids=metadata["eids"])
     effective = dict(batch_size=batch_size, device=str(requested_device), seed=seed,
+                     neural_region_selection=recorded_selection,
                      temporal_context=plain(context),
                      target_coverage=dict(eligible_temporal_targets=eligible,
                          excluded_temporal_targets=sum(sample.sequence_length for sample in test.samples) - eligible,

@@ -54,9 +54,18 @@ Make fine-tuning load a pretrained checkpoint through training-owned orchestrati
 
 New model architecture or dependencies, downstream evaluation changes, and generalization benchmarks.
 
+### [x] T06 — Run configured scenarios through a shared launcher
+
+**Summary:**
+Provide a train/eval launcher accepting only operation and scenario ID, with scenario-first precedence and module configuration defaults. Select explicit runtime neural populations without changing published data or split membership, and record the selected population for compatible checkpoint restoration and evaluation.
+
+**Out of scope:**
+Dataset/checkpoint discovery, upstream data regeneration, and changes to model architecture.
+
 ## Dependencies
 
 - T02 depends on T01.
 - T03 depends on T02.
 - T04 depends on T03.
 - T05 depends on T04.
+- T06 depends on T04.

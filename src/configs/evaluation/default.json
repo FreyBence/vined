@@ -1,0 +1,11 @@
+{
+  "batch_size": 32,
+  "device": "cpu",
+  "seed": 42,
+  "aggregation": "session_weighted",
+  "bps_baseline": "test_mean_count",
+  "psth_grouping": "all_trials",
+  "output_dir": null,
+  "no_predictions": false,
+  "save_plot": false
+}

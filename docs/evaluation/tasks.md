@@ -36,10 +36,19 @@ Connect the entry point to structured machine-readable neuron/session/global res
 **Out of scope:**  
 Model-comparison tooling, new analysis dashboards, upstream documentation redesign, automated validation infrastructure, and exhaustive performance or fidelity studies.
 
+### [x] T05 — Evaluate configured scenarios with matching runtime populations
+
+**Summary:**
+Integrate the shared train/eval scenario launcher and evaluation JSON defaults. Enforce scenario direction, context, and neuron-selection compatibility with the explicitly configured checkpoint, using the training-owned runtime population boundary.
+
+**Out of scope:**
+Checkpoint search, model adaptation during evaluation, and changes to persisted scientific data.
+
 ## Dependencies
 
 - T02 depends on T01.
 - T03 depends on T02.
 - T04 depends on T01, T02, and T03.
+- T05 depends on T04 and training T06.
 
 Validation belongs inside each task: use code inspection, existing checks, direct execution, and manual artifact verification proportional to its concrete risks. Do not write or modify tests. Optional visual evaluation is compatibility work only if retained; it must not delay the required neural encoding pipeline.

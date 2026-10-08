@@ -1,0 +1,14 @@
+{
+  "dataset_generation": null,
+  "expected_dataset_generation_id": null,
+  "eid": null,
+  "train": {
+    "base_path": null,
+    "training_config": null,
+    "setup_only": false
+  },
+  "eval": {
+    "checkpoint": null,
+    "setup_only": false
+  }
+}

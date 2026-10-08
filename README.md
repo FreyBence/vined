@@ -27,6 +27,22 @@ The data pipeline consists of:
 
 ## Local data and outputs
 
+Run a configured scenario from the checkout root:
+
+```text
+python src/run.py train 3
+python src/run.py eval 3
+```
+
+Set the published dataset generation and evaluation checkpoint in
+`src/configs/run.json` (or the selected scenario's `train`/`eval` object).
+The launcher accepts only operation and scenario ID. Scenario direction, temporal
+context, and neuron selection take precedence; remaining parameters come from
+the existing training/model profiles and `src/configs/evaluation/default.json`.
+Relative paths resolve from the checkout. Visual-only scenarios use the shared
+`src/configs/visual-regions.json` region list and Allen descendants, matching EID
+relevance discovery. Evaluation requires a matching trained checkpoint.
+
 Generated and downloaded artifacts default to the gitignored `output/` directory:
 
 ```text

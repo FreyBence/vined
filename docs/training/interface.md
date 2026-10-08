@@ -1,5 +1,42 @@
 # Training interface
 
+## Scenario launcher
+
+From the checkout root, `python src/run.py train 3` selects scenario 3 from
+`src/configs/scenarios.json`. The launcher accepts only `train|eval` and an integer
+scenario ID. Configure a concrete published `dataset_generation`, optional
+`expected_dataset_generation_id` and `eid`, and operation-specific entry settings
+in `src/configs/run.json`. Paths are resolved from the checkout; null `eid` selects
+all persisted sessions. Generations and checkpoints are never discovered.
+
+Scenario direction, temporal context, and neural region selection take precedence
+over module settings. Optional scenario `train`/`eval` objects override matching
+entry settings in `run.json`; scenario-level dataset/session fields override common
+settings. Training otherwise retains its session-count model/training profiles and
+optional `training_config` override file. Supported `train` entry settings are
+`base_path`, `training_config`, `setup_only`, `seed`, `epochs`, `batch_size`,
+`validation_batch_size`, `learning_rate`, `weight_decay`, `scheduler`, `eval_every`,
+`checkpoint_selection`, `no_wandb`, `resume_checkpoint`, `multi_gpu`, `debug`,
+`num_sessions`, `mask_mode`, `mask_ratio`, `mixed_training`, and `enc_task_var`.
+Null entry settings preserve the underlying module defaults.
+
+`--neural-region-selection all_recorded|visual_only` defaults to `all_recorded`.
+`trainer.selection.select_neural_regions(views, metadata, selection, *, regions=None)` returns
+runtime split views and metadata, preserving source neuron order and counts,
+trial/sample/session identity, timestamps, masks, and persisted split membership.
+The published dataset is unchanged. Missing region metadata or a selected session
+with no matching neurons fails explicitly. Runtime samples record selected source
+columns and original neuron count in `metadata.runtime_neural_selection`; effective
+dataset metadata and checkpoint populations record the selected mapping and policy.
+These runtime views are not newly published dataset generations.
+
+`src/configs/visual-regions.json` is shared with `script/find_visual_eids.py`:
+LGd, VISp, VISl, VISli, VISpl, VISpor, VISpm, VISam, VISa, VISrl, and VISal.
+Selection matches absolute Allen atlas IDs, including descendants and both
+hemispheres, using the same hierarchy rule as relevance discovery. Missing atlas
+IDs are not selected. Checkpoints record root acronyms and expanded atlas IDs;
+evaluation restores the recorded policy and rejects changed atlas descendants.
+
 ## Dataset selection and configuration
 
 From the checkout root, use the project Python with `src/train.py` or
@@ -22,7 +59,7 @@ ordered unit tables come from the persisted dataset. Source counts/features
 are unchanged. Runtime tensors use the training-dataset loader contract:
 `spikes_data[B,T,N]`, `vision-clip[B,T,768]`, temporal/neuron validity masks,
 and separate identity/provenance fields. `B` is batch size, `T` the configured
-time size, and `N` the largest selected session population. No population
+time size, and `N` the largest selected session population. No implicit population
 sorting or filtering is allowed. Time maxima cannot truncate real observations.
 Counts remain counts per persisted bin; physical time remains session seconds.
 
@@ -38,8 +75,9 @@ Encoding/decoding entry points now select temporal context through
 `--context-mode strict|full_trial` (effective default `full_trial`) and
 `--context-bins 1|3|6|9|12` (required only for `strict`). Both `train.py` and
 `finetune.py` use the shared argument boundary; shell launchers forward these
-arguments. Scenario files and context fields in JSON profiles/overrides are not
-used to select context. Finite legacy model forward/backward limits conflict with
+arguments. The shared launcher supplies context arguments from the selected
+scenario; direct module commands do not read scenarios. Context fields in module
+JSON profiles/overrides are not used to select context. Finite legacy model forward/backward limits conflict with
 these explicit modes and are rejected. Inherited `mm` remains available when
 context arguments are omitted; explicit context requests for `mm` are rejected.
 

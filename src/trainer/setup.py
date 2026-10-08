@@ -8,6 +8,7 @@ from training_dataset.handoff import load_dataset_splits
 from training_dataset import TARGET_SUPPORT_BINS
 from utils.config_utils import DictConfig, load_config, update_config
 from utils.utils import set_seed
+from trainer.selection import select_neural_regions
 
 
 CONFIG_ROOT = Path(__file__).resolve().parents[1] / "configs"
@@ -35,6 +36,7 @@ SUPPORTED_OVERRIDES = {
 
 
 def add_setup_arguments(parser):
+    parser.add_argument("--neural-region-selection", choices=["all_recorded", "visual_only"], default="all_recorded")
     parser.add_argument("--context-mode", choices=["strict", "full_trial"],
                         help="Temporal context for encoding/decoding (default: full_trial)")
     parser.add_argument("--context-bins", type=int, choices=[1, 3, 6, 9, 12],
@@ -125,6 +127,8 @@ def resolve_setup(args, tune_config=None):
         generation_path, session_ids=session_ids,
         expected_generation_id=args.expected_dataset_generation_id,
     )
+    train, val, _test, metadata = select_neural_regions(
+        (train, val, _test), metadata, getattr(args, "neural_region_selection", "all_recorded"))
     if not train:
         raise ValueError("Selected dataset has no optimization samples")
     if args.num_sessions is not None and args.num_sessions != metadata["num_sessions"]:

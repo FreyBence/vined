@@ -55,32 +55,12 @@ from utils.paths import dataset_dir, output_dir
 
 OUTPUT_FILE = output_dir() / "eid-relevanc.txt"
 
-# Default selection for this discovery script, not a neural-data requirement.
-# docs/neural-data/spec.md imposes no fixed region list or weights. Each good
-# mapped unit contributes equally; --regions overrides the anatomical selection.
-#
-# Allen/IBL acronym for dorsal lateral geniculate complex is LGd.
-RELEVANT_REGIONS = (
-    "LGd",
-    # Allen CCF visual cortical areas.
-    #
-    # A build_relevant_region_ids() az atlaszhierarchia alapján
-    # automatikusan hozzáveszi az alrégiókat/rétegeket is.
-    # Például VISa -> VISa1, VISa2/3, VISa4, VISa5, VISa6a, VISa6b.
-    #
-    # Nem elég csak a közös "VIS" szülőt használni, mert például
-    # VISa és VISrl az Allen hierarchiában a PTLp ág alatt található.
-    "VISp",
-    "VISl",
-    "VISli",
-    "VISpl",
-    "VISpor",
-    "VISpm",
-    "VISam",
-    "VISa",
-    "VISrl",
-    "VISal",
-)
+# Shared with training/evaluation visual_only runtime selection.
+from utils.config_utils import load_config
+
+RELEVANT_REGIONS = tuple(load_config(
+    Path(__file__).resolve().parents[1] / "src/configs/visual-regions.json"
+)["regions"])
 
 
 # ---------------------------------------------------------------------------

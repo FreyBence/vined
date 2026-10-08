@@ -1,5 +1,27 @@
 # Evaluation interface
 
+## Scenario launcher
+
+`python src/run.py eval 3` dispatches evaluation for scenario 3, using
+`src/configs/run.json` for the explicit dataset generation, checkpoint, optional
+session selection, and entry settings. `src/configs/evaluation/default.json`
+supplies inference, metric, and publication defaults. Precedence is scenario
+`eval` settings, then `run.json` entry settings, then evaluation defaults.
+Scenario direction, context, and neural region selection are passed explicitly
+and must match the checkpoint. Relative paths resolve from the checkout.
+Set `eval.setup_only=true` for restoration and compatibility inspection without
+inference or publication.
+
+Direct `eval.py` accepts optional `--prediction-direction encoding|decoding` and
+`--neural-region-selection all_recorded|visual_only`; omission uses the checkpoint.
+Evaluation applies the checkpoint's recorded runtime neuron selection through
+`trainer.selection.select_neural_regions`, then checks the selected ordered
+population against checkpoint identity. Old checkpoints without region-selection
+metadata retain `all_recorded`. Source generation and split membership remain
+unchanged; results record the region selection and selected source columns.
+`resolve_setup` also accepts optional `prediction_direction` and
+`neural_region_selection` keyword arguments for these compatibility checks.
+
 ## Checkpoint and test setup
 
 From the checkout root, use the project Python:
@@ -12,8 +34,9 @@ python src/eval.py --checkpoint OUTPUT/runs/ATTEMPT/model_best.pt --dataset-gene
 
 `--context-mode strict|full_trial` is required. Strict mode requires
 `--context-bins 1|3|6|9|12`; full trial rejects bins. These arguments declare the
-intended checkpoint context and cannot change it. Scenario/config files are not
-read to select context. Directional checkpoints must record complete H=12 support
+intended checkpoint context and cannot change it. Direct module commands do not
+read scenario files; the shared launcher translates scenario context into these
+arguments. Directional checkpoints must record complete H=12 support
 and the requested mode/length; legacy and inherited `mm` checkpoints are rejected
 by this protocol. Test data must carry the shared held-state alignment policy.
 
