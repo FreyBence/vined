@@ -4,85 +4,157 @@
       "id": 1,
       "name": "Encoding - 16.7 ms context - all recorded regions",
       "prediction_direction": "encoding",
-      "temporal_context_bins": 1,
+      "temporal_context": {
+        "mode": "strict",
+        "bins": 1
+      },
       "neural_region_selection": "all_recorded"
     },
     {
       "id": 2,
       "name": "Encoding - 50 ms context - all recorded regions",
       "prediction_direction": "encoding",
-      "temporal_context_bins": 3,
+      "temporal_context": {
+        "mode": "strict",
+        "bins": 3
+      },
       "neural_region_selection": "all_recorded"
     },
     {
       "id": 3,
       "name": "Encoding - 100 ms context - all recorded regions",
       "prediction_direction": "encoding",
-      "temporal_context_bins": 6,
+      "temporal_context": {
+        "mode": "strict",
+        "bins": 6
+      },
       "neural_region_selection": "all_recorded"
     },
     {
       "id": 4,
       "name": "Encoding - 150 ms context - all recorded regions",
       "prediction_direction": "encoding",
-      "temporal_context_bins": 9,
+      "temporal_context": {
+        "mode": "strict",
+        "bins": 9
+      },
       "neural_region_selection": "all_recorded"
     },
     {
       "id": 5,
       "name": "Encoding - 200 ms context - all recorded regions",
       "prediction_direction": "encoding",
-      "temporal_context_bins": 12,
+      "temporal_context": {
+        "mode": "strict",
+        "bins": 12
+      },
       "neural_region_selection": "all_recorded"
     },
     {
       "id": 6,
       "name": "Decoding - 16.7 ms context - all recorded regions",
       "prediction_direction": "decoding",
-      "temporal_context_bins": 1,
+      "temporal_context": {
+        "mode": "strict",
+        "bins": 1
+      },
       "neural_region_selection": "all_recorded"
     },
     {
       "id": 7,
       "name": "Decoding - 50 ms context - all recorded regions",
       "prediction_direction": "decoding",
-      "temporal_context_bins": 3,
+      "temporal_context": {
+        "mode": "strict",
+        "bins": 3
+      },
       "neural_region_selection": "all_recorded"
     },
     {
       "id": 8,
       "name": "Decoding - 100 ms context - all recorded regions",
       "prediction_direction": "decoding",
-      "temporal_context_bins": 6,
+      "temporal_context": {
+        "mode": "strict",
+        "bins": 6
+      },
       "neural_region_selection": "all_recorded"
     },
     {
       "id": 9,
       "name": "Decoding - 150 ms context - all recorded regions",
       "prediction_direction": "decoding",
-      "temporal_context_bins": 9,
+      "temporal_context": {
+        "mode": "strict",
+        "bins": 9
+      },
       "neural_region_selection": "all_recorded"
     },
     {
       "id": 10,
       "name": "Decoding - 200 ms context - all recorded regions",
       "prediction_direction": "decoding",
-      "temporal_context_bins": 12,
+      "temporal_context": {
+        "mode": "strict",
+        "bins": 12
+      },
       "neural_region_selection": "all_recorded"
     },
     {
       "id": 11,
       "name": "Encoding - 200 ms context - visual regions only",
       "prediction_direction": "encoding",
-      "temporal_context_bins": 12,
+      "temporal_context": {
+        "mode": "strict",
+        "bins": 12
+      },
       "neural_region_selection": "visual_only"
     },
     {
       "id": 12,
       "name": "Decoding - 200 ms context - visual regions only",
       "prediction_direction": "decoding",
-      "temporal_context_bins": 12,
+      "temporal_context": {
+        "mode": "strict",
+        "bins": 12
+      },
       "neural_region_selection": "visual_only"
-    }
+    },
+      {
+    "id": 13,
+    "name": "Encoding - Full Trial - All Recorded Regions",
+    "prediction_direction": "encoding",
+    "temporal_context": {
+      "mode": "full_trial"
+    },
+    "neural_region_selection": "all_recorded"
+  },
+  {
+    "id": 14,
+    "name": "Decoding - Full Trial - All Recorded Regions",
+    "prediction_direction": "decoding",
+    "temporal_context": {
+      "mode": "full_trial"
+    },
+    "neural_region_selection": "all_recorded"
+  },
+  {
+    "id": 15,
+    "name": "Encoding - Full Trial - Visual Regions Only",
+    "prediction_direction": "encoding",
+    "temporal_context": {
+      "mode": "full_trial"
+    },
+    "neural_region_selection": "visual_only"
+  },
+  {
+    "id": 16,
+    "name": "Decoding - Full Trial - Visual Regions Only",
+    "prediction_direction": "decoding",
+    "temporal_context": {
+      "mode": "full_trial"
+    },
+    "neural_region_selection": "visual_only"
+  }
   ]
 }
