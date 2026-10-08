@@ -1,5 +1,14 @@
-## YAML CONFIG FILES ## 
-import yaml
+import json
+from pathlib import Path
+
+
+def load_config(path):
+    """Read a JSON configuration object."""
+    with open(path, encoding="utf-8") as stream:
+        config = json.load(stream)
+    if not isinstance(config, dict):
+        raise ValueError("Configuration must be a JSON object")
+    return config
 
 """ Wrapper for config dict to access it using dot notation
 """
@@ -22,7 +31,7 @@ def unpack_config_rec(config):
     # Unpack includes
     if isinstance(config, str) and config.split(":")[0] == "include":
         # Preserve the drive separator in absolute Windows paths.
-        config = yaml.safe_load(open(config.split(":", 1)[1],"r"))
+        config = load_config(config.split(":", 1)[1])
     
     if isinstance(config, dict):
         for field in config:
@@ -59,15 +68,15 @@ def update_config_rec(new_config, config):
 """
 def update_config(default_config, config = None):
 
-    if isinstance(default_config, str):
-        default_config = yaml.safe_load(open(default_config,"r"))
+    if isinstance(default_config, (str, Path)):
+        default_config = load_config(default_config)
 
     # If no config is provided, we iterate using the same config to make sure that the includes
     # are unpacked
     config = default_config if config is None else config
 
-    if isinstance(config, str):
-        config = yaml.safe_load(open(config,"r"))
+    if isinstance(config, (str, Path)):
+        config = load_config(config)
 
     # Go down the tree to unpack the includes
     unpacked_default_config = unpack_config_rec(default_config)

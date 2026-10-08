@@ -43,8 +43,9 @@ from multi_modal.encoder_embeddings import EncoderEmbedding
 from multi_modal.mm import MultiModal
 from utils.config_utils import update_config
 
-config = update_config("src/configs/multi_modal/mm.yaml")
-config["masker"]["force_active"] = False
+config = update_config("src/configs/model/default.json")
+config["encoder"]["embedder"]["max_F"] = 100
+config["masker"] = {"force_active": False}
 sessions = {"session-a": 3, "session-b": 5}
 hidden = config.encoder.transformer.hidden_size
 visual = EncoderEmbedding(
@@ -63,7 +64,10 @@ modality count, learned-position flag `pos`, projection options, and dropout;
 `use_rope`, normalization, activation, initialization, and dropout.
 `masker.force_active=False` avoids constructing a stochastic masker; enabled
 legacy modes are `temporal` and `causal`. Use shipped defaults for unused legacy
-configuration fields. Hidden width must divide evenly among positive attention
+configuration fields. Architecture JSON profiles omit training corruption and
+runtime time limits: callers supply `masker` and `encoder.embedder.max_F`.
+Training composes its masking configuration and derives this limit from
+`data.max_time_length`. Hidden width must divide evenly among positive attention
 heads; rotary head width must be even.
 
 Optional `neuron_order` is a session-keyed dictionary of ordered lists, one

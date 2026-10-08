@@ -1,0 +1,31 @@
+{
+  "model_class": "MultiModal",
+  "context": {
+    "forward": -1,
+    "backward": -1
+  },
+  "encoder": {
+    "embedder": {
+      "n_modality": 5,
+      "mult": 2,
+      "pos": true,
+      "act": "softsign",
+      "scale": 1,
+      "bias": true,
+      "dropout": 0.2
+    },
+    "transformer": {
+      "use_rope": true,
+      "n_layers": 5,
+      "hidden_size": 256,
+      "use_scalenorm": false,
+      "n_heads": 8,
+      "attention_bias": true,
+      "act": "gelu",
+      "inter_size": 512,
+      "mlp_bias": true,
+      "dropout": 0.4,
+      "fixup_init": true
+    }
+  }
+}

@@ -25,7 +25,7 @@ def build_model(*, config, metadata, modal_filter):
     ) for mod in modal_filter["input"]}
     model = MultiModal(embeddings, avail_mod=["spike", "vision-clip"], avail_beh=["vision-clip"],
                        model_mode=config.training.objective, config=config.model,
-                       **config.method.model_kwargs, **metadata)
+                       **metadata)
     # Bind the existing embedding operation to the selected explicit sessions.
     # No dependence on positions in the inherited global EID files remains.
     sessions = list(metadata["selected_session_ids"])
@@ -51,7 +51,7 @@ def load_pretrained_model(path, *, config, metadata, modal_filter):
     checkpoint = load_training_checkpoint(path)
     source_config = checkpoint["config"]
     if (_architecture(source_config) != _architecture(config)
-            or source_config["method"]["model_kwargs"] != plain(config.method.model_kwargs)
+            or source_config["training"]["loss_components"] != plain(config.training.loss_components)
             or source_config["training"]["objective"] != config.training.objective
             or source_config["training"]["modal_filter"] != plain(modal_filter)):
         raise ValueError("Pretrained architecture, prediction direction or model loss configuration is incompatible")

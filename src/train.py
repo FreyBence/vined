@@ -129,7 +129,6 @@ def main(tune_config=None):
         avail_beh = dynamic_mods,
         model_mode = model_mode,
         config = config.model,
-        **config.method.model_kwargs,
         **meta_data
     )
 

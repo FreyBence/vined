@@ -25,7 +25,6 @@ from multi_modal.encoder_embeddings import EncoderLayer
 from multi_modal.mm_utils import create_context_mask
 from utils.config_utils import DictConfig, update_config
 
-DEFAULT_CONFIG = "src/configs/multi_modal/mm.yaml"
 
 STATIC_VARS = []
 DYNAMIC_VARS = ["vision-clip"]

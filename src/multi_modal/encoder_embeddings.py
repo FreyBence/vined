@@ -13,7 +13,6 @@ from models.stitcher import StitchDecoder, StitchEncoder, session_indices, sessi
 from multi_modal.mm_utils import MLP, Attention, ScaleNorm
 from utils.config_utils import DictConfig, update_config
 
-DEFAULT_CONFIG = "src/configs/multi_modal/mm.yaml"
 
 STATIC_VARS = []
 VISION_VARS = ["vision-clip"]

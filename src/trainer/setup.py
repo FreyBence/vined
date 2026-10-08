@@ -3,11 +3,9 @@
 import math
 from pathlib import Path
 
-import yaml
-
 from loader.make_loader import make_loader
 from training_dataset.handoff import load_dataset_splits
-from utils.config_utils import DictConfig, update_config
+from utils.config_utils import DictConfig, load_config, update_config
 from utils.utils import set_seed
 
 
@@ -21,7 +19,7 @@ SEARCH_FIELDS = {
     "n_layers": ("model", "encoder", "transformer", "n_layers"),
 }
 SUPPORTED_OVERRIDES = {
-    "seed", "wandb.use", "wandb.entity", "wandb.project", "wandb.run_name",
+    "seed", "wandb.use", "wandb.entity", "wandb.project",
     "training.objective", "training.mixed_training", "training.enc_task_var",
     "training.num_epochs", "training.train_batch_size", "training.test_batch_size",
     "training.eval_every", "training.save_every", "training.save_plot_every_n_epochs",
@@ -31,16 +29,14 @@ SUPPORTED_OVERRIDES = {
     "training.loss_components.vision-clip.weight",
     "optimizer.name", "optimizer.lr", "optimizer.wd", "optimizer.eps", "optimizer.scheduler",
     "optimizer.warmup_pct", "optimizer.div_factor", "optimizer.gradient_accumulation_steps",
-    "data.max_time_length", "data.load_meta", "data.sort_by_depth", "data.sort_by_region",
-    "data.brain_region", "data.spike_augmentation", "data.split_method", "data.test_session_eid",
-    "method.model_kwargs.loss", "method.model_kwargs.use_lograte",
+    "data.max_time_length", "data.load_meta",
 }
 
 
 def add_setup_arguments(parser):
     parser.add_argument("--dataset-generation", help="Explicit published dataset directory; alternatively use --data_path")
     parser.add_argument("--expected-dataset-generation-id")
-    parser.add_argument("--training-config", help="Training YAML override file")
+    parser.add_argument("--training-config", help="Training JSON override file")
     parser.add_argument("--seed", type=int)
     parser.add_argument("--epochs", type=int)
     parser.add_argument("--batch-size", type=int)
@@ -89,6 +85,30 @@ def _known_overrides(base, override, prefix=""):
             raise ValueError(f"Unsupported configuration override: {name}")
 
 
+def load_defaults(config_root, session_count):
+    """Compose module-owned JSON profiles without dataset-derived dimensions."""
+    config_root = Path(config_root)
+    model_name = ("single_session" if session_count == 1 else "medium" if 10 < session_count < 70
+                  else "large" if session_count >= 70 else "default")
+    training_name = "default" if session_count <= 40 else "multi_session"
+    config = load_config(config_root / "training" / (training_name + ".json"))
+    model = load_config(config_root / "model" / (model_name + ".json"))
+    model["masker"] = config.pop("masking")
+    config["model"] = model
+    return DictConfig(config)
+
+
+def _training_override(override):
+    """Accept training-owned masking settings at the runtime model boundary."""
+    if "masking" in override:
+        masking = override.pop("masking")
+        model = override.setdefault("model", {})
+        if not isinstance(model, dict) or "masker" in model:
+            raise ValueError("Specify masking once, using masking or model.masker")
+        model["masker"] = masking
+    return override
+
+
 def resolve_setup(args, tune_config=None):
     """Return effective configuration, train/val loaders, and generation metadata."""
     generation_path = args.dataset_generation or args.data_path
@@ -102,15 +122,10 @@ def resolve_setup(args, tune_config=None):
     if args.num_sessions is not None and args.num_sessions != metadata["num_sessions"]:
         raise ValueError("--num_sessions must match the explicitly selected dataset sessions")
     count = metadata["num_sessions"]
-    model_name = ("mm_single_session" if count == 1 else "mm_medium_size" if 10 < count < 70
-                  else "mm_large_size" if count >= 70 else "mm")
     config_root = Path(args.config_dir).resolve()
-    model_path = config_root / "multi_modal" / (model_name + ".yaml")
-    trainer_path = config_root / "multi_modal" / ("trainer_mm.yaml" if count <= 40 else "trainer_multi_session.yaml")
-    config = update_config(str(trainer_path), {"model": f"include:{model_path}"})
+    config = load_defaults(config_root, count)
     if args.training_config:
-        with open(args.training_config, encoding="utf-8") as stream:
-            override = yaml.safe_load(stream)
+        override = _training_override(load_config(args.training_config))
         _known_overrides(config, override)
         config = update_config(config, override)
     cli_fields = {
@@ -189,20 +204,10 @@ def resolve_setup(args, tune_config=None):
         _finite(settings["dropout"], "dropout")
         if settings["dropout"] >= 1:
             raise ValueError("dropout must be less than one")
-    for key in ("max_time_length", "max_space_length"):
-        _positive(data[key], key)
-    if data["sort_by_depth"] or data["sort_by_region"] or data["brain_region"] != "all" or data["spike_augmentation"]:
-        raise ValueError("Training cannot reorder, filter or augment the persisted neural population")
-    if data["dataset_name"] != "ibl" or training["mask_type"] != "embd" or training["use_mtm"]:
-        raise ValueError("Unsupported dataset or training mask configuration")
-    if data["split_method"] != "predefined" or data["test_session_eid"]:
-        raise ValueError("Runtime split assignment is unsupported; use persisted memberships")
+    _positive(data["max_time_length"], "max_time_length")
     for value in (training["mixed_training"], data["load_meta"], config["wandb"]["use"]):
         if not isinstance(value, bool):
             raise ValueError("mixed_training, load_meta, and wandb.use must be booleans")
-    method = config["method"]["model_kwargs"]
-    if method["loss"] != "poisson_nll" or not method["use_lograte"] or method["clf"] or method["reg"]:
-        raise ValueError("Unsupported neural loss: the model predicts log spike counts with Poisson NLL")
     components = training["loss_components"]
     if components != {"spike": {"name": "poisson_nll", "weight": 1.0},
                       "vision-clip": {"name": "cosine", "weight": 1.0}}:
@@ -242,13 +247,8 @@ def resolve_setup(args, tune_config=None):
     optimization_sessions = {sample.session_id for sample in train.samples}
     if any(sample.session_id not in optimization_sessions for sample in consumed):
         raise ValueError("Validation sessions must have session-specific parameters learned from training")
-    data.update(max_space_length=max(metadata["eid_list"].values()), num_sessions=count,
-                split_method="predefined", test_session_eid=[])
+    data.update(max_space_length=max(metadata["eid_list"].values()), dataset_name="ibl")
     model["encoder"]["embedder"]["max_F"] = data["max_time_length"]
-    model["encoder"]["embedder"]["n_channels"] = data["max_space_length"]
-    training["mask_mode"] = [model["masker"]["mode"]]
-    config["dirs"]["dataset_cache_dir"] = metadata["dataset_path"]
-    config["dirs"]["dataset_dir"] = metadata["dataset_path"]
     config["dataset"] = dict(metadata)
     config["dataset"]["ordered_units"] = {
         session: next(sample.neuron_identity.to_dict(orient="records")

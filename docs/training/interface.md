@@ -37,9 +37,28 @@ represented in optimization. To disable it, use `--eval-every 0
 `trainer.setup.resolve_setup(args, tune_config=None)` returns
 `(config, train_loader, validation_loader_or_none, metadata)` after generation
 verification and configuration validation. Entry points resolve session-count
-model/trainer YAML defaults under `src/configs`; `--config_dir` can change that
-root. Precedence is defaults, `--training-config YAML`, explicit CLI overrides,
-then supported Ray trial overrides. Unspecified CLI options preserve YAML values.
+model and training JSON profiles under `src/configs`; `--config_dir` can change
+that root. Precedence is defaults, `--training-config JSON`, explicit CLI overrides,
+then supported Ray trial overrides. Unspecified CLI options preserve JSON values.
+
+`model/default.json`, `single_session.json`, `medium.json`, and `large.json`
+contain architecture settings. Selection uses the selected session count: one
+session uses `single_session`, 2–10 uses `default`, 11–69 uses `medium`, and 70+
+uses `large`. `training/default.json` supplies optimization, masking, tracking,
+losses, validation, and runtime batching; 41+ sessions use `training/multi_session.json`.
+These validation settings belong to training, not final evaluation.
+
+Dataset and output path defaults come from `utils.paths.dataset_dir()` and
+`utils.paths.output_dir()`, honoring `VINED_DATA_DIR` and `VINED_OUTPUT_DIR`.
+Use `--dataset-generation` / `--data_path` and `--base_path` for explicit paths.
+Training JSON files contain no filesystem paths or Hugging Face access settings;
+the selected local dataset path is recorded in the effective `dataset` metadata.
+Unused legacy dataset, padding, logging, and optimizer fields are omitted from
+the shipped profiles. Neuron counts come from the selected dataset;
+`model.encoder.embedder.max_F` is derived from training's `data.max_time_length`.
+Preserving neuron order, persisted split membership, and the fixed IBL loader
+contract are implementation rules, not overridable profile fields. W&B run names
+use the invocation directory name.
 
 Supported CLI overrides include `--model_mode encoding|decoding|mm`,
 `--epochs`, `--batch-size`, `--validation-batch-size`, `--learning-rate`,
@@ -51,8 +70,13 @@ on predicted log spike counts. Decoding retains unit-weight CLIP cosine loss;
 `mm` retains both losses and its configured mixed or sampled masking schemes.
 Other loss names/weights and optimizers besides AdamW are rejected.
 
-Training YAML overrides support the corresponding `training`, `optimizer`,
-masking, model embedding/transformer, and runtime time-size/metadata fields.
+Training JSON overrides support the corresponding `training`, `optimizer`,
+`masking`, model embedding/transformer, and runtime time-size/metadata fields.
+Training-owned `masking` is composed into `model.masker` for the model consumer;
+the existing `model.masker` override form is also accepted, but specifying both
+forms is an error. For example, `{"masking": {"ratio": 0.1}}` overrides corruption
+without changing architecture. `trainer.setup.load_defaults(root, session_count)`
+composes the profiles; `resolve_setup` derives runtime dimensions after overrides.
 Unknown or unsupported overrides are errors. Neuron size and model time size
 are derived consistently from the selected populations and `data.max_time_length`.
 Search overrides are limited to `learning_rate`, `weight_decay`, `mask_ratio`,
@@ -211,7 +235,7 @@ To resume, repeat the effective training configuration and explicitly choose
 an epoch checkpoint:
 
 ```text
-python src/train.py --dataset-generation PATH --training-config CONFIG.yaml --epochs 10 --resume-checkpoint output/runs/ATTEMPT/model_epoch_0.pt --no-wandb
+python src/train.py --dataset-generation PATH --training-config CONFIG.json --epochs 10 --resume-checkpoint output/runs/ATTEMPT/model_epoch_0.pt --no-wandb
 ```
 
 The configured total duration, architecture, masking/objective/losses, optimizer,
@@ -245,7 +269,7 @@ Fine-tuning starts a new optimization trajectory from an explicitly selected
 pretrained checkpoint:
 
 ```text
-python src/finetune.py --dataset-generation TARGET_GENERATION --eid TARGET_SESSION --pretrained-checkpoint SOURCE/model_best.pt --training-config CONFIG.yaml --epochs 10 --no-wandb
+python src/finetune.py --dataset-generation TARGET_GENERATION --eid TARGET_SESSION --pretrained-checkpoint SOURCE/model_best.pt --training-config CONFIG.json --epochs 10 --no-wandb
 ```
 
 Exactly one target session is required. Its persisted generation, sample/split
