@@ -225,7 +225,7 @@ bash script/prepare_visual_stim.sh --replay-dir output/visual_replays/RUN
 
 The equivalent entry point is `python src/prepare_visual_stim.py`. The shell wrapper
 forwards named CLI options without overriding paths. Without `--eid`, sessions
-are discovered from published replay manifests rather than `data/eids.txt`.
+are discovered from published replay manifests rather than `eids/eids.txt`.
 With `--eid EID`, only that session is processed. The old positional count/list
 form and `--eids-file`/`--n-sessions` are no longer supported.
 Defaults follow `VINED_REPLAY_DIR`

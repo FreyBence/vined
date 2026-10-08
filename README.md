@@ -38,7 +38,7 @@ output/
   eid-relevanc.txt   # session relevance discovery output
 ```
 
-Published reproducibility inputs remain version-controlled under `data/`.
+Published reproducibility inputs remain version-controlled under `eids/` and `src/configs/`.
 `VINED_OUTPUT_DIR` overrides the common output root. `VINED_DATA_DIR`,
 `VINED_VISUAL_DIR`, and `VINED_REPLAY_DIR` override individual locations;
 relative environment paths are resolved from the checkout root. Training,
@@ -61,7 +61,7 @@ These extensions are research objectives, not completed features.
 | --- | --- |
 | [AGENT.md](AGENT.md) | Detailed project goal, code-review findings, and research roadmap |
 | [docs/](docs/) | Hungarian research documents and project documentation |
-| [data/](data/) | Session identifiers and training/evaluation session selections |
+| [eids/](eids/) | Session identifiers and training/evaluation session selections |
 | [src/visual_stim_gen.py](src/visual_stim_gen.py) | Synthetic stimulus replay generation |
 | [src/prepare_visual_stim.py](src/prepare_visual_stim.py) | CLIP feature extraction |
 | [src/prepare_data.py](src/prepare_data.py) | IBL data preparation |
@@ -75,7 +75,7 @@ These extensions are research objectives, not completed features.
 
 ViNED is a **checkout-only research application**. Clone this repository, install
 its dependencies, and run its scripts from the repository root. Keep `src/`,
-`src/configs/`, and the session lists in `data/` together. No NEDS repository or
+`src/configs/`, and the session lists in `eids/` together. No NEDS repository or
 Python package is needed. ViNED does not provide a wheel, package installation,
 or editable-install step.
 
@@ -163,10 +163,10 @@ bash script/train_multi_gpu.sh COUNT EID MODEL_MODE MASK_RATIO TASK_VAR
 ```
 
 `generate_replay.sh` generates compressed lossless frames and replay metadata for all
-EIDs in `data/eids.txt` by default; `--eid EID` selects one session. Every session
+EIDs in `eids/eids.txt` by default; `--eid EID` selects one session. Every session
 uses all trials. `--projection off` selects display-only output; projection is
 on by default. It uses the explicit approximation settings in
-`data/replay-config.json` (800×600, 30 Hz). Each run creates a new directory under
+`src/configs/replay-config.json` (800×600, 30 Hz). Each run creates a new directory under
 `VINED_REPLAY_DIR`, with one subdirectory per EID; `--output DIR` selects a specific new directory.
 The wrapper always permits remote access, reusing cached files and downloading
 missing data. Add `--force-reload` to bypass cached metadata responses and
@@ -181,7 +181,7 @@ trial outcomes; it advances after artifact publication.
 
 `prepare_visual_stim.sh` processes all published replay sessions by default;
 `--eid EID` selects one session. Discovery uses the replay directory, not
-`data/eids.txt`. It reads saved mouse-view replay images through verified
+`eids/eids.txt`. It reads saved mouse-view replay images through verified
 replay readback, without MP4 decoding. It preserves the full image extent for
 CLIP and selects all observations unless `--sample-fps` is supplied. Select a
 specific replay run when multiple generations exist. Outputs are compressed

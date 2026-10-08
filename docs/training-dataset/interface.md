@@ -142,7 +142,7 @@ The same entry point supports EID-based selection instead of explicit paths:
 # One session:
 bash script/create_dataset.sh --eid EID --split-strategy within_session --split-ratios 0.7 0.1 0.2 --split-seed 42
 
-# All EIDs in data/eids.txt (or VINED_EIDS_FILE):
+# All EIDs in eids/eids.txt (or VINED_EIDS_FILE):
 bash script/create_dataset.sh --split-strategy within_session --split-ratios 0.7 0.1 0.2 --split-seed 42
 ```
 

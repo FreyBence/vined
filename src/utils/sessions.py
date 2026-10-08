@@ -12,7 +12,7 @@ from utils.paths import REPO_ROOT
 def add_session_arguments(parser):
     parser.add_argument("--eid", help="Process this EID instead of a manifest")
     parser.add_argument("--eids-file", "--eids_file", type=Path,
-                        default=Path(os.environ.get("VINED_EIDS_FILE", REPO_ROOT / "data/eids.txt")))
+                        default=Path(os.environ.get("VINED_EIDS_FILE", REPO_ROOT / "eids/eids.txt")))
     parser.add_argument("--n-sessions", "--n_sessions", type=int, default=None,
                         help="Process the first N manifest entries (default: all)")
 
@@ -25,7 +25,7 @@ def select_sessions(eid=None, eids_file=None, n_sessions=None):
             raise ValueError("--eid cannot be combined with n_sessions other than 1")
         values = [eid]
     else:
-        path = Path(eids_file or os.environ.get("VINED_EIDS_FILE", REPO_ROOT / "data/eids.txt"))
+        path = Path(eids_file or os.environ.get("VINED_EIDS_FILE", REPO_ROOT / "eids/eids.txt"))
         if not path.is_absolute():
             path = REPO_ROOT / path
         values = [line.split("#", 1)[0].strip() for line in path.read_text(encoding="utf-8-sig").splitlines()]

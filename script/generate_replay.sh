@@ -4,7 +4,7 @@ set -e
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/environment.sh"
 
 output="${VINED_REPLAY_DIR}"
-config="data/replay-config.json"
+config="src/configs/replay-config.json"
 projection=on
 workers=1
 reload=()
@@ -15,7 +15,7 @@ while [[ $# -gt 0 ]]; do
         --help|-h)
             echo "Usage: bash script/generate_replay.sh [--eid EID] [--projection on|off]"
             echo "Optional --trial-number N selects an original zero-based trial; otherwise all trials."
-            echo "Without --eid, uses all EIDs in data/eids.txt."
+            echo "Without --eid, uses all EIDs in eids/eids.txt."
             echo "Saves compressed lossless frames and metadata; no MP4 videos."
             echo "Overwrites selected trials under the output directory's EID folders."
             echo "Optional: --workers N --force-reload --config FILE --output DIR"

@@ -13,7 +13,7 @@ from torcheval.metrics import R2Score
 from tqdm import tqdm
 
 PROJ_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-with open(f"{PROJ_DIR}/data/test_eids.txt") as file:
+with open(f"{PROJ_DIR}/eids/test_eids.txt") as file:
     test_eids = file.read().splitlines()
     
 def dummy_load(stop_event, dummy_size=60000, check_interval=1, device="cuda"):

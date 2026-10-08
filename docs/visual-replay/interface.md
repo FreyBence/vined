@@ -701,7 +701,7 @@ arguments return 2. No rendering, downloading, or CLIP extraction is performed.
 ### Bash replay-generation entry point
 
 ```bash
-# All EIDs in data/eids.txt, all trials, projection on:
+# All EIDs in eids/eids.txt, all trials, projection on:
 bash script/generate_replay.sh
 
 # One EID, all trials, projection off:
@@ -711,20 +711,20 @@ bash script/generate_replay.sh --eid 931a70ae-90ee-448e-bedb-9d41f3eda647 --proj
 The wrapper selects the project virtual environment through `environment.sh`
 and invokes `prepare_replay.py --generate` without video encoding. It saves
 compressed lossless frames and metadata only. Its default configuration is
-`data/replay-config.json`, a reusable explicit approximation with `eid: null`,
+`src/configs/replay-config.json`, a reusable explicit approximation with `eid: null`,
 800×600 display/scene rasters, and the confirmed 60 Hz experimental cadence.
 Override it with `--config`. The legacy `src/visual_stim_gen.py` renderer also
 generates at 60 FPS and records reconstructed source timing.
 Existing 30 Hz replay artifacts and their derived visual features retain their
 original timing; regenerate the replay and derived features to use 60 Hz.
 In the CLI only, a null configuration EID is filled from `--eid`, or the first
-entry of `--eids-file` (default `data/eids.txt`, respecting `VINED_EIDS_FILE`).
+entry of `--eids-file` (default `eids/eids.txt`, respecting `VINED_EIDS_FILE`).
 Comments and blank manifest lines are ignored. A configuration with a concrete
 EID retains that session; a conflicting selector is rejected rather than
 silently applying another session's calibration. `--eid` and `--eids-file` are
 mutually exclusive. The underlying preparation API still requires a resolved EID.
 
-The Bash wrapper selects all EIDs from `data/eids.txt` (or `VINED_EIDS_FILE`)
+The Bash wrapper selects all EIDs from `eids/eids.txt` (or `VINED_EIDS_FILE`)
 unless `--eid` selects one. Optional `--trial-number N` (alias `--trial-id N`)
 selects an original zero-based trial, including zero; repeat to select multiple
 trials. Omission processes all trials. With multiple EIDs, the selection applies
@@ -803,7 +803,7 @@ code have changed, including when deliberately refreshing data with
 without generating. An entirely skipped report returns zero without creating
 output folders; skipped findings remain in the audit.
 
-Retries use the current `data/replay-config.json` by default, not the original
+Retries use the current `src/configs/replay-config.json` by default, not the original
 generation's configuration. Supported overrides are `--config`, `--projection
 on|off`, `--access-policy local-only|remote-allowed` (default remote-allowed),
 `--force-reload`, and `--output`. Retries write directly into `<replay-root>/<eid>`

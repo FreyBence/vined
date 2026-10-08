@@ -121,7 +121,7 @@ def candidate_summary(session_path, local):
 
 
 def inventory(cache_root):
-    lists = {name: (REPO_ROOT / "data" / name).read_text().split()
+    lists = {name: (REPO_ROOT / "eids" / name).read_text().split()
              for name in ("eids.txt", "train_eids.txt", "test_eids.txt")}
     eids = list(dict.fromkeys(eid for entries in lists.values() for eid in entries))
     snapshots = {eid: [] for eid in eids}
@@ -204,7 +204,7 @@ def inventory(cache_root):
         "scope": "Local files and cached Alyx session catalogs only; no remote requests",
         "environment": environment,
         "cache_root": str(cache_root), "configured_lists": lists,
-        "list_sha256": {name: sha256(REPO_ROOT / "data" / name) for name in lists},
+        "list_sha256": {name: sha256(REPO_ROOT / "eids" / name) for name in lists},
         "script_sha256": sha256(Path(__file__)), "cache_read_errors": errors, "sessions": sessions,
     }
 

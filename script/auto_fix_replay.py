@@ -16,7 +16,7 @@ from utils.paths import replay_dir
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("audit_file", nargs="?", type=Path, default=ROOT / "output/audit-replay.txt")
-    parser.add_argument("--config", type=Path, default=ROOT / "data/replay-config.json")
+    parser.add_argument("--config", type=Path, default=ROOT / "src/configs/replay-config.json")
     parser.add_argument("--output", type=Path)
     parser.add_argument("--projection", choices=("on", "off"), default="on")
     parser.add_argument("--access-policy", choices=("local-only", "remote-allowed"), default="remote-allowed")

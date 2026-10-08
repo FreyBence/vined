@@ -18,7 +18,7 @@ def main():
     parser.add_argument("--trial-id", "--trial-number", type=int, action="append",
                         help="Original zero-based trial number; repeat to select multiple trials")
     parser.add_argument("--projection", choices=("on", "off"), default="on")
-    parser.add_argument("--config", type=Path, default=Path("data/replay-config.json"))
+    parser.add_argument("--config", type=Path, default=Path("src/configs/replay-config.json"))
     parser.add_argument("--output", type=Path, default=replay_dir())
     parser.add_argument("--force-reload", action="store_true")
     parser.add_argument("--workers", type=int, default=1, help="Parallel trial processes per EID (default: 1)")
