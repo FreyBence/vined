@@ -17,6 +17,10 @@ SESSION_LAYERS = ("stitcher_dict", "project_dict", "stitch_decoder_dict")
 
 
 def build_model(*, config, metadata, modal_filter):
+    context = config.training.get("temporal_context")
+    if context is not None and (context.get("target_support_bins") != 12
+                                or context.get("boundary_policy") != "complete"):
+        raise ValueError("Checkpoint/runtime context requires complete H=12 target support")
     hidden = config.model.encoder.transformer.hidden_size
     embeddings = {mod: EncoderEmbedding(
         hidden_size=hidden, n_channel=hidden, output_channel=hidden,
@@ -25,6 +29,9 @@ def build_model(*, config, metadata, modal_filter):
     ) for mod in modal_filter["input"]}
     model = MultiModal(embeddings, avail_mod=["spike", "vision-clip"], avail_beh=["vision-clip"],
                        model_mode=config.training.objective, config=config.model,
+                       **({"context_mode": config.training.temporal_context.mode,
+                           "context_bins": config.training.temporal_context.bins}
+                          if "temporal_context" in config.training else {}),
                        **metadata)
     # Bind the existing embedding operation to the selected explicit sessions.
     # No dependence on positions in the inherited global EID files remains.
@@ -53,8 +60,9 @@ def load_pretrained_model(path, *, config, metadata, modal_filter):
     if (_architecture(source_config) != _architecture(config)
             or source_config["training"]["loss_components"] != plain(config.training.loss_components)
             or source_config["training"]["objective"] != config.training.objective
+            or source_config["training"].get("temporal_context") != plain(config.training.get("temporal_context"))
             or source_config["training"]["modal_filter"] != plain(modal_filter)):
-        raise ValueError("Pretrained architecture, prediction direction or model loss configuration is incompatible")
+        raise ValueError("Pretrained architecture, prediction direction, temporal context or model loss configuration is incompatible")
     source_maps = checkpoint["compatibility"].get("session_embedding_ids")
     if source_maps is None:
         raise ValueError("Pretrained checkpoint lacks explicit session embedding identities; historical row order cannot be inferred")

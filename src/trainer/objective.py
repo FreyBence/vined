@@ -5,6 +5,7 @@ from collections import Counter
 import pandas as pd
 import torch
 import torch.nn.functional as F
+from training_dataset import temporal_context_view
 
 
 def validate_batch(batch, *, config, populations, split):
@@ -78,6 +79,12 @@ def prepare_inputs(batch, *, model, training_mode, enc_task_var=None):
         choices = ("encoding", "decoding", "self-spike", "self-vision", "random_token")
         modes = [choices[index] for index in torch.randint(len(choices), (b,)).tolist()]
     data, selectors = {}, {}
+    support = None
+    if model.context_mode is not None:
+        if training_mode != model.model_mode:
+            raise ValueError("Training scheme differs from the model's context direction")
+        support = temporal_context_view(batch["spikes_timestamps"], temporal,
+            direction=model.model_mode, mode=model.context_mode, context_bins=model.context_bins).target_mask
     random_mask = None
     if any(mode in ("self-spike", "self-vision", "random_token") for mode in modes):
         _, random_mask = model.masker(torch.zeros_like(batch["spikes_data"]), None)
@@ -95,6 +102,8 @@ def prepare_inputs(batch, *, model, training_mode, enc_task_var=None):
             elif mode not in ("encoding", "decoding", "self-spike", "self-vision", "random_token"):
                 raise ValueError(f"Unsupported training scheme: {mode}")
         target_selector = selected[...,0].bool() & temporal
+        if support is not None:
+            target_selector = target_selector & support
         selectors[mod] = (target_selector.unsqueeze(-1) & validity[mod] if mod == "spike" else target_selector)
         values = batch["spikes_data"] if mod == "spike" else batch["vision-clip"]
         value_valid = validity[mod] if mod == "spike" else temporal.unsqueeze(-1)
@@ -107,6 +116,8 @@ def prepare_inputs(batch, *, model, training_mode, enc_task_var=None):
                          inputs_attn_mask=temporal.to(torch.int64),
                          inputs_timestamp=batch["spikes_timestamps"], targets_timestamp=batch["spikes_timestamps"],
                          eval_mask=selected, training_mode="random_token")
+        # Keep corruption independent of support; loss selection alone uses H=12.
+        data[mod]["target_mask"] = target_selector
         if enc_task_var is not None and enc_task_var != "all":
             data[mod]["inputs_token_mask"] = zeros if mod == enc_task_var else ones
     return data, selectors
@@ -124,7 +135,16 @@ def forward_objective(model, data, selectors, *, components):
         runtime[mod] = {key: (value[indices] if isinstance(value, torch.Tensor) and value.ndim > 0 else
                              [sessions[index] for index in indices] if key == "eid" else value)
                         for key, value in values.items()}
-    outputs = model(runtime)
+    core = model.module if hasattr(model, "module") else model
+    view = (temporal_context_view(runtime["spike"]["inputs_timestamp"],
+             runtime["spike"]["inputs_attn_mask"].bool(), direction=core.model_mode,
+             mode=core.context_mode, context_bins=core.context_bins)
+            if core.context_mode is not None else None)
+    outputs = model(runtime, context_view=view)
+    for name in ("temporal_mask", "neuron_mask", "prediction_mask", "target_eligibility"):
+        value = getattr(outputs, name, None)
+        if value is not None:
+            setattr(outputs, name, value[:len(sessions)])
     if not torch.isfinite(outputs.loss) or any(not torch.isfinite(value) for value in outputs.mod_loss.values()):
         raise ValueError("Non-finite loss returned by the retained model")
     for mod in outputs.mod_preds:

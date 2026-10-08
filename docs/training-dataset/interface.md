@@ -230,6 +230,59 @@ use the 60 Hz experimental grid.
 
 For direct evaluation metadata access, `PersistedSplit` supports `cluster_regions`, `cluster_uuids`, `eid`, `intervals`, `sample_id`, `trial_id`, `sequence_length`, `neuron_count`, and `split` column lookups. `cluster_uuids` uses recorded UUIDs when complete; otherwise it exposes stable `unit-<SHA-256>` labels derived from the full scoped unit identity, not invented biological UUIDs. Unit-level evaluation callers that assume one population should select an explicit EID. Arbitrary Hugging Face columns/methods and legacy behavioral modalities are not provided by this view.
 
+## Runtime temporal context
+
+`training_dataset.temporal_context_view(temporal_positions, temporal_mask, *,
+direction, mode, context_bins=None) -> TemporalContextView` exposes runtime
+indexing independently of persisted sample construction. Inputs are NumPy arrays
+or Torch tensors of identical shape `[T]` or `[B,T]`, with int64 model positions
+and boolean scientific validity. Tensor inputs share a device; outputs are Torch
+tensors on that device, always with a batch axis. Each row represents one trial.
+Real positions are nonnegative and strictly increasing. Invalid position values
+are ignored. Inputs, source arrays, identities, and split membership are unchanged.
+
+`direction` is `encoding` or `decoding`. `mode="strict"` requires integer
+`context_bins` in `1,3,6,9,12`; `mode="full_trial"` requires its omission.
+No configuration or scenario file is read. `TARGET_SUPPORT_BINS` is fixed at 12.
+
+| Result field | Contract |
+| --- | --- |
+| `context_indices` | Strict: int64 `[B,T,L]` indices into each row's own temporal axis, in chronological order. Encoding uses `k-L+1..k`; decoding uses `k..k+L-1`. An incomplete window is entirely -1. Full trial: `None`, retaining the original sequence without constructing a dense index matrix. |
+| `context_valid` | Bool `[B,T]`; strict complete-window eligibility, independent of H=12 target support. Full trial: a copy of scientific validity. |
+| `target_mask` | Bool `[B,T]`; complete consecutive H=12 support, identical across modes and all lengths for supported inputs. Encoding requires eleven preceding bins; decoding requires eleven following bins. |
+| `readout_index` | Strict encoding: `L-1`; strict decoding: `0`. Full trial: `None`, preserving per-position readout. |
+| `direction`, `mode`, `context_bins`, `target_support_bins` | Resolved runtime semantics; `context_bins=None` for full trial and `target_support_bins=12`. |
+
+Strict windows require valid observations at every index and consecutive model
+coordinates. They cannot bridge holes or position gaps. Full-trial mode requires
+continuous real support and rejects internal holes/gaps rather than joining
+separate intervals. Rows with fewer than twelve supported bins (including wholly
+invalid rows) retain their observations and return no eligible targets. Callers
+report coverage and reject an empty active objective when training/evaluating.
+
+Never gather -1 indices: select `context_valid` anchors before gathering strict
+windows. Apply target selection to losses/metrics separately from input validity
+and corruption; target-excluded observations remain available source context.
+Neural channel masks remain independently supplied by the original batch.
+
+```python
+from training_dataset import temporal_context_view
+
+view = temporal_context_view(
+    batch["temporal_positions"], batch["temporal_mask"],
+    direction="encoding", mode="strict", context_bins=3,
+)
+# Per-row temporal indices; gather only complete windows inside the model.
+eligible_targets = view.target_mask
+```
+
+Malformed shapes/dtypes/devices, unsupported mode/direction/length, negative or
+unordered real positions, and discontinuous full-trial support raise `ValueError`.
+The frozen dataclass contains caller-owned mutable tensors. This boundary is
+used by training/evaluation to supply model windows and common H=12 scoring
+eligibility selected through their entry-script arguments. Existing loaders and
+collation require no change to carry the original trial tensors.
+
 ## Errors and compatibility
 
 Malformed or duplicate aligned trials, inconsistent session populations, invalid padding configuration, or maxima smaller than source dimensions raise `ValueError`. Unsupported trial/config types raise `TypeError`. Alignment loader verification and filesystem errors propagate. No partial sample tuple is returned and no failed source is skipped.

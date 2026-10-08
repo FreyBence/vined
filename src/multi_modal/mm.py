@@ -33,6 +33,8 @@ DYNAMIC_VARS = ["vision-clip"]
 class MultiModalOutput(ModelOutput):
     neural_prediction: Optional[torch.FloatTensor] = None
     temporal_mask: Optional[torch.BoolTensor] = None
+    prediction_mask: Optional[torch.BoolTensor] = None
+    target_eligibility: Optional[torch.BoolTensor] = None
     neuron_mask: Optional[torch.BoolTensor] = None
     latent_representation: Optional[torch.FloatTensor] = None
     loss: Optional[torch.FloatTensor] = None
@@ -86,6 +88,25 @@ class MultiModal(nn.Module):
         if any(isinstance(v, bool) or not isinstance(v, int) or v < -1
                for v in (self.context_forward, self.context_backward)):
             raise ValueError("Context limits must be -1 or nonnegative integer positions")
+        self.context_mode = kwargs.get("context_mode")
+        self.context_bins = kwargs.get("context_bins")
+        self.context_chunk_size = kwargs.get("context_chunk_size", 256)
+        if self.context_mode not in (None, "strict", "full_trial"):
+            raise ValueError("Context mode must be strict or full_trial")
+        if self.context_mode is not None and model_mode not in ("encoding", "decoding"):
+            raise ValueError("Explicit context modes require encoding or decoding")
+        if self.context_mode == "strict":
+            if type(self.context_bins) is not int or self.context_bins not in (1, 3, 6, 9, 12):
+                raise ValueError("Strict context requires bins in 1, 3, 6, 9, 12")
+            expected = {"encoding": {"vision-clip"}, "decoding": {"spike"}}
+            if model_mode not in expected or set(encoder_embeddings) != expected[model_mode]:
+                raise ValueError("Strict context requires a direction-specific unimodal encoder")
+        elif self.context_bins is not None:
+            raise ValueError("context_bins requires strict context")
+        if self.context_mode is not None and (self.context_forward != -1 or self.context_backward != -1):
+            raise ValueError("Explicit context modes conflict with finite per-layer attention limits")
+        if type(self.context_chunk_size) is not int or self.context_chunk_size < 1:
+            raise ValueError("context_chunk_size must be a positive integer")
 
         self.encoder_modalities = set(encoder_embeddings.keys())
         self.encoder_embeddings = nn.ModuleDict(encoder_embeddings)
@@ -187,7 +208,10 @@ class MultiModal(nn.Module):
             "neural_output": "log_expected_spike_count",
             "neural_head_layout": "real_session_channels_then_padding",
             "visual_dim": self.visual_dim,
-            "temporal_context": {"forward": self.context_forward, "backward": self.context_backward},
+            "temporal_context": {"forward": self.context_forward, "backward": self.context_backward,
+                **({"mode": self.context_mode, "bins": self.context_bins,
+                    "semantics": "isolated-target-windows-v1" if self.context_mode == "strict" else "full-trial-v1"}
+                   if self.context_mode is not None else {})},
         })
 
     def validate_checkpoint_identity(self, identity):
@@ -303,9 +327,71 @@ class MultiModal(nn.Module):
             raise ValueError("neuron_mask marks session padding as real neurons")
         return mask
 
+    def _context_forward(self, x, positions, valid, view):
+        """Consume caller-owned indexing without importing dataset internals."""
+        if view is None:
+            if self.context_mode is not None:
+                raise ValueError("Explicit context execution requires a runtime context view")
+            return self.forward_encoder(x, positions, valid), valid, valid
+        if (self.context_mode is None or view.mode != self.context_mode
+                or view.direction != self.model_mode or view.context_bins != self.context_bins
+                or view.target_support_bins != 12):
+            raise ValueError("Runtime context semantics differ from model identity")
+        b, t = valid.shape
+        for row, mask in zip(positions, valid):
+            real = row[mask]
+            if (real[1:] <= real[:-1]).any():
+                raise ValueError("Runtime context requires increasing real temporal positions")
+            if self.context_mode == "full_trial":
+                real_indices = mask.nonzero(as_tuple=True)[0]
+                if ((real[1:] - real[:-1] != 1).any()
+                        or (real_indices[1:] - real_indices[:-1] != 1).any()):
+                    raise ValueError("Full-trial context requires continuous real support")
+        prediction = self._valid_mask(view.context_valid, valid.shape, x.device, "context_valid")
+        targets = self._valid_mask(view.target_mask, valid.shape, x.device, "context target_mask")
+        anchors = torch.arange(t, device=x.device)
+
+        def complete(length):
+            offsets = torch.arange(length, device=x.device)
+            if self.model_mode == "encoding":
+                offsets = offsets - (length - 1)
+            indices = anchors[:, None] + offsets
+            safe = indices.clamp(0, t - 1)
+            coordinates = positions[:, safe]
+            good = ((indices >= 0) & (indices < t)).all(-1)[None, :]
+            good = good & valid[:, safe].all(-1)
+            good = good & (coordinates[:, :, 1:] - coordinates[:, :, :-1] == 1).all(-1)
+            return indices.expand(b, -1, -1).masked_fill(~good[:, :, None], -1), good
+
+        _, expected_targets = complete(12)
+        if not torch.equal(targets, expected_targets):
+            raise ValueError("Runtime targets do not provide complete H=12 support")
+        if self.context_mode == "full_trial":
+            if view.context_indices is not None or view.readout_index is not None or not torch.equal(prediction, valid):
+                raise ValueError("Malformed full-trial context view")
+            return self.forward_encoder(x, positions, valid), prediction, targets
+        indices, expected_prediction = complete(self.context_bins)
+        readout = self.context_bins - 1 if self.model_mode == "encoding" else 0
+        supplied = view.context_indices
+        if (not isinstance(supplied, torch.Tensor) or supplied.dtype != torch.long
+                or supplied.device != x.device or supplied.shape != indices.shape
+                or not torch.equal(supplied, indices) or not torch.equal(prediction, expected_prediction)
+                or view.readout_index != readout):
+            raise ValueError("Runtime strict windows differ from the exact receptive field")
+        rows, columns = prediction.nonzero(as_tuple=True)
+        latent = x * 0.
+        for start in range(0, len(rows), self.context_chunk_size):
+            r, c = rows[start:start + self.context_chunk_size], columns[start:start + self.context_chunk_size]
+            source = indices[r, c]
+            windows = x[r[:, None], source]
+            coordinates = positions[r[:, None], source]
+            encoded = self.forward_encoder(windows, coordinates, torch.ones_like(coordinates, dtype=torch.bool))
+            latent[r, c] = encoded[:, readout]
+        return latent, prediction, targets
+
     def encode(self, visual_features, temporal_positions, temporal_mask, session_id, *,
                training_mask=None, neural_targets=None, neuron_mask=None,
-               target_mask=None, return_latent=False):
+               target_mask=None, return_latent=False, context_view=None):
         """Predict log spike counts without requiring targets or training masking."""
         if self.model_mode != "encoding" or set(self.encoder_embeddings) != {"vision-clip"}:
             raise ValueError("Visual-only prediction requires a visual-only encoding model")
@@ -333,20 +419,22 @@ class MultiModal(nn.Module):
         }
         embedding = self.encoder_embeddings["vision-clip"](data)
         tokens, context, positions, _, _ = self.forward_mask_encoder({"vision-clip": embedding})
-        latent = self.forward_encoder(tokens + context, positions, valid)
+        latent, prediction_valid, eligible = self._context_forward(tokens + context, positions, valid, context_view)
         if "vision-clip" in self.avail_beh:
             latent = F.normalize(latent, dim=-1)
         predictions = self.mod_stitcher_proj_dict["spike"](latent, session_id)
-        cell_valid = valid.unsqueeze(-1) & neurons.unsqueeze(1)
+        cell_valid = prediction_valid.unsqueeze(-1) & neurons.unsqueeze(1)
         predictions = torch.where(cell_valid, predictions, torch.zeros_like(predictions))
         output = MultiModalOutput(neural_prediction=predictions, mod_preds={"spike": predictions},
                                   temporal_mask=valid, neuron_mask=neurons,
+                                  prediction_mask=prediction_valid, target_eligibility=eligible,
                                   latent_representation=latent if return_latent else None)
         if neural_targets is not None:
             selected = valid if target_mask is None else target_mask
             loss_data = {"spike": {"preds": predictions, "gt": neural_targets,
                                     "targets_mask": selected, "temporal_mask": valid,
                                     "neuron_mask": neurons}}
+            loss_data["spike"]["prediction_mask"] = prediction_valid & eligible
             (output.loss, output.mod_loss, output.mod_n_examples, output.mod_preds,
              output.mod_targets, output.static_targets, output.static_preds) = self.forward_loss(loss_data)
         elif target_mask is not None:
@@ -379,6 +467,8 @@ class MultiModal(nn.Module):
                 if preds.shape != targets.shape or preds.device != targets.device:
                     raise ValueError(f"{mod} predictions and targets must have matching shapes/devices")
                 temporal = self._valid_mask(d["temporal_mask"], (B, T), preds.device, "temporal_mask")
+                if "prediction_mask" in d:
+                    temporal = temporal & self._valid_mask(d["prediction_mask"], (B, T), preds.device, "prediction_mask")
                 if mod == "spike":
                     neurons = self._valid_mask(d["neuron_mask"], (B, N), preds.device, "neuron_mask")
                     if targets_mask.shape == (B, T):
@@ -507,11 +597,11 @@ class MultiModal(nn.Module):
         return mask_map, selected_schemes
 
     
-    def forward(self, mod_dict=None, **encoding_inputs) -> MultiModalOutput:
+    def forward(self, mod_dict=None, context_view=None, **encoding_inputs) -> MultiModalOutput:
         if encoding_inputs:
             if mod_dict is not None:
                 raise ValueError("Use either modality dictionaries or encoding keyword inputs")
-            return self.encode(**encoding_inputs)
+            return self.encode(context_view=context_view, **encoding_inputs)
         if not isinstance(mod_dict, dict) or not mod_dict:
             raise ValueError("Provide modality dictionaries or visual encoding inputs")
         mod_dict = {mod: dict(values) for mod, values in mod_dict.items()}
@@ -622,7 +712,9 @@ class MultiModal(nn.Module):
 
         x = encoder_tokens + encoder_emb
         validity = torch.cat([mod_dict[mod]["temporal_mask"] for mod in encoder_mod_dict], dim=1)
-        x = self.forward_encoder(x, input_timestamp=input_timestamp, temporal_mask=validity)
+        if self.model_mode == "mm" and context_view is not None:
+            raise ValueError("Directional context views are unsupported for multimodal objectives")
+        x, prediction_valid, eligible = self._context_forward(x, input_timestamp, validity, context_view)
         if "vision-clip" in self.avail_beh:
             x = F.normalize(x, dim=-1)
         if self.model_mode == "mm":
@@ -637,7 +729,9 @@ class MultiModal(nn.Module):
 
         for mod, d in output_mod_dict.items():
             temporal = d["temporal_mask"]
-            valid_outputs = temporal.unsqueeze(-1)
+            mod_prediction = prediction_valid if self.model_mode != "mm" else temporal
+            d["prediction_mask"] = mod_prediction & (eligible if self.model_mode != "mm" else temporal)
+            valid_outputs = mod_prediction.unsqueeze(-1)
             if mod == "spike":
                 d["neuron_mask"] = self._neuron_mask(sessions, temporal.size(0), x.device,
                                                       d.get("neuron_mask"))
@@ -650,6 +744,8 @@ class MultiModal(nn.Module):
         return MultiModalOutput(
             neural_prediction=mod_preds.get("spike"),
             temporal_mask=output_mod_dict.get("spike", next(iter(output_mod_dict.values())))["temporal_mask"],
+            prediction_mask=prediction_valid if self.model_mode != "mm" else None,
+            target_eligibility=eligible if self.model_mode != "mm" else None,
             neuron_mask=output_mod_dict.get("spike", {}).get("neuron_mask"),
             loss=loss,
             mod_loss=mod_loss,

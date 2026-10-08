@@ -253,7 +253,7 @@ class MultiModalTrainer():
                 self.optimizer.zero_grad(set_to_none=True)
                 if not counts.any():
                     if self.accelerator.is_main_process:
-                        print("Skipping accumulation window: stochastic masking selected no valid targets")
+                        print("Skipping accumulation window: no eligible objective targets")
                     progress.update(len(window))
                     continue
                 for index, (data, selectors) in enumerate(prepared):
@@ -286,6 +286,8 @@ class MultiModalTrainer():
                 self.scheduler_steps += 1
                 self.optimizer.zero_grad(set_to_none=True)
         totals = self.accelerator.reduce(totals, reduction="sum")
+        if any(totals[1, i] == 0 for i in range(len(mods))):
+            raise ValueError("Training epoch has no eligible targets for an active objective")
         losses = {f"train_{mod}_loss": (totals[0,i] / totals[1,i].clamp_min(1)).item() for i, mod in enumerate(mods)}
         results = dict(train_loss=sum(components[mod]["weight"] * losses[f"train_{mod}_loss"] for mod in mods),
                        **losses, optimizer_updates=self.optimizer_steps - updates_before,

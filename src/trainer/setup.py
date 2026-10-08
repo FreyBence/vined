@@ -5,6 +5,7 @@ from pathlib import Path
 
 from loader.make_loader import make_loader
 from training_dataset.handoff import load_dataset_splits
+from training_dataset import TARGET_SUPPORT_BINS
 from utils.config_utils import DictConfig, load_config, update_config
 from utils.utils import set_seed
 
@@ -34,6 +35,10 @@ SUPPORTED_OVERRIDES = {
 
 
 def add_setup_arguments(parser):
+    parser.add_argument("--context-mode", choices=["strict", "full_trial"],
+                        help="Temporal context for encoding/decoding (default: full_trial)")
+    parser.add_argument("--context-bins", type=int, choices=[1, 3, 6, 9, 12],
+                        help="Required for strict context; omitted for full_trial")
     parser.add_argument("--dataset-generation", help="Explicit published dataset directory; alternatively use --data_path")
     parser.add_argument("--expected-dataset-generation-id")
     parser.add_argument("--training-config", help="Training JSON override file")
@@ -93,6 +98,9 @@ def load_defaults(config_root, session_count):
     training_name = "default" if session_count <= 40 else "multi_session"
     config = load_config(config_root / "training" / (training_name + ".json"))
     model = load_config(config_root / "model" / (model_name + ".json"))
+    if ("temporal_context" in config.get("training", {})
+            or any(key in model for key in ("temporal_context", "context_mode", "context_bins"))):
+        raise ValueError("Temporal context must be selected through CLI arguments, not JSON profiles")
     model["masker"] = config.pop("masking")
     config["model"] = model
     return DictConfig(config)
@@ -155,6 +163,22 @@ def resolve_setup(args, tune_config=None):
     objective = training["objective"]
     if objective not in ("encoding", "decoding", "mm"):
         raise ValueError(f"Unsupported objective: {objective}")
+    mode = getattr(args, "context_mode", None)
+    bins = getattr(args, "context_bins", None)
+    if objective == "mm":
+        if mode is not None or bins is not None:
+            raise ValueError("Explicit temporal context requires encoding or decoding; mm retains its legacy path")
+    else:
+        mode = mode or "full_trial"
+        if mode == "strict":
+            if type(bins) is not int or bins not in (1, 3, 6, 9, 12):
+                raise ValueError("Strict context requires --context-bins 1|3|6|9|12")
+        elif mode != "full_trial" or bins is not None:
+            raise ValueError("Full-trial context requires omission of --context-bins")
+        if any(model.get("context", {}).get(key, -1) != -1 for key in ("forward", "backward")):
+            raise ValueError("CLI context conflicts with finite legacy attention limits")
+        training["temporal_context"] = dict(mode=mode, bins=bins, target_support_bins=TARGET_SUPPORT_BINS,
+                                           boundary_policy="complete", source="entry_arguments")
     if args.modality not in (["ap", "vision-clip"], ["spike", "vision-clip"]):
         raise ValueError("Supported modalities are spike (or ap) and vision-clip, in that order")
     if training["mixed_training"] and objective != "mm":
@@ -240,6 +264,21 @@ def resolve_setup(args, tune_config=None):
                              {"metric": None, "direction": None})
 
     consumed = tuple(train.samples) + (tuple(val.samples) if training["eval_every"] else ())
+    if objective != "mm":
+        if any(sample.metadata["alignment"].get("visual_resampling") !=
+               "timestamp-aware held-state over neural intervals v1" for sample in consumed):
+            raise ValueError("Temporal-context runs require held-state aligned data; rebuild interpolated generations")
+        coverage = {}
+        for name, view in (("train", train), ("val", val if training["eval_every"] else None)):
+            if view is None:
+                continue
+            eligible = sum(max(0, sample.sequence_length - TARGET_SUPPORT_BINS + 1) for sample in view.samples)
+            if not eligible:
+                raise ValueError(f"No complete H=12 targets in {name} split")
+            coverage[name] = dict(eligible_temporal_targets=eligible,
+                                 excluded_temporal_targets=sum(sample.sequence_length for sample in view.samples) - eligible,
+                                 trials_without_targets=sum(sample.sequence_length < TARGET_SUPPORT_BINS for sample in view.samples))
+        training["temporal_target_coverage"] = coverage
     if any(sample.visual.shape[1] != 768 for sample in consumed):
         raise ValueError("The current model requires 768-dimensional visual features")
     if max(sample.sequence_length for sample in consumed) > data["max_time_length"]:

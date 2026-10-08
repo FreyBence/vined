@@ -34,6 +34,47 @@ represented in optimization. To disable it, use `--eval-every 0
 
 ## Effective configuration
 
+Encoding/decoding entry points now select temporal context through
+`--context-mode strict|full_trial` (effective default `full_trial`) and
+`--context-bins 1|3|6|9|12` (required only for `strict`). Both `train.py` and
+`finetune.py` use the shared argument boundary; shell launchers forward these
+arguments. Scenario files and context fields in JSON profiles/overrides are not
+used to select context. Finite legacy model forward/backward limits conflict with
+these explicit modes and are rejected. Inherited `mm` remains available when
+context arguments are omitted; explicit context requests for `mm` are rejected.
+
+Resolved `training.temporal_context` records mode, bins, fixed
+`target_support_bins=12`, `boundary_policy="complete"`, and
+`source="entry_arguments"` in run configuration/provenance and checkpoints.
+`training.temporal_target_coverage` reports eligible/excluded temporal targets and
+trials without targets for optimization and enabled validation. This metadata is
+generated from arguments and the dataset, not accepted as JSON configuration.
+
+Context-selected runs require held-state alignment provenance
+(`timestamp-aware held-state over neural intervals v1`). Interpolated generations
+must be regenerated through the shared alignment policy. A train or required
+validation split with no complete H=12 targets is rejected at setup. Real trials
+are retained, including shorter trials, with unchanged identities and splits.
+
+Optimization and validation select the same temporal targets for every strict
+length and full-trial control: encoding excludes the first eleven bins; decoding
+excludes the last eleven. Source observations remain available as input context.
+Scientific validity and input corruption stay separate from this selection.
+Selectors intersect H=12 before accumulation counts, losses, validation BPS null
+means, cosine scores, and plots are calculated. Empty accumulation windows are
+skipped visibly; an epoch without targets for an active objective fails. Neuron
+validity and valid zero-spike counts retain their existing interpretation.
+
+Training supplies dataset-owned runtime context views to the model and verifies
+their direction. `trainer.pretrained.build_model` and `model_from_checkpoint`
+restore constructor context arguments from recorded runtime metadata. Resume
+requires identical effective context/support configuration; adaptation explicitly
+checks context as well as architecture, direction, and losses. Older checkpoints
+without this metadata retain legacy construction on explicit restoration, but
+cannot silently initialize a new context-selected run. Direct inference with a
+new restored model must supply its matching runtime context view. Evaluation
+requires explicit matching CLI context and applies the same H=12 support.
+
 `trainer.setup.resolve_setup(args, tune_config=None)` returns
 `(config, train_loader, validation_loader_or_none, metadata)` after generation
 verification and configuration validation. Entry points resolve session-count

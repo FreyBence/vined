@@ -129,6 +129,9 @@ def main(tune_config=None):
         avail_beh = dynamic_mods,
         model_mode = model_mode,
         config = config.model,
+        **({"context_mode": config.training.temporal_context.mode,
+            "context_bins": config.training.temporal_context.bins}
+           if "temporal_context" in config.training else {}),
         **meta_data
     )
 

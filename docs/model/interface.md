@@ -250,6 +250,65 @@ Visual convenience loss remains cosine loss. Only supplied target modalities
 contribute to the combined convenience loss; training owns the active objective
 and optimization policy. The existing training adapter remains compatible.
 
+## Explicit strict and full-trial context
+
+`MultiModal(..., context_mode="strict", context_bins=L,
+context_chunk_size=256, ...)` declares exact target-anchored context through
+constructor arguments, independently of JSON context selection. `L` is one of
+`1,3,6,9,12`. `context_mode="full_trial"` requires omission of `context_bins`.
+Both explicit modes reject finite legacy `context.forward/backward` limits.
+Omitting `context_mode` preserves the existing model behavior and checkpoint
+identity, including legacy per-layer limits. Strict mode requires a visual-only
+encoding encoder or neural-only decoding encoder; multimodal strict construction
+is rejected.
+
+Pass `context_view` to `encode`, keyword `forward`, or dictionary `forward`.
+This is the runtime tensor contract exposed by the training-dataset interface:
+`direction`, `mode`, `context_bins`, `context_indices`, `context_valid`,
+`target_mask`, `readout_index`, and `target_support_bins=12`. The model consumes
+these fields without importing the dataset module. Explicit modes require a view;
+legacy mode rejects one. Fields, device, masks, complete H=12 support, and exact
+strict source indices are checked against the current input positions/validity.
+Full-trial views require continuous real support. Directional views for inherited
+multimodal objectives are rejected; their existing full-sequence path remains.
+
+Strict execution gathers only complete windows from token-wise projected and
+corrupted input embeddings, before Transformer mixing. Each window is a separate
+attention sequence with original positions and session information. Encoding
+reads its final token, decoding its first token. No intermediate full-trial latent
+can enter a window. All Transformer layers stay inside the same source window.
+`context_chunk_size` bounds the number of windows per Transformer call; it changes
+no learnable layout and is omitted from scientific checkpoint identity.
+
+Latents and predictions return to original `[B,T,...]` coordinates, preserving
+session-specific output heads and neural channel order. Incomplete strict windows
+return zero-filled latent/prediction values even at real observations. The existing
+`temporal_mask` still describes scientific observation validity. New output fields:
+
+- `prediction_mask[B,T]`: complete L-window eligibility, or real validity for
+  full trial; use it with neuron validity to interpret neural predictions.
+- `target_eligibility[B,T]`: complete H=12 directional support, independent of
+  input corruption and identical across explicit modes/lengths.
+
+For legacy unimodal calls both fields are scientific validity; legacy multimodal
+calls leave them `None`. Convenience losses intersect supplied target selection
+with prediction eligibility and H=12 when a context view is supplied. Empty
+selections retain differentiable zero loss; orchestration owns empty-objective
+failure and coverage reporting. Training-owned recomputed losses must apply these
+masks explicitly. Unimodal prediction-only dictionary calls remain supported.
+
+Full-trial context uses the unchanged Transformer computation; with identical
+weights, inputs, and corruption its predictions match the legacy unrestricted
+path. Its convenience-loss target support deliberately uses H=12. Explicit model
+identity includes mode, length, and `isolated-target-windows-v1` or `full-trial-v1`
+semantics. Ordinary state restoration rejects changes to that identity, even when
+parameter shapes match. Restore using the same constructor arguments. Training's
+`build_model` and `model_from_checkpoint` supply them from recorded runtime
+metadata; training entry scripts select them through CLI arguments. Restored
+explicit models require a matching context view at inference. Evaluation supplies
+that view after checking CLI mode/length against checkpoint metadata, and retains
+prediction eligibility separately from H=12 scoring support.
+
 ## Consumer compatibility and failures
 
 The training adapter supplies the declared modality dictionaries and retains
@@ -266,8 +325,7 @@ session mappings, and full weights as a registered CPU evaluation model. Call
 `model.to(device)` and use the visual keyword interface for inference. This helper
 is training-owned; the model does not import or depend on it.
 
-Legacy `src/eval.py` delegates loading to
-`utils.eval_utils.load_model_data_local`, which removes session-specific weights
+The optional legacy utility `utils.eval_utils.load_model_data_local` removes session-specific weights
 and converts retained weights to a plain dictionary. This discards identity
 metadata and is rejected by the model, including with `strict=False`. That legacy
 loader is incompatible with this checkpoint boundary; use full identity-preserving
