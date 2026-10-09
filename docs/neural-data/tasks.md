@@ -48,11 +48,22 @@ Expose configurable shared-memory trial/interval counting and staged window comp
 
 Concurrent source acquisition, spike-sorting changes, downstream alignment changes, and performance benchmarking infrastructure.
 
+### [x] T05 — Prepare neural data without a separate request file
+
+**Summary:**
+
+Discover session probes and count recorded full-trial intervals at the specified default resolution when no config is supplied. Preserve explicit custom requests, original trial identity, coherent revision selection, source coverage qualifications, and documented defaults.
+
+**Out of scope:**
+
+Inventing recording coverage, changing source acquisition policy, selecting a common multimodal grid, and implicit quality/anatomical filtering.
+
 ## Dependencies
 
 - T02 depends on T01.
 - T03 depends on T02.
 - T04 depends on T03.
+- T05 depends on T03.
 
 ## Downstream boundary
 

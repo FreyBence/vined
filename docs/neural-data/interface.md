@@ -46,7 +46,13 @@ are rejected. No failed source is silently skipped or replaced.
   requires `field`, a nonempty caller-supplied `interpretation`, and exactly one
   of `values` (accepted source values) or `minimum` (finite numeric lower bound).
   Supplied metrics are associated by `cluster_id`, or by original row order when
-  no IDs are supplied. Missing per-unit quality does not match; a wholly absent
+  no IDs are supplied. Original sorter IDs outside the ALF unit-row range are
+  retained as `cluster_id` metadata and associated by stored row order only when
+  IDs are unique and nonnegative, the metric index equals those IDs, every unit
+  has a metric row, and all supplied `spike_count` values exactly match counts
+  from the ALF spike assignments for the corresponding rows. Otherwise the
+  association fails explicitly. `source_unit_id` remains the ALF unit row.
+  Missing per-unit quality does not match; a wholly absent
   required field fails. Metrics are never recomputed and labels are not converted
   to a universal good/bad code.
 - `anatomy=None` retains units without an anatomical filter. `RegionSelection`
@@ -155,7 +161,7 @@ preserved. Nonfinite boundaries produce unavailable outcomes without inventing
 an interval. Finite reversed/zero-width windows and malformed inputs raise
 `ValueError`. Empty requests and empty selected populations are supported.
 
-`count_trials(population, trials, *, event, offsets, bin_size=1/60,
+`count_trials(population, trials, *, event=None, offsets=None, interval_fields=None, bin_size=1/60,
 unit_coverage=None, workers=1)` accepts a `LoadedTrials` from session-data. Source EIDs must
 match the population. The table's unique nonnegative integer index supplies
 original trial IDs and must be retained if callers subset the table. It is never
@@ -163,6 +169,12 @@ renumbered. A missing event column fails; a missing/nonfinite event value retain
 that trial as unavailable. Offsets are a finite increasing pair in seconds.
 Trial source records and event/offset configuration are retained. Choice,
 feedback, visual coverage, and experiment splits impose no eligibility filters.
+
+Alternatively, supply `interval_fields=(start_column, end_column)` with no event
+or offsets. Both distinct columns must exist; their source-session values form
+each original trial's absolute interval. Nonfinite boundaries retain unavailable
+outcomes, and finite non-increasing intervals fail. Field names, source content,
+and original trial IDs are recorded with the same provenance as event mode.
 
 Both functions count again from the supplied source population; callers may
 request another grid without interpolating existing binned counts or accessing
@@ -257,9 +269,11 @@ counts = loaded.data
 
 `generate_neural(access, eid, recordings, output_dir, *, intervals=None,
 request_ids=None, event=None, offsets=None, bin_size=1/60, quality=None,
-anatomy=None, unit_coverage=None, trial_collection="alf", trial_revision=None, workers=1)`
-processes one session. Supply exactly one of absolute `intervals` or a trial
-`event`; trial mode requires offsets and takes IDs from the original table.
+anatomy=None, unit_coverage=None, trial_collection="alf", trial_revision=None, workers=1,
+trial_interval_fields=None, reuse_identical=False)`
+processes one session. Supply exactly one of absolute `intervals`, a trial
+`event`, or `trial_interval_fields`. Event mode requires offsets; either trial
+mode takes IDs from the original table.
 Selection and coverage objects have the contracts above. Acquisition stays
 within session-data. No visual artifact, behavioral eligibility filter, model,
 or experiment split is required.
@@ -278,8 +292,12 @@ processing, serialization, or verification failure propagates without publishing
 a completed generation. An interruption may leave an unselected temporary
 directory after an unclean process termination; it is never used as a fallback.
 Existing generations are not overwritten. An identical destination raises
-`FileExistsError`, even after successful processing: reuse is an explicit load,
-not an implicit success report for a new run.
+`FileExistsError`, even after successful processing, by default.
+With explicit `reuse_identical=True` (CLI `--reuse-identical`), processing and
+staged verification still run; an existing destination is loaded and verified
+only if its generation ID equals the newly computed content identity. Corrupt
+existing artifacts still fail. This does not select an older or latest generation
+or overwrite files. Implementation changes produce a distinct generation ID.
 
 `load_generation(path, *, expected_generation_id=None)` opens precisely the
 selected generation directory. It checks schema, completion, manifest identity,
@@ -344,10 +362,24 @@ The Bash entry point uses `script/environment.sh` to select the project Python
 and checkout root, and forwards every argument and the Python exit status:
 
 ```bash
-bash script/prepare_neural_data.sh --eid EID --config request.json --workers 4
+bash script/prepare_neural_data.sh --eid EID --workers 10
 ```
 
-Example request JSON:
+`--config` is optional. Without it, the CLI discovers all session probes through
+`SessionAccess.probes`, uses their reported PID/name identities, and explicitly
+requests unrevisioned (`revision=""`) sorting data using session-data's collection
+resolution. No probe or failed recording is silently skipped. It counts each
+original trial over its recorded `intervals_0`/`intervals_1` boundaries at 60 Hz
+(`bin_size=1/60`), with no quality or anatomical filter. Required timing columns
+must exist; missing per-trial timing retains unavailable outcomes. Effective
+requests are printed and resolved source identities are stored in the generation.
+No recording coverage is invented: unknown support remains unknown and its
+counts remain unusable as observed training targets. Trial intervals are not
+recording-coverage evidence. Access remains local-only unless remote-allowed is
+explicitly selected. A missing unrevisioned source is an error, not permission
+to switch revisions.
+
+Supply `--config request.json` to retain explicit custom requests. Example:
 
 ```json
 {
@@ -362,9 +394,12 @@ The configuration uses `generate_neural` keyword names, plus `recordings`.
 Quality, anatomy, recording coverage, and unit coverage use JSON objects with the
 corresponding dataclass fields. Unknown configuration keys fail. Absolute requests
 use `intervals` and optional `request_ids` instead of `event`/`offsets`.
+Recorded-column trial requests use `trial_interval_fields` instead of those
+event/offset fields.
 
 `--eids-file` and `--n-sessions` use the shared session-selection conventions;
-the same request configuration applies to each selected session. `--workers N`
+automatic mode discovers probes independently for each selected session; an
+explicit request configuration applies to every selected session. `--workers N`
 sets a positive number of counting/compression threads per session (default one).
 This is a CLI option, not a request JSON field. Session source loading remains
 serial and workers add no ONE/Alyx calls. `--cache-dir`

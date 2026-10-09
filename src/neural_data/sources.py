@@ -89,7 +89,7 @@ def _coverage(value):
     return asdict(value)
 
 
-def _unit_table(clusters, channels):
+def _unit_table(clusters, channels, assignments):
     channel_indices = _vector(clusters["channels"], "clusters.channels", integer=True)
     count = len(channel_indices)
     if np.any(channel_indices < 0):
@@ -119,9 +119,21 @@ def _unit_table(clusters, channels):
         metrics = pd.DataFrame(metrics).copy()
         if "cluster_id" in metrics:
             ids = _vector(metrics["cluster_id"], "metrics.cluster_id", integer=True)
-            if len(np.unique(ids)) != len(ids) or np.any((ids < 0) | (ids >= count)):
+            if len(np.unique(ids)) != len(ids) or np.any(ids < 0):
                 raise ValueError("Ambiguous cluster metric identities")
-            metrics = metrics.set_index("cluster_id").reindex(range(count))
+            if np.any(ids >= count):
+                # Some ALF exports retain pre-compaction sorter IDs in metrics,
+                # while spike assignments and cluster arrays use compact rows.
+                # Require source-index agreement and independent per-row counts
+                # before associating these metrics by their stored row order.
+                if (len(metrics) != count or not np.array_equal(metrics.index.to_numpy(), ids)
+                        or "spike_count" not in metrics
+                        or not np.array_equal(metrics["spike_count"].to_numpy(),
+                                              np.bincount(assignments, minlength=count))):
+                    raise ValueError("Ambiguous cluster metric identities: original sorter IDs lack verified ALF row correspondence")
+                metrics = metrics.reset_index(drop=True)
+            else:
+                metrics = metrics.set_index("cluster_id").reindex(range(count))
         elif not metrics.index.equals(pd.RangeIndex(count)):
             raise ValueError("Metrics require source row order or explicit cluster_id")
         for name in metrics:
@@ -247,13 +259,14 @@ def load_population(access, eid, recordings, *, quality=None, anatomy=None):
         seen.add(key)
         consumed_content = content_hash(dict(spikes=result.spikes, clusters=result.clusters,
                                              channels=result.channels))
-        table = _unit_table(result.clusters, result.channels)
         times = _vector(result.spikes["times"], "spikes.times")
         assignments = _vector(result.spikes["clusters"], "spikes.clusters", len(times), integer=True)
         if times.dtype.kind not in "fiu" or not np.isfinite(times).all():
             raise ValueError("Spike times must be finite session-second values")
-        if np.any(assignments < 0) or np.any(assignments >= len(table)):
+        source_unit_count = len(_vector(result.clusters["channels"], "clusters.channels", integer=True))
+        if np.any(assignments < 0) or np.any(assignments >= source_unit_count):
             raise ValueError("Spike assignment does not resolve to a source unit")
+        table = _unit_table(result.clusters, result.channels, assignments)
         for name, values in result.spikes.items():
             array = np.asarray(values)
             if array.ndim == 0 or len(array) != len(times):

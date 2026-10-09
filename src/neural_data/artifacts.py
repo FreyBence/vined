@@ -114,26 +114,30 @@ def load_generation(path, *, expected_generation_id=None):
 def generate_neural(access, eid, recordings, output_dir, *, intervals=None,
                     request_ids=None, event=None, offsets=None, bin_size=DEFAULT_BIN_SIZE,
                     quality=None, anatomy=None, unit_coverage=None,
-                    trial_collection="alf", trial_revision=None, workers=1):
+                    trial_collection="alf", trial_revision=None, workers=1,
+                    trial_interval_fields=None, reuse_identical=False):
     """Process one session and atomically publish a new fully accounted generation.
 
-    Exactly one of intervals or event is required. Existing generations are never
-    returned in place of a new run; an identical destination raises FileExistsError.
+    Exactly one of intervals, event, or trial_interval_fields is required. Existing generations are never
+    returned in place of a new run unless reuse_identical explicitly permits
+    loading a verified destination with the newly computed content identity.
     """
     if type(workers) is not int or workers < 1:
         raise ValueError("workers must be a positive integer")
-    if (intervals is None) == (event is None):
-        raise ValueError("Select either absolute intervals or a trial event")
+    if sum(value is not None for value in (intervals, event, trial_interval_fields)) != 1:
+        raise ValueError("Select absolute intervals, a trial event, or trial interval fields")
     if event is not None and (offsets is None or request_ids is not None):
         raise ValueError("Trial processing needs offsets and uses original trial IDs")
-    if intervals is not None and offsets is not None:
-        raise ValueError("Absolute intervals cannot have trial offsets")
+    if event is None and offsets is not None:
+        raise ValueError("Only trial-event requests accept offsets")
+    if trial_interval_fields is not None and request_ids is not None:
+        raise ValueError("Trial processing uses original trial IDs")
     recordings = tuple(recordings)
     implementation = _implementation()
     population = load_population(access, eid, recordings, quality=quality, anatomy=anatomy)
     logger.info("neural-data %s: selected %d units from %d recordings", population.eid,
                 len(population.units), len(population.recordings))
-    if event is None:
+    if intervals is not None:
         data = count_intervals(population, intervals, bin_size=bin_size,
                                request_ids=request_ids, unit_coverage=unit_coverage, workers=workers)
         requested_count = len(intervals)
@@ -141,6 +145,7 @@ def generate_neural(access, eid, recordings, output_dir, *, intervals=None,
         logger.info("neural-data %s: loading trial timings", population.eid)
         trials = access.load_trials(population.eid, collection=trial_collection, revision=trial_revision)
         data = count_trials(population, trials, event=event, offsets=offsets,
+                            interval_fields=trial_interval_fields,
                             bin_size=bin_size, unit_coverage=unit_coverage, workers=workers)
         requested_count = len(trials.data)
     del population
@@ -195,7 +200,11 @@ def generate_neural(access, eid, recordings, output_dir, *, intervals=None,
         verified = load_generation(staging, expected_generation_id=generation_id)
         destination = destination_root / generation_id
         if destination.exists():
-            raise FileExistsError(f"Neural generation already exists; load it explicitly: {destination}")
+            if not reuse_identical:
+                raise FileExistsError(f"Neural generation already exists; load it explicitly or use --reuse-identical: {destination}")
+            verified = load_generation(destination, expected_generation_id=generation_id)
+            logger.info("neural-data %s: reused verified identical generation %s", eid, destination)
+            return verified
         staging.rename(destination)
     verified.path = destination
     logger.info("neural-data %s: published %s (outcomes: %s)", eid, destination, manifest["outcomes"])

@@ -226,23 +226,36 @@ def count_intervals(population, intervals, *, bin_size=DEFAULT_BIN_SIZE, request
             coverage_policy="Only fully observed bins are valid; assumed/unknown bins remain qualified"))
 
 
-def count_trials(population, trials, *, event, offsets, bin_size=DEFAULT_BIN_SIZE,
-                 unit_coverage=None, workers=1):
+def count_trials(population, trials, *, event=None, offsets=None, interval_fields=None,
+                 bin_size=DEFAULT_BIN_SIZE, unit_coverage=None, workers=1):
     """Count a LoadedTrials table, preserving its original integer row index."""
     if not trials.sources or any(source.eid != population.eid for source in trials.sources):
         raise ValueError("Trial source identity must match the neural session")
-    offsets = np.asarray(offsets, dtype=float)
-    if offsets.shape != (2,) or not np.isfinite(offsets).all() or offsets[1] <= offsets[0]:
-        raise ValueError("Trial offsets must be a finite increasing pair")
     ids = _ids(trials.data.index.to_numpy(), len(trials.data))
-    if event not in trials.data:
-        raise ValueError(f"Required trial event is unavailable: {event}")
-    origins = trials.data[event].to_numpy(dtype=float, na_value=np.nan)
-    result = count_intervals(population, origins[:, None] + offsets,
+    if (event is None) == (interval_fields is None):
+        raise ValueError("Select either a trial event or trial interval fields")
+    if interval_fields is not None:
+        if (offsets is not None or not isinstance(interval_fields, (tuple, list))
+                or len(interval_fields) != 2 or any(not isinstance(name, str) or not name for name in interval_fields)
+                or interval_fields[0] == interval_fields[1]):
+            raise ValueError("Trial interval fields require two distinct column names and no offsets")
+        if any(name not in trials.data for name in interval_fields):
+            raise ValueError(f"Required trial interval fields are unavailable: {interval_fields}")
+        intervals = trials.data[list(interval_fields)].to_numpy(dtype=float, na_value=np.nan)
+        definition = dict(interval_fields=list(interval_fields))
+    else:
+        offsets = np.asarray(offsets, dtype=float)
+        if offsets.shape != (2,) or not np.isfinite(offsets).all() or offsets[1] <= offsets[0]:
+            raise ValueError("Trial offsets must be a finite increasing pair")
+        if event not in trials.data:
+            raise ValueError(f"Required trial event is unavailable: {event}")
+        origins = trials.data[event].to_numpy(dtype=float, na_value=np.nan)
+        intervals = origins[:, None] + offsets
+        definition = dict(event=event, offsets=offsets.tolist())
+    result = count_intervals(population, intervals,
                              bin_size=bin_size, request_ids=ids, unit_coverage=unit_coverage,
                              workers=workers)
-    result.configuration["trial_window"] = dict(event=event, offsets=offsets.tolist(),
-                                                identity="original trial table row index")
+    result.configuration["trial_window"] = dict(**definition, identity="original trial table row index")
     result.configuration["trial_content_sha256"] = content_hash(trials.data)
     result.trial_sources = tuple(asdict(source) for source in trials.sources)
     return result
