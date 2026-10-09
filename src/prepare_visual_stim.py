@@ -64,11 +64,23 @@ def main(argv=None):
                         help="Explicit source-time subsampling rate; default selects all observations")
     parser.add_argument("--batch-size", "--batch_size", type=int, default=32)
     parser.add_argument("--workers", type=int, default=1,
-                        help="Image-preparation threads; above one also overlaps replay reads with inference")
+                        help="Parallel replay image loading and image preparation; above one overlaps reads with inference")
     parser.add_argument("--device", help="Torch device; default auto-selects CUDA/CPU")
+    parser.add_argument("--precision", choices=("auto", "float32", "float16"), default="auto",
+                        help="Inference precision; auto uses CUDA float16 on compute capability >= 7, otherwise float32")
+    parser.add_argument("--gpu-duty-cycle", type=float, default=1.0,
+                        help="CUDA batch duty cycle in (0,1]; e.g. 0.6 adds 40%% idle time, default 1 disables pauses")
+    parser.add_argument("--feature-cache-size", type=int, default=512,
+                        help="Bounded cache of identical prepared-image features; default 512, 0 disables reuse")
+    parser.add_argument("--attention-backend", choices=("auto", "eager", "sdpa"), default="auto",
+                        help="CLIP vision attention; auto uses PyTorch SDPA on CUDA, eager on CPU")
     args = parser.parse_args(argv)
     if args.workers < 1:
         parser.error("--workers must be positive")
+    if args.feature_cache_size < 0:
+        parser.error("--feature-cache-size must be nonnegative")
+    if not math.isfinite(args.gpu_duty_cycle) or not 0 < args.gpu_duty_cycle <= 1:
+        parser.error("--gpu-duty-cycle must be finite and in (0, 1]")
     if args.batch_size <= 0 or (args.sample_fps is not None
                               and (not math.isfinite(args.sample_fps) or args.sample_fps <= 0)):
         parser.error("batch size and sample FPS must be positive and finite")
@@ -84,13 +96,16 @@ def main(argv=None):
         if destination.exists():
             raise FileExistsError(f"Output exists: {destination}; use a new --output-dir")
         print(f"Replay source: {source}", flush=True)
-        with ReplayArtifactReader(source) as replay:
+        with ReplayArtifactReader(source, workers=args.workers) as replay:
             if replay.definition["inputs"]["eid"] != eid:
                 raise ValueError("Selected replay belongs to another EID")
             with ObservationSelection(replay, sample_fps=args.sample_fps) as observations:
                 if encoder is None:
                     encoder = ClipEncoder(args.clip_model, revision=args.clip_revision, device=args.device,
-                                          workers=args.workers)
+                                          workers=args.workers, precision=args.precision,
+                                          gpu_duty_cycle=args.gpu_duty_cycle,
+                                          feature_cache_size=args.feature_cache_size,
+                                          attention_backend=args.attention_backend)
                 manifest = write_features(observations, encoder, destination, batch_size=args.batch_size,
                                           workers=args.workers)
         status = manifest["replay_completion"]["reconstruction_status"]

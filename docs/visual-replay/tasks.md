@@ -78,6 +78,16 @@ Allow generation and auto-fix callers to configure trial workers within one EID,
 
 Parallel session acquisition, API/cache policy changes, and a performance benchmark suite.
 
+### [x] VR08 — Read and verify replay images in parallel
+
+**Summary:**
+
+Expose bounded threaded image loading, decompression, and pixel verification through the artifact reader while preserving ordered metadata, trial accounting, content digests, and clean shutdown. Compare representative sequential and parallel reads.
+
+**Out of scope:**
+
+Replay generation changes, storage-format changes, weaker verification, and benchmarking infrastructure.
+
 ## Dependencies
 
 - VR02 depends on VR01.
@@ -86,3 +96,4 @@ Parallel session acquisition, API/cache policy changes, and a performance benchm
 - VR05 depends on VR04.
 - VR06 depends on VR05.
 - VR07 depends on VR06.
+- VR08 depends on VR06.

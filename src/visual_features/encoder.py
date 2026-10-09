@@ -1,11 +1,15 @@
 """Fixed-weight CLIP encoding with explicit full-view image preparation."""
 
 from copy import deepcopy
+from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import closing
+from contextlib import closing, nullcontext
 from dataclasses import dataclass
 from pathlib import Path
+import math
+import hashlib
 import re
+import time
 
 import numpy as np
 
@@ -49,10 +53,23 @@ class ClipEncoder:
     """Load one immutable model/processor snapshot and encode bounded batches."""
 
     def __init__(self, model_name="openai/clip-vit-large-patch14", *, revision="main",
-                 device=None, workers=1):
+                 device=None, workers=1, precision="auto", gpu_duty_cycle=1.0,
+                 feature_cache_size=512, attention_backend="auto"):
         if type(workers) is not int or workers < 1:
             raise ValueError("workers must be a positive integer")
         self._workers = workers
+        if type(feature_cache_size) is not int or feature_cache_size < 0:
+            raise ValueError("feature_cache_size must be a nonnegative integer")
+        self._feature_cache_size = feature_cache_size
+        self._feature_cache = OrderedDict()
+        if precision not in ("auto", "float32", "float16"):
+            raise ValueError("precision must be auto, float32, or float16")
+        if attention_backend not in ("auto", "eager", "sdpa"):
+            raise ValueError("attention_backend must be auto, eager, or sdpa")
+        if (isinstance(gpu_duty_cycle, bool) or not isinstance(gpu_duty_cycle, (int, float))
+                or not math.isfinite(gpu_duty_cycle) or not 0 < gpu_duty_cycle <= 1):
+            raise ValueError("gpu_duty_cycle must be finite and in (0, 1]")
+        self._gpu_duty_cycle = float(gpu_duty_cycle)
         import torch
         from huggingface_hub import HfApi, snapshot_download
         from transformers import CLIPModel, CLIPImageProcessor
@@ -66,8 +83,19 @@ class ClipEncoder:
         snapshot = Path(snapshot_download(model_name, revision=revision,
             allow_patterns=["*.json", "pytorch_model.bin", "model.safetensors"]))
         self._device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        cuda = torch.device(self._device).type == "cuda"
+        if self._gpu_duty_cycle < 1 and not cuda:
+            raise ValueError("GPU duty-cycle limiting requires a CUDA device")
+        if precision == "float16" and not cuda:
+            raise ValueError("float16 inference requires a CUDA device")
+        self._precision = ("float16" if cuda and torch.cuda.get_device_capability(self._device)[0] >= 7
+                           else "float32") if precision == "auto" else precision
+        self._attention_backend = ("sdpa" if cuda else "eager") if attention_backend == "auto" else attention_backend
         logger.info("visual-features: loading CLIP weights on %s", self._device)
         self._model = CLIPModel.from_pretrained(str(snapshot), local_files_only=True).to(self._device)
+        if self._attention_backend == "sdpa":
+            from .attention import use_vision_sdpa
+            use_vision_sdpa(self._model)
         self._model.eval()
         self._model.requires_grad_(False)
         self._processor = CLIPImageProcessor.from_pretrained(str(snapshot), local_files_only=True)
@@ -87,14 +115,26 @@ class ClipEncoder:
             artifact_hashes={p.name: file_hash(p) for p in snapshot.iterdir() if p.is_file()},
             output="CLIPModel.get_image_features: projected pooled vision output",
             feature_width=self._width, dtype="float32", normalization="L2 per observation",
+            inference=dict(precision=self._precision,
+                attention_backend=self._attention_backend,
+                policy="CUDA autocast" if self._precision == "float16" else "float32",
+                weight_dtype="float32", normalization_dtype="float32",
+                image_reuse=dict(capacity=feature_cache_size,
+                    policy="SHA256 of prepared RGB8 square; within-batch deduplication and LRU"
+                           if feature_cache_size else "disabled")),
             preparation=dict(policy="aspect-preserving fit and centered square padding",
                 image_size=self._size, fill_rgb=[128, 128, 128], resample="Pillow BICUBIC",
                 rounding="Python round, minimum one pixel", odd_padding="extra pixel at right/bottom",
                 input="uint8 RGB [0,255], top row first"),
             processor=self._processor.to_dict(), packages=package_versions(), device=str(self._device),
-            sources=source_hashes("src/visual_features/encoder.py", "src/visual_features/observations.py"))
-        logger.info("visual-features: CLIP ready on %s (%d features, %d image workers)",
-                    self._device, self._width, self._workers)
+            sources=source_hashes("src/visual_features/encoder.py", "src/visual_features/observations.py",
+                                 "src/visual_features/attention.py"))
+        logger.info("visual-features: CLIP ready on %s (%s inference, %d features, %d image workers)",
+                    self._device, self._precision, self._width, self._workers)
+        logger.info("visual-features: vision attention backend %s", self._attention_backend)
+        if self._gpu_duty_cycle < 1:
+            logger.info("visual-features: CUDA batch duty cycle %.0f%% (idle pauses enabled)",
+                        self._gpu_duty_cycle * 100)
 
     @property
     def provenance(self):
@@ -112,17 +152,58 @@ class ClipEncoder:
                     images = list(pool.map(prepare_image, frames, [self._size] * len(frames)))
             else:
                 images = [prepare_image(rgb, self._size) for rgb in frames]
+            keys = []
+            resolved = {}
+            missing = {}
+            if self._feature_cache_size:
+                for image in images:
+                    key = hashlib.sha256(image.tobytes()).digest()
+                    keys.append(key)
+                    if key in self._feature_cache:
+                        resolved[key] = self._feature_cache[key]
+                        self._feature_cache.move_to_end(key)
+                    elif key not in resolved:
+                        missing.setdefault(key, image)
+                if not missing:
+                    return np.stack([resolved[key] for key in keys])
+                images = list(missing.values())
             inputs = self._processor(images=images, return_tensors="pt")
+            if self._gpu_duty_cycle < 1:
+                # Wait for earlier work before timing this batch; CUDA launches
+                # are asynchronous. The CPU feature copy below waits for completion.
+                torch.cuda.synchronize(self._device)
+                started = time.perf_counter()
             with torch.inference_mode():
-                features = self._model.get_image_features(
-                    **{key: value.to(self._device) for key, value in inputs.items()}).float()
-                if (features.shape != (len(frames), self._width)
+                autocast = (torch.autocast(device_type="cuda", dtype=torch.float16)
+                            if self._precision == "float16" else nullcontext())
+                with autocast:
+                    features = self._model.get_image_features(
+                        **{key: value.to(self._device) for key, value in inputs.items()})
+                features = features.float()
+                if (features.shape != (len(images), self._width)
                         or not torch.isfinite(features).all()
                         or (torch.linalg.vector_norm(features, dim=-1) <= 1e-12).any()):
                     raise ValueError("CLIP produced invalid projected features")
                 features = torch.nn.functional.normalize(features, dim=-1).cpu().numpy()
+            if self._gpu_duty_cycle < 1:
+                elapsed = time.perf_counter() - started
+                pause = elapsed * (1 / self._gpu_duty_cycle - 1)
+                # Short chunks preserve prompt interruption even for a low duty cycle.
+                deadline = time.perf_counter() + pause
+                while (remaining := deadline - time.perf_counter()) > 0:
+                    time.sleep(min(remaining, 1.0))
             if not np.isfinite(features).all():
                 raise ValueError("CLIP produced nonfinite normalized features")
+            if self._feature_cache_size:
+                for key, feature in zip(missing, features):
+                    feature = feature.copy()
+                    feature.setflags(write=False)
+                    resolved[key] = feature
+                    self._feature_cache[key] = feature
+                    self._feature_cache.move_to_end(key)
+                    if len(self._feature_cache) > self._feature_cache_size:
+                        self._feature_cache.popitem(last=False)
+                return np.stack([resolved[key] for key in keys])
             return features
         except (ValueError, TypeError, RuntimeError, OSError) as exc:
             raise FeatureExtractionError(f"CLIP extraction failed: {exc}") from exc

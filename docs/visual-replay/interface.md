@@ -601,7 +601,7 @@ missing compressed images never fall back to raw files. Existing generations
 are not converted. Compression preserves pixels, shape, dtype, observation
 metadata, and pixel hashes; no CLI option is needed for new compressed output.
 
-`ReplayArtifactReader(directory)` requires a published manifest and verifies
+`ReplayArtifactReader(directory, *, workers=1)` requires a published manifest and verifies
 its artifact ID, definition ID, generation ID, and requested-trial accounting.
 It is a single-use iterator yielding the same records, order, image spaces,
 identities, source times, and immutable RGB arrays as `ReplayStream`. It requires
@@ -609,6 +609,15 @@ neither source-session access nor a historical rendering environment. During
 iteration it verifies metadata-file hashes, each decoded image's shape/type and
 pixel hash, observation associations, trial counts/digests, and the full record
 digest. Available videos and their mappings are also hash-checked.
+
+`workers` is a positive integer, default one. Above one, independent image files
+are loaded, decompressed, and pixel-verified by a persistent thread pool, with
+at most `2 * workers` pending source records plus the currently yielded record.
+Results, metadata checks, and digests are consumed in source order, regardless
+of worker completion order. Memory use remains bounded independently of session
+length. Early closure and failures cancel queued work and join active workers;
+unfinished readback never gains completion. Worker count does not change replay
+content, generation identity, or verification requirements.
 
 Reader `definition`, `definition_id`, `state`, `close()`, context-manager behavior,
 and `completion` follow the direct-stream contract. Completion remains `None`

@@ -1,7 +1,8 @@
 """Lossless replay publication and verified streaming readback."""
 
-from contextlib import ExitStack
-from concurrent.futures import ProcessPoolExecutor, FIRST_COMPLETED, wait
+from contextlib import ExitStack, closing
+from collections import deque
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, FIRST_COMPLETED, wait
 from copy import deepcopy
 import hashlib
 import json
@@ -87,6 +88,55 @@ def _load_image(directory, index, image_format):
                 raise ValueError("Compressed image must contain exactly one RGB array")
             return archive["rgb"]
     raise ValueError("Unsupported replay image format")
+
+
+def _verified_image(directory, index, image_format, metadata):
+    pixels = _load_image(directory, index, image_format)
+    if (pixels.dtype != np.uint8 or pixels.ndim != 3 or pixels.shape[2] != 3
+            or list(pixels.shape) != metadata["shape"]):
+        raise ValueError("Lossless image content differs from its observation")
+    raw = pixels.tobytes(order="C")
+    if hashlib.sha256(raw).hexdigest() != metadata["rgb_sha256"]:
+        raise ValueError("Lossless image content differs from its observation")
+    return np.frombuffer(raw, dtype=np.uint8).reshape(pixels.shape)
+
+
+def _read_observation_images(records, directory, image_format, pool, workers):
+    """Read and verify concurrently, retaining at most 2*workers ordered records."""
+    if pool is None:
+        for index, line in enumerate(records):
+            metadata = json.loads(line)
+            rgb = (_verified_image(directory, index, image_format, metadata)
+                   if metadata["status"] == "valid" else None)
+            yield metadata, rgb
+        return
+    pending = deque()
+    source = enumerate(records)
+
+    def submit():
+        item = next(source, None)
+        if item is None:
+            return False
+        index, line = item
+        metadata = json.loads(line)
+        future = (pool.submit(_verified_image, directory, index, image_format, metadata)
+                  if metadata["status"] == "valid" else None)
+        pending.append((metadata, future))
+        return True
+
+    try:
+        for _ in range(2 * workers):
+            if not submit():
+                break
+        while pending:
+            metadata, future = pending.popleft()
+            rgb = future.result() if future is not None else None
+            submit()
+            yield metadata, rgb
+    finally:
+        for _, future in pending:
+            if future is not None:
+                future.cancel()
 
 
 def _encode_video(directory, outcome, image_format):
@@ -446,7 +496,10 @@ class ReplayArtifactReader:
     and lossless image has been checked and the iterator reaches exhaustion.
     """
 
-    def __init__(self, directory):
+    def __init__(self, directory, *, workers=1):
+        if type(workers) is not int or workers < 1:
+            raise ValueError("workers must be a positive integer")
+        self._workers = workers
         self._root = Path(directory).resolve()
         manifest = _read_json(_inside(self._root, "manifest.json"))
         if (manifest.get("schema_version") != 1 or manifest.get("kind") != "replay_artifacts"
@@ -516,6 +569,8 @@ class ReplayArtifactReader:
         self._state = "running"
         digest = hashlib.sha256()
         declared = self._manifest["completion"]
+        pool = (ThreadPoolExecutor(max_workers=self._workers, thread_name_prefix="replay-image")
+                if self._workers > 1 else None)
         try:
             for entry, expected in zip(self._manifest["trials"], declared["trials"]):
                 directory = _inside(self._root, f"trials/{entry['trial_id']}")
@@ -544,8 +599,9 @@ class ReplayArtifactReader:
                                 or video["frame_count"] != outcome["image_count"]):
                             raise ValueError("Video artifact mismatch")
                         mapping = stack.enter_context(mapping_path.open(encoding="utf-8"))
-                    for line in records:
-                        metadata = json.loads(line)
+                    images = stack.enter_context(closing(_read_observation_images(
+                        records, directory, self._manifest["format"], pool, self._workers)))
+                    for metadata, rgb in images:
                         if (metadata["kind"] != "observation" or metadata["definition_id"] != self.definition_id
                                 or metadata["eid"] != declared["eid"]
                                 or metadata["trial_id"] != entry["trial_id"]
@@ -559,15 +615,8 @@ class ReplayArtifactReader:
                                 or metadata["format"] != "RGB8" or metadata["row_origin"] != "top"
                                 or metadata["value_range"] != [0, 255] or metadata["status"] not in counts):
                             raise ValueError("Invalid observation association or format")
-                        rgb = None
-                        if metadata["status"] == "valid":
-                            pixels = _load_image(directory, count, self._manifest["format"])
-                            if (pixels.dtype != np.uint8 or pixels.ndim != 3 or pixels.shape[2] != 3
-                                    or list(pixels.shape) != metadata["shape"]
-                                    or hashlib.sha256(pixels.tobytes(order="C")).hexdigest() != metadata["rgb_sha256"]):
-                                raise ValueError("Lossless image content differs from its observation")
-                            rgb = np.frombuffer(pixels.tobytes(order="C"), dtype=np.uint8).reshape(pixels.shape)
-                        elif metadata["rgb_sha256"] is not None or metadata["shape"] is not None or metadata["known_blank"]:
+                        if metadata["status"] != "valid" and (metadata["rgb_sha256"] is not None
+                                or metadata["shape"] is not None or metadata["known_blank"]):
                             raise ValueError("Unavailable observation claims valid image content")
                         if mapping is not None and json.loads(mapping.readline()) != _video_entry(metadata, video["fps"]):
                             raise ValueError("Encoded-frame/source-observation mapping mismatch")
@@ -596,5 +645,7 @@ class ReplayArtifactReader:
             self._completion = deepcopy(declared)
             self._state = "completed"
         finally:
+            if pool is not None:
+                pool.shutdown(wait=True, cancel_futures=True)
             if self._completion is None:
                 self._state = "interrupted"

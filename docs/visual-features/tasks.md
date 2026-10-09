@@ -48,8 +48,63 @@ Expose configurable parallel image fitting and bounded replay read-ahead through
 
 Multiple model replicas, distributed inference, encoder precision changes, and performance benchmarking infrastructure.
 
+### [x] VF05 — Optimize CUDA inference precision
+
+**Summary:**
+
+Provide automatic CUDA mixed precision with explicit float32 and float16 choices, record effective inference precision in representation provenance, and retain float32 normalized outputs and existing publication contracts. Execute representative GPU extraction and compare outputs with float32.
+
+**Out of scope:**
+
+GPU power or cooling control, concurrent model replicas, encoder/model changes, and benchmarking infrastructure.
+
+### [x] VF06 — Limit sustained GPU extraction load
+
+**Summary:**
+
+Expose configurable CUDA batch duty-cycle pacing through the encoder and CLI, preserving feature values, ordering, and publication behavior. Demonstrate paced extraction on representative replay frames.
+
+**Out of scope:**
+
+System-wide GPU control, automatic temperature regulation, cooling configuration, and performance benchmarking infrastructure.
+
+### [x] VF07 — Reuse features for identical encoder inputs
+
+**Summary:**
+
+Avoid repeated CLIP inference for byte-identical prepared images using within-batch deduplication and a configurable bounded cache. Preserve all observation identities and timestamps, record reuse policy, and directly verify readable normalized outputs and reuse on representative replay frames.
+
+**Out of scope:**
+
+Temporal subsampling, approximate image matching, persistent caches, replay storage changes, and benchmarking infrastructure.
+
+### [x] VF08 — Accelerate CLIP vision attention
+
+**Summary:**
+
+Use PyTorch scaled dot-product attention with the existing fixed CLIP projections, expose an explicit original-backend option, and record the effective backend. Compare representative real-image features and inference time while preserving all frames and current preprocessing.
+
+**Out of scope:**
+
+Model or weight changes, temporal subsampling, dependency upgrades, cooling-policy changes, and benchmarking infrastructure.
+
+### [x] VF09 — Use parallel replay image reading during extraction
+
+**Summary:**
+
+Forward the extraction worker setting to the public replay reader, retaining existing batching, inference, and completion semantics.
+
+**Out of scope:**
+
+Inference changes, session parallelism, and storage-format changes.
+
 ## Dependencies
 
 - VF02 depends on VF01.
 - VF03 depends on VF01 and VF02.
 - VF04 depends on VF03.
+- VF05 depends on VF03.
+- VF06 depends on VF05.
+- VF07 depends on VF05.
+- VF08 depends on VF05.
+- VF09 depends on VF03 and visual-replay VR08.

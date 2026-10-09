@@ -85,11 +85,60 @@ with ObservationSelection(ReplayArtifactReader(generation_directory),
 ## CLIP encoding
 
 `ClipEncoder(model_name="openai/clip-vit-large-patch14", *, revision="main",
-device=None, workers=1)` resolves the model revision to an immutable commit and loads model
+device=None, workers=1, precision="auto", gpu_duty_cycle=1.0,
+feature_cache_size=512, attention_backend="auto")` resolves the model revision to an immutable commit and loads model
 and image processor from that snapshot. The default device is CUDA when
 available, otherwise CPU. The supported model has a square image input and
 768 projected features. Weights are frozen; execution uses evaluation and
 inference modes. Loading/download failures propagate.
+
+`precision` accepts `auto` (default), `float32`, or `float16`. Auto selects
+float16 CUDA autocast on devices with compute capability at least 7 and float32
+otherwise. Explicit float16 requires CUDA. Weights remain float32; autocast
+selects operation precision during model inference. Validation, L2 normalization,
+and stored features remain float32. Mixed precision can change feature values;
+effective precision, autocast policy, weight dtype, and normalization dtype are
+recorded under representation `inference`, affecting generation identity.
+Legacy archives without this field remain readable. Use explicit float32 to
+retain the previous inference policy.
+
+`feature_cache_size` is a nonnegative integer, default 512. Above zero, identical
+prepared RGB8 squares (SHA256 of their bytes) are encoded once within a batch,
+and a bounded least-recently-used cache reuses embeddings across batches and
+sessions of this encoder instance. Every observation still receives a feature in
+its original position, with unchanged identity and timing; no temporal sampling
+is introduced. Only exact prepared-image matches are reused. At capacity 512,
+cached vectors occupy about 1.5 MiB plus bookkeeping. Setting zero disables both
+reuse paths. Cache hits skip model execution and its cooling pause. Reuse policy
+and capacity are recorded in representation `inference.image_reuse`; batching
+changes can cause small floating-point differences from uncached execution.
+For the previous inference policy without reuse, use float32 and cache size zero.
+
+`attention_backend` accepts `auto` (default), `eager`, or `sdpa`. Auto uses
+PyTorch scaled dot-product attention on CUDA and original Hugging Face attention
+on CPU. SDPA reuses every original fixed vision-attention projection and the
+same scaled softmax attention calculation, with no inference dropout. PyTorch
+selects an available kernel for the device and dtype; a fused kernel is not
+guaranteed. Masked attention and requested attention-weight outputs use the
+original path. Nonstandard CLIP attention layers are rejected in SDPA mode.
+The effective backend is recorded in representation `inference.attention_backend`.
+Numerical results can differ slightly because operation order differs; source
+images, timing, preprocessing, model weights, and feature dimensions are preserved.
+Use `attention_backend="eager"`, float32, and cache size zero for the previous
+execution policy.
+
+`gpu_duty_cycle` must be finite and in `(0, 1]`; the default `1.0` disables
+pacing. Values below one require CUDA and add an idle pause after every encoded
+batch: synchronized batch time multiplied by `(1 / gpu_duty_cycle - 1)`.
+The timed region includes device transfer, inference, numeric checks,
+normalization, and completed CPU feature copy; image preparation and replay
+reading add further idle time. For example `0.6` schedules approximately 40%
+idle time across this region and its pause. This limits this encoder's sustained
+work submission, not instantaneous GPU utilization, power, or temperature.
+Other workloads are unaffected. No temperature sensor or automatic thermal
+target is used. The setting does not change observation selection or feature
+math and is not added to representation provenance; source hashes still bind
+the implementation. Interruptions propagate without publishing partial output.
 
 `workers` is a positive integer (default one). Above one, full-view image fitting
 uses ordered parallel CPU threads, capped at the batch's image count. CLIP and its
@@ -254,11 +303,21 @@ Explicit EID selection still rejects ambiguous or unfinished session directories
 The chosen source is printed and its EID is verified.
 
 `--sample-fps` defaults to no subsampling; `--batch-size` defaults to 32.
-`--workers N` (positive integer, default one) configures parallel CPU image fitting
-and bounded replay read-ahead together. One CLIP model is shared across batches
+`--workers N` (positive integer, default one) configures parallel replay image
+loading/decompression/pixel verification, CPU image fitting, and bounded batch
+read-ahead together. The replay reader uses up to N loading threads and buffers
+at most 2N source records ahead, preserving observation order. One CLIP model is shared across batches
 and sessions, with sequential inference on the selected device. The shell wrapper
 forwards the same option. Worker count is an execution setting and does not alter
 representation identity or selection; batch size retains its existing provenance.
+`--precision auto|float32|float16` controls inference as described above and defaults
+to auto. It does not change batch size or observation selection.
+`--gpu-duty-cycle` defaults to `1.0` and enables the CUDA idle pacing described
+above when below one. The shell wrapper forwards both options.
+`--feature-cache-size` defaults to 512 and controls exact prepared-image reuse;
+zero disables it. The shell wrapper forwards this option as well.
+`--attention-backend auto|eager|sdpa` defaults to auto and selects the vision
+attention implementation described above. The shell wrapper forwards it.
 `--clip-model`, `--clip-revision`, and `--device` configure the encoder. A revision
 name resolves once when the encoder is loaded, and that encoder is shared across
 the selected sessions. An immutable SHA can reproduce a chosen model revision.
