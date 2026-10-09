@@ -34,7 +34,7 @@ export VINED_DATA_DIR="${VINED_DATA_DIR:-$VINED_OUTPUT_DIR/datasets}"
 if [[ "$VINED_DATA_DIR" != /* && "$VINED_DATA_DIR" != [A-Za-z]:* ]]; then
     VINED_DATA_DIR="$REPO_ROOT/$VINED_DATA_DIR"
 fi
-export VINED_VISUAL_DIR="${VINED_VISUAL_DIR:-$VINED_DATA_DIR/vis_stim}"
+export VINED_VISUAL_DIR="${VINED_VISUAL_DIR:-$VINED_OUTPUT_DIR/visual_features}"
 export VINED_REPLAY_DIR="${VINED_REPLAY_DIR:-$VINED_OUTPUT_DIR/visual_replays}"
 cd "$REPO_ROOT"
 

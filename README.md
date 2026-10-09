@@ -47,7 +47,8 @@ Generated and downloaded artifacts default to the gitignored `output/` directory
 
 ```text
 output/
-  datasets/          # ONE cache, aligned data, dataset caches, and vis_stim features
+  datasets/          # ONE cache, aligned data, and dataset caches
+  visual_features/   # extracted visual feature archives
   visual_replays/    # replay videos and sidecars
   results/           # training checkpoints, evaluation metrics, and plots
   wandb/             # W&B run logs for training and evaluation

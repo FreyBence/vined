@@ -291,7 +291,7 @@ With `--eid EID`, only that session is processed. The old positional count/list
 form and `--eids-file`/`--n-sessions` are no longer supported.
 Defaults follow `VINED_REPLAY_DIR`
 and `VINED_VISUAL_DIR` (normally `output/visual_replays` and
-`output/datasets/vis_stim`). `--output-dir` selects a fresh output location.
+`output/visual_features`). `--output-dir` selects a fresh output location.
 
 `--replay-dir` accepts an explicit session generation, a run containing EID
 directories, or a root with exactly one candidate per requested EID. Multiple

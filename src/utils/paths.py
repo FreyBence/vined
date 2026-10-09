@@ -23,7 +23,7 @@ def dataset_dir():
 
 
 def visual_dir():
-    return project_path("VINED_VISUAL_DIR", dataset_dir() / "vis_stim")
+    return project_path("VINED_VISUAL_DIR", output_dir() / "visual_features")
 
 
 def replay_dir():
