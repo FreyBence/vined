@@ -2,12 +2,15 @@
 
 ## Console progress
 
-The CLI emits timestamped progress to stderr during CLIP revision resolution,
-snapshot loading, observation/trial extraction, compression, archive verification,
-and publication. Extraction reports cumulative observations, encoded features,
-original trial identity, and completed/total trials. Counts update after the first
-completed item, approximately every ten seconds as work completes, and at the end;
-known totals include an estimated remaining time. No logging flag is required.
+The CLI uses stderr progress bars for trial extraction and archive verification.
+The extraction bar shows completed/total trials, observations, encoded features,
+and original trial identity. CLIP loading, compression, and publication messages
+appear between bars.
+
+Bars show elapsed time, throughput, and remaining time when totals are known,
+refreshing at most twice per second. Standalone progress messages are deferred
+until all active bars close; no messages are emitted during a bar. Bars also close
+on exceptions and interrupted iteration. No logging flag is required.
 
 ## Observation input and selection
 

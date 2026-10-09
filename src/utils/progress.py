@@ -1,16 +1,34 @@
-"""Periodic console progress for long-running pipeline operations."""
+"""Console progress bars with stage messages only between active bars."""
 
 import logging
-from time import monotonic
+from tqdm import tqdm
 
 
 logger = logging.getLogger("vined.progress")
+_active_bars = 0
+
+
+class _StageHandler(logging.StreamHandler):
+    def __init__(self):
+        super().__init__()
+        self.pending = []
+
+    def emit(self, record):
+        if _active_bars:
+            self.pending.append(record)
+        else:
+            super().emit(record)
+
+    def flush_pending(self):
+        pending, self.pending = self.pending, []
+        for record in pending:
+            super().emit(record)
 
 
 def configure_progress():
-    """Enable timestamped stderr progress for command-line entry points."""
+    """Enable stderr bars and timestamped messages between pipeline stages."""
     if not logger.handlers:
-        handler = logging.StreamHandler()
+        handler = _StageHandler()
         handler.setFormatter(logging.Formatter("%(asctime)s %(message)s", datefmt="%H:%M:%S"))
         logger.addHandler(handler)
     logger.setLevel(logging.INFO)
@@ -18,36 +36,48 @@ def configure_progress():
 
 
 class Progress:
-    """Report completed work at most every ten seconds, plus first/last items."""
+    """An in-place bar; use as a context manager to close it on failures."""
 
-    def __init__(self, label, total=None, unit="items"):
-        self.label, self.total, self.unit = label, total, unit
-        self.started = self.last_report = monotonic()
+    def __init__(self, label, total=None, unit="items", *, disable=False):
+        global _active_bars
         self.count = 0
-        logger.info("%s: starting%s", label, "" if total is None else f" ({total} {unit})")
+        self.closed = False
+        self.bar = tqdm(total=total, desc=label, unit=unit, dynamic_ncols=True,
+                        mininterval=0.5, miniters=0,
+                        disable=disable or not logger.isEnabledFor(logging.INFO))
+        self.active = not self.bar.disable
+        if self.active:
+            _active_bars += 1
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.finish()
 
     def update(self, count, detail=""):
-        first = self.count == 0 and count > 0
+        if detail:
+            self.bar.set_postfix_str(detail, refresh=False)
+        self.bar.update(count - self.count)
         self.count = count
-        now = monotonic()
-        if first or count == self.total or now - self.last_report >= 10:
-            elapsed = now - self.started
-            completed = str(count) if self.total is None else f"{count}/{self.total}"
-            remaining = (f", ETA {elapsed * (self.total - count) / count:.1f}s"
-                         if self.total is not None and 0 < count < self.total else "")
-            logger.info("%s: %s %s, %.1fs elapsed%s%s", self.label, completed,
-                        self.unit, elapsed, remaining, f", {detail}" if detail else "")
-            self.last_report = now
 
     def finish(self):
-        logger.info("%s: finished (%d %s, %.1fs)", self.label, self.count,
-                    self.unit, monotonic() - self.started)
+        global _active_bars
+        if self.closed:
+            return
+        self.closed = True
+        self.bar.close()
+        if self.active:
+            _active_bars -= 1
+        if not _active_bars:
+            for handler in logger.handlers:
+                if isinstance(handler, _StageHandler):
+                    handler.flush_pending()
 
 
 def iter_progress(items, label, *, total=None, unit="items"):
     """Keep iteration ordered and report only work the consumer has completed."""
-    progress = Progress(label, total, unit)
-    for count, item in enumerate(items, 1):
-        yield item
-        progress.update(count)
-    progress.finish()
+    with Progress(label, total, unit) as progress:
+        for count, item in enumerate(items, 1):
+            yield item
+            progress.update(count)

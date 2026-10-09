@@ -2,12 +2,16 @@
 
 ## Console progress
 
-Training and fine-tuning emit timestamped stderr setup messages. The main process
-reports epoch/batch progress, optimizer steps, learning rate, validation batches,
-validation metric sessions, and final checkpoint selection. Counts update after
-the first completed work, approximately every ten seconds as work completes, and
-at the end, with elapsed time and estimated remaining time. Existing training
-progress bars and epoch metrics remain available, including when W&B is enabled.
+Training and fine-tuning use one stderr progress bar per training epoch, plus
+validation batch/session bars. Epoch bars display optimizer steps and learning
+rate; skipped updates are shown in the bar. Only the main process displays training
+bars. Setup, epoch metrics, and checkpoint messages appear between bars, including
+when W&B is enabled.
+
+Bars show elapsed time, throughput, and remaining time when totals are known,
+refreshing at most twice per second. Standalone progress messages are deferred
+until all active bars close; no messages are emitted during a bar. Bars also close
+on exceptions and interrupted iteration. No logging flag is required.
 
 ## Scenario launcher
 

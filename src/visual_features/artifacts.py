@@ -54,11 +54,10 @@ def write_features(observations, encoder, output, *, batch_size=32, workers=1):
     trial_count = 0
     selected_count = 0
     eid = observations.definition["inputs"]["eid"]
-    progress = Progress(f"visual-features {eid}: extracting", unit="observations")
-    trials_progress = Progress(f"visual-features {eid}: extracting trials",
+    progress = Progress(f"visual-features {eid}: extracting",
         len(observations.definition["inputs"]["requested_trial_ids"]), "trials")
     observation_count = 0
-    with tempfile.TemporaryDirectory(prefix=".features-", dir=output.parent) as temporary:
+    with progress, tempfile.TemporaryDirectory(prefix=".features-", dir=output.parent) as temporary:
         staging = Path(temporary)
         with (staging / "records.jsonl").open("wb") as records, (staging / "pixels-free-features").open("wb") as values:
             with closing(iter_encoded_observations(observations, encoder, batch_size=batch_size,
@@ -82,15 +81,12 @@ def write_features(observations, encoder, output, *, batch_size=32, workers=1):
                     records.write(_json(record) + b"\n")
                     if isinstance(item, EncodedObservation):
                         observation_count += 1
-                        progress.update(observation_count,
-                            f"{count} features, {len(summaries)} trials completed, trial_id={item.metadata['trial_id']}")
-                    else:
-                        trials_progress.update(len(summaries), f"{count} features")
+                    progress.update(len(summaries),
+                        f"{observation_count} observations, {count} features, trial_id={item.metadata['trial_id']}")
         completion = observations.completion
         if completion is None:
             raise ValueError("Cannot publish features without verified replay completion")
         progress.finish()
-        trials_progress.finish()
         logger.info("visual-features %s: extraction complete (%d/%d trials, %d features); hashing and compressing %s",
                     eid, len(summaries), len(completion["requested_trial_ids"]), count, output)
         manifest = dict(schema_version=1, kind="visual_feature_artifacts", definition_id=definition_id,

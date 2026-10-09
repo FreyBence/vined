@@ -6,7 +6,6 @@ import random
 import numpy as np
 import torch
 import torch.nn.functional as F
-from tqdm import tqdm
 from utils.progress import Progress, iter_progress, logger
 
 import wandb
@@ -233,10 +232,9 @@ class MultiModalTrainer():
         self.model.train()
         iterator = iter(self.train_dataloader)
         updates_before = self.optimizer_steps
-        epoch_progress = (Progress(f"training: epoch {epoch + 1}/{self.config.training.num_epochs}",
-                          len(self.train_dataloader), "batches") if self.accelerator.is_main_process else None)
-        with tqdm(total=len(self.train_dataloader), desc=f"Train epoch {epoch + 1}/{self.config.training.num_epochs}",
-                  disable=not self.accelerator.is_local_main_process) as progress:
+        with Progress(f"training: epoch {epoch + 1}/{self.config.training.num_epochs}",
+                      len(self.train_dataloader), "batches",
+                      disable=not self.accelerator.is_main_process) as progress:
             while True:
                 error = None
                 try:
@@ -260,11 +258,7 @@ class MultiModalTrainer():
                 counts = self.accelerator.reduce(local_counts, reduction="sum")
                 self.optimizer.zero_grad(set_to_none=True)
                 if not counts.any():
-                    if self.accelerator.is_main_process:
-                        print("Skipping accumulation window: no eligible objective targets")
-                    progress.update(len(window))
-                    if epoch_progress is not None:
-                        epoch_progress.update(epoch_progress.count + len(window), "no eligible targets; update skipped")
+                    progress.update(progress.count + len(window), "no eligible targets; update skipped")
                     continue
                 for index, (data, selectors) in enumerate(prepared):
                     context = self.accelerator.no_sync(self.model) if index < len(prepared) - 1 else nullcontext()
@@ -283,7 +277,7 @@ class MultiModalTrainer():
                     for i, mod in enumerate(mods):
                         totals[0,i] += numerators[mod].detach().double()
                         totals[1,i] += selectors[mod].sum()
-                    progress.update(1)
+                    progress.update(progress.count + 1)
                 self.accelerator.unscale_gradients(self.optimizer)
                 finite = all(torch.isfinite(parameter.grad).all().item() for parameter in self.model.parameters()
                              if parameter.grad is not None)
@@ -295,9 +289,8 @@ class MultiModalTrainer():
                 self.lr_scheduler.step()
                 self.scheduler_steps += 1
                 self.optimizer.zero_grad(set_to_none=True)
-                if epoch_progress is not None:
-                    epoch_progress.update(epoch_progress.count + len(window),
-                        f"optimizer_step={self.optimizer_steps}, lr={self.optimizer.param_groups[0]['lr']:.6g}")
+                progress.update(progress.count,
+                    f"optimizer_step={self.optimizer_steps}, lr={self.optimizer.param_groups[0]['lr']:.6g}")
         totals = self.accelerator.reduce(totals, reduction="sum")
         if any(totals[1, i] == 0 for i in range(len(mods))):
             raise ValueError("Training epoch has no eligible targets for an active objective")
@@ -308,7 +301,6 @@ class MultiModalTrainer():
                        valid_target_counts={mod: int(totals[1,i]) for i, mod in enumerate(mods)},
                        learning_rate=self.optimizer.param_groups[0]["lr"])
         if self.accelerator.is_main_process:
-            epoch_progress.finish()
             print({"epoch": epoch, **results})
         return results
 

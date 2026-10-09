@@ -233,7 +233,6 @@ def load_samples(sources: Iterable[AlignmentSource], *, config: Optional[SampleC
     trials, provenance = [], {}
     for source in iter_progress(sources, "training-dataset: loading alignment generations",
                                 total=len(sources), unit="sessions"):
-        logger.info("training-dataset: verifying alignment %s", source.path)
         generation = load_alignment(source.path, expected_generation_id=source.expected_generation_id)
         session_id = generation.trials[0].session_id
         if session_id in provenance:

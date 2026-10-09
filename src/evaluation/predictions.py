@@ -114,7 +114,7 @@ def collect_predictions(setup: EvaluationSetup) -> PredictionCollection:
     expected = setup.dataset.samples
     records, seen = [], set()
     progress = Progress(f"evaluation: {model.model_mode} inference on {device}", len(expected), "samples")
-    with torch.inference_mode():
+    with progress, torch.inference_mode():
         for batch in setup.dataloader:
             batch_size = len(batch["sample_id"])
             offset = len(records)

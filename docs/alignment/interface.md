@@ -2,11 +2,14 @@
 
 ## Console progress
 
-The CLI emits timestamped stderr progress for neural/visual input verification,
-visual record reading, trial pairing/resampling, compression, and publication.
-Counts update after the first item, approximately every ten seconds as work
-completes, and at the end, with elapsed time and estimated remaining time when the
-total is known. Structured result output remains on stdout.
+The CLI uses stderr progress bars for visual record reading, trial pairing,
+resampling, and compression. Input verification and publication messages appear
+between bars. Structured results remain on stdout.
+
+Bars show elapsed time, throughput, and remaining time when totals are known,
+refreshing at most twice per second. Standalone progress messages are deferred
+until all active bars close; no messages are emitted during a bar. Bars also close
+on exceptions and interrupted iteration. No logging flag is required.
 
 ## Prepared input boundary
 

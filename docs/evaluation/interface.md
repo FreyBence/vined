@@ -2,12 +2,15 @@
 
 ## Console progress
 
-The CLI emits timestamped stderr progress for checkpoint/dataset setup, inference
-samples, session/neuron metric calculation, artifact writing, optional plotting,
-verification, and publication. Counts update after the first completed work,
-approximately every ten seconds as work completes, and at the end, with elapsed
-time and estimated remaining time when the total is known. Stdout remains the
-structured JSON result, including in setup-only mode.
+The CLI uses stderr progress bars for inference samples, session/neuron metrics,
+and artifact writing. Setup, plotting, verification, and publication messages
+appear between bars. Stdout remains the structured JSON result, including in
+setup-only mode.
+
+Bars show elapsed time, throughput, and remaining time when totals are known,
+refreshing at most twice per second. Standalone progress messages are deferred
+until all active bars close; no messages are emitted during a bar. Bars also close
+on exceptions and interrupted iteration. No logging flag is required.
 
 ## Scenario launcher
 

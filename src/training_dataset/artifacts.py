@@ -204,15 +204,14 @@ def publish_dataset(dataset, output_dir):
         for eid, (units, _) in sorted(populations.items()):
             units.to_parquet(staging / "units" / f"{eid}.parquet", index=True)
         entries = []
-        progress = Progress("training-dataset: writing", sum(len(getattr(dataset, name)) for name in SPLITS), "samples")
-        for split in SPLITS:
-            for sample in getattr(dataset, split):
-                np.savez(staging / "samples" / f"{len(entries):06d}.npz",
-                         **{name: getattr(sample, name) for name in ARRAY_FIELDS})
-                entries.append(dict(**{name: getattr(sample, name) for name in SCALAR_FIELDS},
-                                    metadata=_json(sample.metadata)))
-                progress.update(len(entries), f"split={split}, session={sample.session_id}")
-        progress.finish()
+        with Progress("training-dataset: writing", sum(len(getattr(dataset, name)) for name in SPLITS), "samples") as progress:
+            for split in SPLITS:
+                for sample in getattr(dataset, split):
+                    np.savez(staging / "samples" / f"{len(entries):06d}.npz",
+                             **{name: getattr(sample, name) for name in ARRAY_FIELDS})
+                    entries.append(dict(**{name: getattr(sample, name) for name in SCALAR_FIELDS},
+                                        metadata=_json(sample.metadata)))
+                    progress.update(len(entries), f"split={split}, session={sample.session_id}")
         logger.info("training-dataset: hashing payloads")
         manifest = dict(schema_version=1, kind="training_dataset", complete=True,
                         sessions=sorted(populations), samples=entries,

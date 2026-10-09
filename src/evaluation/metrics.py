@@ -2,7 +2,7 @@
 
 from copy import deepcopy
 from dataclasses import asdict, dataclass
-from utils.progress import iter_progress, logger
+from utils.progress import iter_progress
 
 import numpy as np
 import pandas as pd
@@ -220,7 +220,6 @@ def compute_metrics(collection: PredictionCollection, *, config=None):
     results = {}
     for session, rows in iter_progress(sessions.items(), "evaluation: computing metrics",
                                        total=len(sessions), unit="sessions"):
-        logger.info("evaluation %s: computing metrics for %d trials", session, len(rows))
         units = rows[0].neuron_identity
         if any(not row.neuron_identity.equals(units) or row.bin_size != rows[0].bin_size for row in rows):
             raise ValueError(f"Inconsistent ordered population or bin duration for session {session}")
