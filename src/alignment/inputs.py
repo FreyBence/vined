@@ -12,6 +12,10 @@ from visual_features import EncodedObservation, FeatureArtifactReader
 from utils.progress import iter_progress, logger
 
 
+class TrialUnavailable(ValueError):
+    """A scientifically unusable trial, distinct from session integrity errors."""
+
+
 @dataclass(frozen=True)
 class PreparedTrial:
     session_id: str
@@ -36,6 +40,8 @@ class AlignmentInputs:
     neural_generation_id: str | None
     visual_definition: dict
     visual_completion: dict
+    requested_trial_ids: tuple = ()
+    excluded_trials: tuple = ()
 
 
 def _id(value):
@@ -47,6 +53,8 @@ def _id(value):
 def _window(window, units, onset, offset, bin_size):
     """Check the usable stimulus grid; a shortened final source bin is permitted."""
     edges = np.asarray(window.bin_edges)
+    if window.status == "unavailable" and window.reason == "missing_or_nonfinite_timing":
+        raise TrialUnavailable("Neural stimulus timing is missing or nonfinite")
     shape = (max(0, len(edges) - 1), units)
     if (edges.ndim != 1 or len(edges) < 2 or not np.isfinite(edges).all()
             or np.any(np.diff(edges) <= 0)
@@ -67,25 +75,26 @@ def _window(window, units, onset, offset, bin_size):
     nearest = round(ratio)
     bins = nearest if abs(onset + nearest * bin_size - offset) <= tolerance else int(np.floor(ratio))
     if bins < 1:
-        raise ValueError(f"Trial {window.request_id}: stimulus contains no complete neural bin")
+        raise TrialUnavailable(f"Trial {window.request_id}: stimulus contains no complete neural bin")
     expected = onset + np.arange(bins + 1) * bin_size
     start = int(np.searchsorted(edges, onset - tolerance))
     supplied = edges[start:start + bins + 1]
     if (len(supplied) != len(expected) or np.any(np.abs(supplied - expected) > tolerance)
             or np.any(np.diff(expected) <= 0)):
-        raise ValueError(f"Trial {window.request_id}: incompatible neural grid; prepare onset-anchored "
+        raise TrialUnavailable(f"Trial {window.request_id}: incompatible neural grid; prepare onset-anchored "
                          "counts covering every complete stimulus bin upstream")
     usable = slice(start, start + bins)
     if (not window.valid[usable].all()
             or not np.isfinite(window.observed_duration[usable]).all()
             or np.any(np.abs(window.observed_duration[usable] - np.diff(supplied)[:, None]) > tolerance)):
-        raise ValueError(f"Trial {window.request_id}: complete observed neural coverage is required; "
+        raise TrialUnavailable(f"Trial {window.request_id}: complete observed neural coverage is required; "
                          "resolve unknown/assumed/partial/invalid support upstream")
     return usable
 
 
 def prepare_inputs(neural, visual_path, *, request_trial_ids=None,
-                   expected_neural_generation_id=None, expected_visual_generation_id=None):
+                   expected_neural_generation_id=None, expected_visual_generation_id=None,
+                   skip_invalid=False):
     """Return paired input snapshots after complete public artifact verification.
 
     `neural` is NeuralCounts or an explicit generation directory. Absolute count
@@ -93,16 +102,21 @@ def prepare_inputs(neural, visual_path, *, request_trial_ids=None,
     visual archive and neural requests must contain exactly the same trial set.
     No acquisition, filtering, gap repair, interpolation, or file publication occurs.
     """
+    if not isinstance(skip_invalid, bool):
+        raise ValueError("skip_invalid must be boolean")
     generation_id = None
-    if isinstance(neural, (str, Path)):
+    persisted = isinstance(neural, (str, Path))
+    if persisted:
         logger.info("alignment: loading and verifying neural generation %s", neural)
         loaded = load_generation(neural, expected_generation_id=expected_neural_generation_id)
         generation_id, neural = loaded.generation_id, loaded.data
+        del loaded
     elif expected_neural_generation_id is not None:
         raise ValueError("An expected neural generation ID requires a generation directory")
     if not isinstance(neural, NeuralCounts):
         raise TypeError("neural must be NeuralCounts or an explicit generation directory")
-    neural = deepcopy(neural)
+    if not persisted:
+        neural = deepcopy(neural)
     configuration = neural.configuration
     if (configuration.get("representation") != "unsmoothed_spike_counts"
             or configuration.get("clock") != "source-session"
@@ -141,6 +155,8 @@ def prepare_inputs(neural, visual_path, *, request_trial_ids=None,
         definition = reader.definition
         records = definition["replay_definition"]["inputs"]["trials"]
         timing_records = {_id(record["trial_id"]): record for record in records}
+        if len(timing_records) != len(records):
+            raise ValueError("Duplicate visual trial identities")
         for item in iter_progress(reader, f"alignment {neural.eid}: reading visual features", unit="records"):
             metadata = deepcopy(item.metadata)
             tid = _id(metadata["trial_id"])
@@ -163,22 +179,30 @@ def prepare_inputs(neural, visual_path, *, request_trial_ids=None,
         raise ValueError("Unexpected visual generation; select the intended archive explicitly")
     if set(outcomes) != set(by_trial) or set(timing_records) != set(outcomes):
         raise ValueError("Visual and neural original trial sets differ; supply matching prepared inputs")
-    trials = []
+    trials, excluded = [], []
     for tid in iter_progress(sorted(by_trial), f"alignment {neural.eid}: pairing inputs",
                              total=len(by_trial), unit="trials"):
         record, outcome = timing_records[tid], outcomes[tid]
         events = record.get("events", {})
         bounds = np.asarray([events.get("onset", np.nan), events.get("offset", np.nan)], dtype=float)
-        if not np.isfinite(bounds).all() or bounds[1] <= bounds[0]:
-            raise ValueError(f"Trial {tid}: missing or invalid exact stimulus onset/offset upstream")
-        if list(bounds) != record.get("requested_domain") or list(bounds) != outcome.get("requested_domain"):
+        # Identity and contradictory source domains are session integrity errors.
+        if np.isfinite(bounds).all() and bounds[1] > bounds[0] and (
+                list(bounds) != record.get("requested_domain") or list(bounds) != outcome.get("requested_domain")):
             raise ValueError(f"Trial {tid}: conflicting stimulus bounds and visual domain")
-        rows = tuple(observations.get(tid, ()))
-        times = np.asarray([row.metadata["session_time"] for row in rows], dtype=float)
-        if not np.isfinite(times).all() or np.any(np.diff(times) <= 0):
-            raise ValueError(f"Trial {tid}: malformed or non-monotonic visual timestamps")
-        _window(by_trial[tid], len(units), *bounds, float(bin_size))
+        try:
+            if not np.isfinite(bounds).all() or bounds[1] <= bounds[0]:
+                raise TrialUnavailable("missing or invalid exact stimulus onset/offset upstream")
+            rows = tuple(observations.get(tid, ()))
+            times = np.asarray([row.metadata["session_time"] for row in rows], dtype=float)
+            if not np.isfinite(times).all() or np.any(np.diff(times) <= 0):
+                raise TrialUnavailable("malformed or non-monotonic visual timestamps")
+            _window(by_trial[tid], len(units), *bounds, float(bin_size))
+        except TrialUnavailable as exc:
+            if not skip_invalid:
+                raise ValueError(f"Trial {tid}: {exc}") from exc
+            excluded.append(dict(session_id=neural.eid, trial_id=tid, stage="input", reason=str(exc)))
+            continue
         trials.append(PreparedTrial(neural.eid, tid, *map(float, bounds), by_trial[tid], rows, outcome))
     return AlignmentInputs(neural.eid, float(bin_size), units, neural.recordings,
                            tuple(trials), configuration, neural.trial_sources,
-                           generation_id, definition, completion)
+                           generation_id, definition, completion, tuple(sorted(by_trial)), tuple(excluded))

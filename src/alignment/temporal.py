@@ -1,12 +1,14 @@
 """Stimulus-bounded, count-preserving alignment on supplied neural bins."""
 
 from copy import deepcopy
+from concurrent.futures import ThreadPoolExecutor
+from functools import partial
 from utils.progress import iter_progress
 from dataclasses import dataclass
 
 import numpy as np
 
-from .inputs import AlignmentInputs, _id, _window
+from .inputs import AlignmentInputs, TrialUnavailable, _id, _window
 
 
 HELD_STATE_POLICY = "timestamp-aware held-state over neural intervals v1"
@@ -40,7 +42,7 @@ def _coverage(parts):
         if (part["status"] != "valid" or not np.isfinite([start, end]).all()
                 or end < start or type(part["start_inclusive"]) is not bool
                 or type(part["end_inclusive"]) is not bool):
-            raise ValueError("Visual reconstruction coverage is missing, invalid, or unavailable")
+            raise TrialUnavailable("Visual reconstruction coverage is missing, invalid, or unavailable")
         intervals.append((start, end, part["start_inclusive"], part["end_inclusive"]))
     merged = []
     for start, end, left_closed, right_closed in sorted(intervals):
@@ -70,7 +72,7 @@ def _visual(trial, starts, ends):
             or outcome.get("unattempted_count") != 0 or not rows
             or outcome.get("scheduled_count") != len(rows)
             or outcome.get("emitted_count") != len(rows)):
-        raise ValueError("Complete accounted visual observations are required; resolve missing data upstream")
+        raise TrialUnavailable("Complete accounted visual observations are required; resolve missing data upstream")
     timing = outcome.get("timing") or {}
     if (timing.get("clock") != "session_seconds" or timing.get("domain") != "visible_interval"
             or timing.get("time_kind") != "reconstructed" or timing.get("anchor") != "stimulus_onset"):
@@ -82,7 +84,7 @@ def _visual(trial, starts, ends):
     if not any((start < trial.stim_on or start == trial.stim_on and left_closed)
                and end >= trial.stim_off
                for start, end, left_closed, right_closed in segments):
-        raise ValueError("Visual reconstruction does not continuously cover the stimulus interval")
+        raise TrialUnavailable("Visual reconstruction does not continuously cover the stimulus interval")
     times, features, indices, identities = [], [], [], []
     update_times, encoded_indices = [], []
     previous_time = None
@@ -92,15 +94,17 @@ def _visual(trial, starts, ends):
         if (meta.get("eid") != trial.session_id or meta.get("trial_id") != trial.trial_id
                 or meta.get("schedule_index") != index
                 or meta.get("trial_table_fingerprint") != outcome.get("trial_table_fingerprint")
-                or meta.get("timing") != timing or meta.get("status") != "valid"
+                or meta.get("timing") != timing
                 or not np.isfinite(time) or time < trial.stim_on or time > trial.stim_off
                 or (previous_time is not None and time <= previous_time)):
             raise ValueError("Malformed, mismatched, or unavailable visual source observation")
+        if meta.get("status") != "valid":
+            raise TrialUnavailable("Visual source observation is unavailable or invalid")
         tolerance = 4 * max(abs(np.spacing(time)), abs(np.spacing(trial.stim_on)), abs(np.spacing(trial.stim_off)))
         expected = trial.stim_on + index / cadence
         terminal = index == len(rows) - 1 and time == trial.stim_off
         if abs(time - expected) > tolerance and not (terminal and time < expected):
-            raise ValueError("Missing or irregular expected visual observation; regenerate upstream")
+            raise TrialUnavailable("Missing or irregular expected visual observation; regenerate upstream")
         previous_time = time
         update_times.append(time)
         encoded_indices.append(-1)
@@ -115,12 +119,12 @@ def _visual(trial, starts, ends):
             identities.append(meta["observation_id"])
             encoded_indices[-1] = len(features) - 1
         elif row.status != "not_selected" or row.selected or row.feature is not None:
-            raise ValueError("Expected visual extraction is unavailable")
+            raise TrialUnavailable("Expected visual extraction is unavailable")
     next_time = trial.stim_on + len(rows) / cadence
     if previous_time != trial.stim_off and next_time < trial.stim_off:
-        raise ValueError("Expected visual observations are missing at the stimulus end")
+        raise TrialUnavailable("Expected visual observations are missing at the stimulus end")
     if not times:
-        raise ValueError("No encoded visual observations; regenerate upstream")
+        raise TrialUnavailable("No encoded visual observations; regenerate upstream")
     times = np.asarray(times, dtype=np.float64)
     updates = np.asarray(update_times, dtype=np.float64)
     support_ends = np.r_[updates[1:], trial.stim_off]
@@ -129,16 +133,16 @@ def _visual(trial, starts, ends):
     # future observation for a bin merely because its center follows an update.
     active = np.searchsorted(updates, starts + tolerance, side="right") - 1
     if np.any(active < 0):
-        raise ValueError("No active visual state at a neural interval start")
+        raise TrialUnavailable("No active visual state at a neural interval start")
     if np.any(ends > support_ends[active] + tolerance):
-        raise ValueError("A display update falls inside a neural bin; matching physical intervals are required")
+        raise TrialUnavailable("A display update falls inside a neural bin; matching physical intervals are required")
     source = np.asarray(encoded_indices, dtype=np.int64)[active]
     if np.any(source < 0):
-        raise ValueError("Active visual state was not encoded; extract every required update upstream")
+        raise TrialUnavailable("Active visual state was not encoded; extract every required update upstream")
     for a, b in zip(starts, ends):
         if not any((a > start or a == start and left_closed) and b <= end
                    for start, end, left_closed, right_closed in segments):
-            raise ValueError("Held visual state would cross unsupported coverage")
+            raise TrialUnavailable("Held visual state would cross unsupported coverage")
     result = np.asarray(features, dtype=np.float32)[source].copy()
     # Retain the existing association fields for downstream dataset consumers:
     # identical endpoints and zero weights denote selection, never interpolation.
@@ -152,8 +156,9 @@ def _visual(trial, starts, ends):
     return result, provenance
 
 
-def align_trials(inputs):
+def align_trials(inputs, *, workers=1):
     """Return all aligned trials, or raise without returning a partial collection."""
+    _validate_workers(workers)
     if not isinstance(inputs, AlignmentInputs):
         raise TypeError("inputs must be AlignmentInputs returned by prepare_inputs")
     if not np.isfinite(inputs.bin_size) or inputs.bin_size <= 0 or not inputs.trials:
@@ -161,44 +166,103 @@ def align_trials(inputs):
     identities = [_id(trial.trial_id) for trial in inputs.trials]
     if len(set(identities)) != len(identities):
         raise ValueError("Duplicate original trial IDs")
-    aligned = []
-    for trial in iter_progress(sorted(inputs.trials, key=lambda item: item.trial_id),
-            f"alignment {inputs.session_id}: resampling", total=len(inputs.trials), unit="trials"):
+    trials = sorted(inputs.trials, key=lambda item: item.trial_id)
+    operation = partial(_align_trial, inputs)
+    label = f"alignment {inputs.session_id}: resampling"
+    if workers == 1:
+        return tuple(iter_progress(map(operation, trials), label, total=len(trials), unit="trials"))
+    with ThreadPoolExecutor(max_workers=min(workers, len(trials))) as executor:
+        return tuple(iter_progress(executor.map(operation, trials), label,
+                                   total=len(trials), unit="trials"))
+
+
+def _align_trial(inputs, trial):
+    try:
+        if (trial.session_id != inputs.session_id or not inputs.units.eid.eq(inputs.session_id).all()
+                or not np.isfinite([trial.stim_on, trial.stim_off]).all()
+                or trial.stim_off <= trial.stim_on):
+            raise ValueError("Session mismatch or invalid stimulus bounds")
+        usable = _window(trial.neural, len(inputs.units), trial.stim_on, trial.stim_off, inputs.bin_size)
+        edges = trial.neural.bin_edges[usable.start:usable.stop + 1].copy()
+        starts, ends = edges[:-1], edges[1:]
+        centers = starts + (ends - starts) / 2
+        if np.any(centers <= starts) or np.any(centers >= ends):
+            raise ValueError("Neural bin centers are unrepresentable at source clock precision")
+        visual, resampling = _visual(trial, starts, ends)
+        tail = trial.stim_off - float(ends[-1])
+        tolerance = 4 * max(abs(np.spacing(trial.stim_off)), abs(np.spacing(ends[-1])))
+        if tail < -tolerance or tail >= inputs.bin_size + tolerance:
+            raise ValueError("Neural endpoint does not define a complete-bin stimulus interval")
+        metadata = dict(
+            clock="session_seconds", neural_intervals="[start,end)",
+            visual_resampling=HELD_STATE_POLICY,
+            neural_generation_id=inputs.neural_generation_id,
+            neural_request_id=trial.neural.request_id,
+            neural_configuration=deepcopy(inputs.neural_configuration),
+            neural_trial_sources=deepcopy(inputs.neural_trial_sources),
+            neural_recordings=deepcopy(inputs.recordings),
+            neural_source_interval=trial.neural.interval,
+            neural_source_bin_slice=(usable.start, usable.stop),
+            visual_definition=_visual_provenance(inputs, trial),
+            visual_completion=dict(generation_id=inputs.visual_completion["generation_id"],
+                definition_id=inputs.visual_completion.get("definition_id"),
+                replay_generation_id=inputs.visual_completion["replay_completion"]["generation_id"],
+                scope="verified_source_generation_identity"),
+            visual_outcome=deepcopy(trial.visual_outcome), resampling=resampling,
+        )
+        return AlignedTrial(
+            trial.session_id, trial.trial_id, trial.stim_on, trial.stim_off,
+            float(starts[0]), float(ends[-1]), inputs.bin_size, len(starts), max(0., tail),
+            starts, centers, ends, trial.neural.counts[usable].copy(),
+            inputs.units.copy(deep=True), visual, metadata)
+    except TrialUnavailable as exc:
+        raise TrialUnavailable(f"Trial {trial.trial_id}: {exc}") from exc
+
+
+
+def _validate_workers(workers):
+    if isinstance(workers, bool) or not isinstance(workers, int) or workers < 1:
+        raise ValueError("workers must be a positive integer")
+
+
+def _visual_provenance(inputs, trial):
+    definition = inputs.visual_definition
+    # The complete source definition remains in the generation-level manifest.
+    record = next(item for item in definition["replay_definition"]["inputs"]["trials"]
+                  if item["trial_id"] == trial.trial_id)
+    return dict(scope="trial", replay_definition_id=definition["replay_definition_id"],
+                representation=deepcopy(definition["representation"]),
+                selection=deepcopy(definition["selection"]), trial=deepcopy(record))
+
+
+def _align_available(inputs, workers):
+    """Collect trial outcomes in canonical order; unexpected failures propagate."""
+    excluded = list(inputs.excluded_trials)
+    def operation(trial):
         try:
-            if (trial.session_id != inputs.session_id or not inputs.units.eid.eq(inputs.session_id).all()
-                    or not np.isfinite([trial.stim_on, trial.stim_off]).all()
-                    or trial.stim_off <= trial.stim_on):
-                raise ValueError("Session mismatch or invalid stimulus bounds")
-            usable = _window(trial.neural, len(inputs.units), trial.stim_on, trial.stim_off, inputs.bin_size)
-            edges = trial.neural.bin_edges[usable.start:usable.stop + 1].copy()
-            starts, ends = edges[:-1], edges[1:]
-            centers = starts + (ends - starts) / 2
-            if np.any(centers <= starts) or np.any(centers >= ends):
-                raise ValueError("Neural bin centers are unrepresentable at source clock precision")
-            visual, resampling = _visual(trial, starts, ends)
-            tail = trial.stim_off - float(ends[-1])
-            tolerance = 4 * max(abs(np.spacing(trial.stim_off)), abs(np.spacing(ends[-1])))
-            if tail < -tolerance or tail >= inputs.bin_size + tolerance:
-                raise ValueError("Neural endpoint does not define a complete-bin stimulus interval")
-            metadata = dict(
-                clock="session_seconds", neural_intervals="[start,end)",
-                visual_resampling=HELD_STATE_POLICY,
-                neural_generation_id=inputs.neural_generation_id,
-                neural_request_id=trial.neural.request_id,
-                neural_configuration=deepcopy(inputs.neural_configuration),
-                neural_trial_sources=deepcopy(inputs.neural_trial_sources),
-                neural_recordings=deepcopy(inputs.recordings),
-                neural_source_interval=trial.neural.interval,
-                neural_source_bin_slice=(usable.start, usable.stop),
-                visual_definition=deepcopy(inputs.visual_definition),
-                visual_completion=deepcopy(inputs.visual_completion),
-                visual_outcome=deepcopy(trial.visual_outcome), resampling=resampling,
-            )
-            aligned.append(AlignedTrial(
-                trial.session_id, trial.trial_id, trial.stim_on, trial.stim_off,
-                float(starts[0]), float(ends[-1]), inputs.bin_size, len(starts), max(0., tail),
-                starts, centers, ends, trial.neural.counts[usable].copy(),
-                inputs.units.copy(deep=True), visual, metadata))
-        except (ValueError, KeyError, TypeError) as exc:
-            raise ValueError(f"Trial {trial.trial_id}: {exc}") from exc
-    return tuple(aligned)
+            return _align_trial(inputs, trial)
+        except TrialUnavailable as exc:
+            return dict(session_id=inputs.session_id, trial_id=trial.trial_id,
+                        stage="temporal", reason=str(exc))
+    ordered = sorted(inputs.trials, key=lambda item: item.trial_id)
+    retained = []
+    def consume(results):
+        for result in iter_progress(results, f"alignment {inputs.session_id}: resampling",
+                                    total=len(ordered), unit="trials"):
+            if isinstance(result, AlignedTrial):
+                retained.append(result)
+            else:
+                excluded.append(result)
+    if workers == 1 or not ordered:
+        consume(map(operation, ordered))
+    else:
+        with ThreadPoolExecutor(max_workers=min(workers, len(ordered))) as executor:
+            consume(executor.map(operation, ordered))
+    excluded.sort(key=lambda item: item["trial_id"])
+    if not retained:
+        from utils.progress import logger
+        for item in excluded:
+            logger.warning("alignment %s trial %s excluded: %s", inputs.session_id,
+                           item["trial_id"], item["reason"])
+        raise ValueError(f"No usable trials remain for {inputs.session_id}; excluded {len(excluded)} trials")
+    return tuple(retained), tuple(excluded)

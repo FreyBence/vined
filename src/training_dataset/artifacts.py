@@ -71,7 +71,7 @@ def _validate_sample(sample):
                 or actual.shape != expected.shape or not np.array_equal(actual, expected, equal_nan=True)):
             raise ValueError(f"Invalid dataset array or padding: {name}")
     source = sample.metadata["source_alignment"]
-    if source is not None and (not isinstance(source, dict) or source.get("schema_version") != 1
+    if source is not None and (not isinstance(source, dict) or source.get("schema_version") not in (1, 2)
             or not isinstance(source.get("path"), str)
             or not isinstance(source.get("generation_id"), str) or len(source["generation_id"]) != 64):
         raise ValueError("Invalid source alignment generation provenance")

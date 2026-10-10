@@ -239,7 +239,9 @@ def load_samples(sources: Iterable[AlignmentSource], *, config: Optional[SampleC
             raise ValueError(f"Select exactly one alignment generation for session {session_id}")
         provenance[session_id] = dict(generation_id=generation.generation_id,
                                       path=str(generation.path),
-                                      schema_version=generation.manifest["schema_version"])
+                                      schema_version=generation.manifest["schema_version"],
+                                      requested_trial_ids=generation.manifest["requested_trial_ids"],
+                                      excluded_trials=generation.manifest.get("excluded_trials", []))
         trials.extend(generation.trials)
     logger.info("training-dataset: constructing %d samples from %d sessions", len(trials), len(sources))
     samples = _build(trials, config, provenance)

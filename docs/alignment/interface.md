@@ -33,7 +33,7 @@ Signature:
 ```python
 prepare_inputs(neural, visual_path, *, request_trial_ids=None,
                expected_neural_generation_id=None,
-               expected_visual_generation_id=None) -> AlignmentInputs
+               expected_visual_generation_id=None, skip_invalid=False) -> AlignmentInputs
 ```
 
 `neural` accepts a `neural_data.NeuralCounts` or an explicit generation directory
@@ -46,8 +46,11 @@ provided, must match exactly. No automatic generation discovery or reuse occurs.
 
 Trial-mode counts use their original trial IDs. Absolute count requests require
 `request_trial_ids`, a mapping of every request ID to a unique original trial ID.
-All IDs are nonnegative int64-compatible integers. The visual and mapped neural
-trial sets must match exactly; no trial is silently skipped or renumbered.
+All IDs are nonnegative int64-compatible integers. The visual and mapped neural trial sets must match exactly. With the default
+`skip_invalid=False`, an unusable trial raises. `skip_invalid=True` excludes
+trial-level timing, grid, or coverage failures with their original IDs and
+reasons in `excluded_trials`; no trial is silently skipped or renumbered.
+Integrity and unsupported-representation errors remain fatal.
 
 ## Input requirements
 
@@ -82,7 +85,8 @@ coincidence; supplied timestamps and complete state support are checked explicit
 
 ## Return contract
 
-`AlignmentInputs` contains `session_id`, `bin_size`, copied `units` and
+`AlignmentInputs` includes original `requested_trial_ids` and input-stage
+`excluded_trials` records (`session_id`, `trial_id`, `stage`, `reason`), plus `session_id`, `bin_size`, copied `units` and
 `recordings`, and `trials` sorted by original trial ID. It also preserves
 `neural_configuration`, `neural_trial_sources`, `neural_generation_id` (or `None`
 for direct counts), the complete `visual_definition`, and verified
@@ -95,7 +99,8 @@ Feature arrays are read-only. Neural counts have shape `[source_bins, units]`;
 encoded features have shape `[768]`. Neither input is an aligned output tensor.
 Times and bin duration are seconds in the source session clock, not model indices.
 
-The result is a defensive snapshot of caller inputs; nested metadata and neural
+Direct in-memory counts are defensively copied; persisted counts are freshly
+loaded and reused without another full-array copy. The result is caller-owned; nested metadata and neural
 arrays remain caller-owned mutable objects. No acquisition, population selection,
 resampling, splitting, padding, or file publication occurs.
 
@@ -109,7 +114,7 @@ grids or missing coverage evidence must be resolved through upstream preparation
 
 ## Temporal alignment
 
-`alignment.align_trials(inputs: AlignmentInputs) -> tuple[AlignedTrial, ...]`
+`alignment.align_trials(inputs: AlignmentInputs, *, workers=1) -> tuple[AlignedTrial, ...]`
 returns one aligned trial per paired input, sorted by original trial ID. Use:
 
 ```python
@@ -160,7 +165,7 @@ implements the explicitly accepted held-state requirement; the existing
 | `neural_activity` | Int64 `[T,N]` raw counts, retaining zeros and silent units. |
 | `neuron_identity` | Copied full ordered unit table; row `n` identifies neural column `n`. |
 | `visual_features` | Float32 `[T,768]` unchanged source features held over the matching neural intervals. |
-| `alignment_metadata` | Source definitions/completion, neural configuration/recordings/trial sources, request/generation identities, source-bin slice, visual outcome, and resampling policy/associations. |
+| `alignment_metadata` | Compact trial-specific source definitions/completion identities, neural configuration/recordings/trial sources, request/generation identities, source-bin slice, visual outcome, and resampling policy/associations. |
 
 `alignment_metadata["visual_resampling"]` records the versioned mapping policy.
 The retained `resampling` container provides encoded `source_times`, observation
@@ -190,10 +195,12 @@ loaded = load_alignment(generation.path,
 trials = loaded.trials
 ```
 
-- `generate_alignment(neural, visual_path, output_dir, **input_options)` calls
-  `prepare_inputs`, `align_trials`, and the publisher. Input options are exactly
+- `generate_alignment(neural, visual_path, output_dir, *, workers=1, skip_invalid=True, **input_options)` calls
+  verified input preparation, temporal trial processing, and the publisher.
+  By default it retains usable trials and records explicit input/temporal-stage
+  exclusions. `skip_invalid=False` requests strict behavior. Input options are exactly
   the keyword options of `prepare_inputs`; unknown keywords fail.
-- `publish_alignment(trials, output_dir)` accepts a nonempty canonical sequence
+- `publish_alignment(trials, output_dir, *, workers=1, requested_trial_ids=None, excluded_trials=(), source_provenance=None)` accepts a nonempty canonical sequence
   of `AlignedTrial` objects from one canonical session UUID and one shared ordered
   unit population. It validates array shapes/dtypes, temporal consistency,
   identities, and required provenance before publishing.
@@ -217,7 +224,7 @@ explicit load. A source, alignment, serialization, or verification error prevent
 completed publication. Ordinary failures clean staging files; forced termination
 can leave an unpublished temporary directory, which no loader selects implicitly.
 
-### Persistence schema 1
+### Persistence schemas 1 and 2
 
 ```text
 <output_dir>/<session_id>/<generation_id>/
@@ -234,10 +241,22 @@ Each numbered NPZ corresponds to one trial in manifest order and contains only
 `visual_features`, with the dtypes/shapes above. Int64 spike counts are retained;
 no eight-bit serializer or padding is used. Loading disables pickle.
 
+New publications use `schema_version=2`. `requested_trial_ids` partitions exactly
+into canonical `retained_trial_ids` and `excluded_trials`, whose records carry
+original session/trial identity, input/temporal stage, and nonempty reason. No
+excluded trial has a scientific payload. All trials excluded is an error.
+`source_provenance` stores full visual definition/completion once per generation.
+Each trial's `visual_definition` instead records `scope="trial"`, source replay
+identity, representation/selection, and that trial's source record;
+`visual_completion` records verified feature/replay generation identities.
+Dataset samples retain these compact references rather than copying session-sized
+source definitions. Schema-1 generations remain loadable with their original
+full per-trial provenance and requested-equals-retained accounting.
+
 The manifest contains `schema_version`, `kind="aligned_trials"`, `complete`,
 `eid`, `requested_trial_ids`, ordered `trials`, `implementation`, `files`, and
 `generation_id`, and `visual_mapping_policies`. The policy list is checked against
-trial metadata and bound into generation identity. The array schema remains 1;
+trial metadata and bound into generation identity. The NPZ array fields and dtypes are unchanged;
 historical interpolation generations remain explicitly loadable with their old
 policy/provenance and are never silently converted to held-state data. Trial
 entries carry original ID, exact stimulus bounds, aligned
@@ -249,8 +268,9 @@ restored as NumPy arrays in loaded trials; the returned manifest remains JSON da
 
 Missing files raise filesystem errors. Malformed, incompatible, hash-mismatched,
 or inconsistently accounted generations raise `ValueError`. A supplied expected
-generation ID rejects unintended selection. Completed means every requested trial
-has valid aligned observations; incomplete trials are not published as placeholders.
+generation ID rejects unintended selection. Completed means every requested trial is accounted for and at least one is
+retained. Every retained trial has valid aligned observations; damaged trials
+are recorded as exclusions, never published as placeholders.
 
 ### CLI and downstream handoff
 
@@ -260,11 +280,52 @@ From the checkout root with the project Python:
 python src/prepare_alignment.py --neural-generation PATH --visual-features PATH
 ```
 
+Input paths may be omitted; session selection defaults to `eids/eids.txt`
+(or `VINED_EIDS_FILE`):
+
+```bash
+# All configured sessions:
+bash script/prepare_data.sh
+# One session:
+bash script/prepare_data.sh --eid EID --workers 4
+# First two sessions from another list:
+bash script/prepare_data.sh --eids-file eids/my_sessions.txt --n-sessions 2
+```
+
+`--neural-root` defaults to `<VINED_OUTPUT_DIR>/neural` (normally `output/neural`).
+`--visual-root` defaults to `VINED_VISUAL_DIR` (normally `output/visual_features`).
+The CLI resolves one completed neural generation under `<neural-root>/<eid>/`
+and reads `<visual-root>/<eid>_visual_clip.npz`. Multiple neural generations
+require `--neural-generation PATH` or `--expected-neural-generation-id ID`;
+no latest generation is selected. Missing inputs fail without acquisition.
+Sessions are processed in list order, with parallel trial work within each
+session. The shared runner reports completed/failed/unprocessed sessions and
+continues ordinary per-session failures; any failure gives a nonzero exit.
+Explicit input paths override their respective defaults and remain usable without
+session selection when both are supplied. Explicit paths, expected generation
+IDs, and request mappings require a single selected session. Selected EIDs are
+checked against both sources.
+
+The CLI defaults to retaining usable trials. `--strict-trials` opts into failure
+on the first unusable trial. Success JSON includes requested/retained counts and
+the excluded trial records. Corrupt artifacts, conflicting source identities,
+unsupported representations, and sessions without usable trials still fail.
+
+`--workers N` runs trial resampling and NPZ compression in up to N shared-memory
+threads (CLI default 4; `--workers 1` is sequential). The Python APIs
+`align_trials`, `publish_alignment`, and `generate_alignment` accept the same
+positive integer `workers` keyword, defaulting to 1 for existing callers.
+Trial results and manifest entries retain canonical order regardless of worker
+completion order. Input verification, pairing, and final publication/readback
+remain sequential. Failed work prevents publication; progress is reported by the
+calling thread. Worker count does not change scientific configuration or schemas,
+and performance depends on the input and available CPU/I/O capacity.
+
 `--output-dir` defaults to `<VINED_OUTPUT_DIR>/alignment`. Optional
 `--expected-neural-generation-id` and `--expected-visual-generation-id` enforce
 explicit identities. `--request-trial-ids FILE` reads a JSON object mapping
 canonical decimal request-ID keys to integer original trial IDs for absolute
-neural requests. One explicit session pair is processed per invocation. Success
+neural requests. Each selected session produces its own alignment generation. Success
 prints generation ID, absolute path, session ID, and original trial IDs and exits
 0. Input/publication failures report the error and exit 1; CLI argument errors
 exit 2. No acquisition or network access is performed.
@@ -275,8 +336,7 @@ fixed-window selection, LFP preparation, and automatic dataset splitting are
 retired from these alignment launchers. Shared legacy helper functions remain
 available for callers outside this supported boundary.
 
-Training-dataset should consume `load_alignment(...).trials` and owns splitting,
-padding, and model packaging. The existing `src/create_dataset.py` currently
-expects `<eid>_aligned/provenance.json` and split Hugging Face data; it cannot
-consume schema 1 yet. These artifacts deliberately do not masquerade as that
-format. Consumer migration is separate training-dataset work.
+Training-dataset consumes `load_alignment(...).trials` and owns splitting,
+padding, and model packaging. `src/create_dataset.py --alignment-generation PATH`
+accepts published alignment generations; see the
+[training-dataset interface](../training-dataset/interface.md) for creation options.

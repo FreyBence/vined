@@ -1,5 +1,7 @@
 """Standalone unsplit aligned generations with verified atomic publication."""
 
+from concurrent.futures import ThreadPoolExecutor
+from functools import partial
 from dataclasses import dataclass
 from copy import deepcopy
 from utils.progress import iter_progress, logger
@@ -13,7 +15,7 @@ import pandas as pd
 
 from utils.provenance import file_hash, fingerprint, source_hashes, write_json
 from .inputs import prepare_inputs, _id
-from .temporal import AlignedTrial, align_trials, HELD_STATE_POLICY
+from .temporal import AlignedTrial, align_trials, HELD_STATE_POLICY, _validate_workers, _align_available
 
 
 @dataclass(frozen=True)
@@ -141,7 +143,7 @@ def _load_alignment(path, *, expected_generation_id=None):
     path = Path(path).resolve()
     manifest = json.loads((path / "manifest.json").read_text(encoding="utf-8"))
     payload = {key: value for key, value in manifest.items() if key != "generation_id"}
-    if (manifest.get("schema_version") != 1 or manifest.get("kind") != "aligned_trials"
+    if (manifest.get("schema_version") not in (1, 2) or manifest.get("kind") != "aligned_trials"
             or manifest.get("complete") is not True
             or fingerprint(payload) != manifest.get("generation_id")
             or expected_generation_id is not None and expected_generation_id != manifest["generation_id"]):
@@ -180,8 +182,14 @@ def _load_alignment(path, *, expected_generation_id=None):
     if ("visual_mapping_policies" in manifest and manifest["visual_mapping_policies"] !=
             sorted({trial.alignment_metadata["visual_resampling"] for trial in trials})):
         raise ValueError("Alignment visual mapping policy accounting mismatch")
-    if manifest["requested_trial_ids"] != [trial.trial_id for trial in trials]:
-        raise ValueError("Alignment trial accounting mismatch")
+    if manifest["schema_version"] == 1:
+        if manifest["requested_trial_ids"] != [trial.trial_id for trial in trials]:
+            raise ValueError("Alignment trial accounting mismatch")
+    else:
+        _validate_accounting(manifest["eid"], manifest["requested_trial_ids"],
+                             [trial.trial_id for trial in trials], manifest["excluded_trials"])
+        if manifest["retained_trial_ids"] != [trial.trial_id for trial in trials]:
+            raise ValueError("Retained alignment trial accounting mismatch")
     return AlignmentGeneration(manifest["generation_id"], path, tuple(trials), manifest)
 
 
@@ -193,10 +201,16 @@ def load_alignment(path, *, expected_generation_id=None):
         raise ValueError(f"Malformed alignment generation: {exc}") from exc
 
 
-def publish_alignment(trials, output_dir):
+def publish_alignment(trials, output_dir, *, workers=1, requested_trial_ids=None,
+                      excluded_trials=(), source_provenance=None):
     """Publish supplied aligned trials only after a successful consumer readback."""
+    _validate_workers(workers)
     trials = tuple(trials)
     _validate(trials)
+    retained = [trial.trial_id for trial in trials]
+    requested = retained if requested_trial_ids is None else list(requested_trial_ids)
+    excluded = _json(excluded_trials)
+    _validate_accounting(trials[0].session_id, requested, retained, excluded)
     implementation = _implementation()
     parent = Path(output_dir).resolve() / trials[0].session_id
     parent.mkdir(parents=True, exist_ok=True)
@@ -204,21 +218,22 @@ def publish_alignment(trials, output_dir):
         staging = Path(temporary) / "generation"
         (staging / "trials").mkdir(parents=True)
         trials[0].neuron_identity.to_parquet(staging / "units.parquet", index=False)
-        entries = []
-        for index, trial in iter_progress(enumerate(trials),
-                f"alignment {trials[0].session_id}: compressing", total=len(trials), unit="trials"):
-            np.savez_compressed(staging / f"trials/{index:06d}.npz",
-                bin_start_times=trial.bin_start_times, bin_center_times=trial.bin_center_times,
-                bin_end_times=trial.bin_end_times, neural_activity=trial.neural_activity,
-                visual_features=trial.visual_features)
-            entries.append({name: _json(getattr(trial, name)) for name in (
-                "trial_id", "stim_on", "stim_off", "aligned_start", "aligned_end", "bin_size",
-                "bin_count", "discarded_tail_duration", "alignment_metadata")})
+        operation = partial(_write_trial, staging)
+        label = f"alignment {trials[0].session_id}: compressing"
+        if workers == 1:
+            entries = list(iter_progress(map(operation, enumerate(trials)), label,
+                                         total=len(trials), unit="trials"))
+        else:
+            with ThreadPoolExecutor(max_workers=min(workers, len(trials))) as executor:
+                entries = list(iter_progress(executor.map(operation, enumerate(trials)), label,
+                                             total=len(trials), unit="trials"))
         files = {name: file_hash(staging / name) for name in
                  ["units.parquet"] + [f"trials/{index:06d}.npz" for index in range(len(trials))]}
-        manifest = dict(schema_version=1, kind="aligned_trials", complete=True,
+        manifest = dict(schema_version=2, kind="aligned_trials", complete=True,
                         visual_mapping_policies=sorted({trial.alignment_metadata["visual_resampling"] for trial in trials}),
-                        eid=trials[0].session_id, requested_trial_ids=[trial.trial_id for trial in trials],
+                        eid=trials[0].session_id, requested_trial_ids=requested,
+                        retained_trial_ids=retained, excluded_trials=excluded,
+                        source_provenance=_json(source_provenance),
                         trials=entries, implementation=implementation, files=files)
         manifest["generation_id"] = fingerprint(manifest)
         write_json(staging / "manifest.json", manifest)
@@ -234,6 +249,45 @@ def publish_alignment(trials, output_dir):
     return AlignmentGeneration(verified.generation_id, destination, verified.trials, verified.manifest)
 
 
-def generate_alignment(neural, visual_path, output_dir, **input_options):
-    """Prepare explicit modality inputs, align, and publish one session."""
-    return publish_alignment(align_trials(prepare_inputs(neural, visual_path, **input_options)), output_dir)
+def generate_alignment(neural, visual_path, output_dir, *, workers=1, skip_invalid=True, **input_options):
+    """Publish usable trials with complete requested/retained/excluded accounting."""
+    _validate_workers(workers)
+    inputs = prepare_inputs(neural, visual_path, skip_invalid=skip_invalid, **input_options)
+    if skip_invalid:
+        trials, excluded = _align_available(inputs, workers)
+    else:
+        trials, excluded = align_trials(inputs, workers=workers), ()
+    logger.info("alignment %s: retained %d/%d trials; excluded %d", inputs.session_id,
+                len(trials), len(inputs.requested_trial_ids), len(excluded))
+    requested = inputs.requested_trial_ids
+    source = dict(visual_definition=inputs.visual_definition, visual_completion=inputs.visual_completion)
+    del inputs
+    return publish_alignment(trials, output_dir, workers=workers,
+        requested_trial_ids=requested, excluded_trials=excluded, source_provenance=source)
+
+
+def _validate_accounting(eid, requested, retained, excluded):
+    requested = [_id(value) for value in requested]
+    retained = [_id(value) for value in retained]
+    excluded_ids = []
+    for item in excluded:
+        if (not isinstance(item, dict) or item.get("session_id") != eid
+                or item.get("stage") not in ("input", "temporal")
+                or not isinstance(item.get("reason"), str) or not item["reason"].strip()):
+            raise ValueError("Malformed excluded trial accounting")
+        excluded_ids.append(_id(item["trial_id"]))
+    if (requested != sorted(set(requested)) or retained != sorted(set(retained))
+            or excluded_ids != sorted(set(excluded_ids)) or not retained
+            or set(retained) & set(excluded_ids) or set(requested) != set(retained) | set(excluded_ids)):
+        raise ValueError("Requested trials must partition exactly into retained and excluded IDs")
+
+
+def _write_trial(staging, item):
+    index, trial = item
+    np.savez_compressed(staging / f"trials/{index:06d}.npz",
+        bin_start_times=trial.bin_start_times, bin_center_times=trial.bin_center_times,
+        bin_end_times=trial.bin_end_times, neural_activity=trial.neural_activity,
+        visual_features=trial.visual_features)
+    return {name: _json(getattr(trial, name)) for name in (
+        "trial_id", "stim_on", "stim_off", "aligned_start", "aligned_end", "bin_size",
+        "bin_count", "discarded_tail_duration", "alignment_metadata")}

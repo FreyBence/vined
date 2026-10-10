@@ -299,3 +299,15 @@ collation require no change to carry the original trial tensors.
 Malformed or duplicate aligned trials, inconsistent session populations, invalid padding configuration, or maxima smaller than source dimensions raise `ValueError`. Unsupported trial/config types raise `TypeError`. Alignment loader verification and filesystem errors propagate. No partial sample tuple is returned and no failed source is skipped.
 
 This API constructs, splits, persists, and exposes scientific datasets without applying prediction objectives. The verified split adapter supports existing training/evaluation loading calls, while legacy rows/caches remain a separate compatibility path. Existing orchestration that supplies the former positional creation arguments must migrate to EID selection or explicit alignment paths. Dataset loading still requires an explicit generation; creation-time alignment selection never chooses between multiple versions.
+
+
+## Alignment trial exclusions
+
+Scientific loading accepts alignment schema 1 and 2. Schema 2 supplies only
+retained, valid trial payloads; excluded upstream trials do not become samples
+and original trial IDs are unchanged. Each sample's `metadata.source_alignment`
+preserves the source generation ID/path/schema, original requested trial IDs,
+and upstream excluded trial records with reasons. These upstream exclusions are
+provenance and are distinct from training-dataset's configured sample exclusions
+and split assignment. Compact trial-specific visual source references preserve
+alignment provenance without copying full session definitions into every sample.

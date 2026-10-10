@@ -802,3 +802,22 @@ Missing visual observations are upstream failures rather than alignment gaps.
 Only complete neural bins are retained. Any final interval shorter than one neural bin is discarded while the exact stimulus offset remains preserved as metadata.
 
 The resulting representation therefore provides synchronized, uniform-duration neural and visual observations suitable for downstream multimodal modeling.
+
+## 29. Trial eligibility and session completion
+
+A session may contain individually unusable trials. Alignment must publish the
+usable subset with original session/trial/unit identities preserved, and record
+every excluded original trial ID, validation stage, and specific reason. Retained
+and excluded trials must partition the requested trial set exactly. No damaged
+trial is repaired, renumbered, or published as a placeholder. Completion means
+all requested trials are accounted for, with at least one usable trial; it does
+not assert that every requested trial is usable.
+
+Artifact corruption, contradictory source identities/domains, unsupported
+session representations, and malformed schemas remain fatal session errors.
+Unknown or insufficient support may exclude individual trials; if no usable
+trials remain the session fails. A strict diagnostic mode may reject the first
+unusable trial. Downstream dataset construction uses retained trials and preserves
+upstream exclusion accounting in provenance. Store complete session provenance
+once and expose compact trial-specific source references to avoid memory growth
+from repeatedly copying session-sized definitions into every trial.
