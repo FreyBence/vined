@@ -241,7 +241,7 @@ def count_trials(population, trials, *, event=None, offsets=None, interval_field
             raise ValueError("Trial interval fields require two distinct column names and no offsets")
         if any(name not in trials.data for name in interval_fields):
             raise ValueError(f"Required trial interval fields are unavailable: {interval_fields}")
-        intervals = trials.data[list(interval_fields)].to_numpy(dtype=float, na_value=np.nan)
+        intervals = trials.data[list(interval_fields)].to_numpy(dtype=float, na_value=np.nan, copy=True)
         definition = dict(interval_fields=list(interval_fields))
     else:
         offsets = np.asarray(offsets, dtype=float)
@@ -252,10 +252,14 @@ def count_trials(population, trials, *, event=None, offsets=None, interval_field
         origins = trials.data[event].to_numpy(dtype=float, na_value=np.nan)
         intervals = origins[:, None] + offsets
         definition = dict(event=event, offsets=offsets.tolist())
+    invalid_bounds = np.isfinite(intervals).all(axis=1) & (intervals[:, 1] <= intervals[:, 0])
+    intervals[invalid_bounds] = np.nan
     result = count_intervals(population, intervals,
                              bin_size=bin_size, request_ids=ids, unit_coverage=unit_coverage,
                              workers=workers)
     result.configuration["trial_window"] = dict(**definition, identity="original trial table row index")
+    if invalid_bounds.any():
+        result.configuration["invalid_trial_bounds"] = ids[invalid_bounds].tolist()
     result.configuration["trial_content_sha256"] = content_hash(trials.data)
     result.trial_sources = tuple(asdict(source) for source in trials.sources)
     return result

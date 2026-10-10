@@ -17,7 +17,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     add_session_arguments(parser)
     parser.add_argument("--config", type=Path,
-                        help="Optional neural request JSON; omit to discover probes and count recorded trial intervals at 60 Hz")
+                        help="Optional neural request JSON; omit to count stimulus-onset/offset intervals at 60 Hz")
+    parser.add_argument("--coverage-from-metadata", action=argparse.BooleanOptionalAction,
+                        default=None, help="Resolve recording support from AP metadata and clock mapping (default: enabled without config)")
     parser.add_argument("--output-dir", type=Path, default=output_dir() / "neural")
     parser.add_argument("--cache-dir", type=Path, default=dataset_dir())
     parser.add_argument("--access-policy", choices=("local-only", "remote-allowed"), default="local-only")
@@ -29,13 +31,15 @@ def main():
     if args.workers < 1:
         parser.error("--workers must be positive")
     automatic = args.config is None
-    config = (dict(trial_interval_fields=["intervals_0", "intervals_1"])
+    config = (dict(trial_interval_fields=["stimOn_times", "stimOff_times"], coverage_from_metadata=True)
               if automatic else json.loads(args.config.read_text(encoding="utf-8-sig")))
     allowed = {"recordings", "quality", "anatomy", "intervals", "request_ids", "event",
                "offsets", "bin_size", "unit_coverage", "trial_collection", "trial_revision",
-               "trial_interval_fields"}
+               "trial_interval_fields", "coverage_from_metadata"}
     if not isinstance(config, dict) or set(config) - allowed:
         raise ValueError("Unknown neural request configuration fields")
+    if args.coverage_from_metadata is not None:
+        config["coverage_from_metadata"] = args.coverage_from_metadata
     requests = []
     for recording in ([] if automatic else config.pop("recordings")):
         recording = dict(recording)
@@ -63,7 +67,8 @@ def main():
                 recordings=[dict(pid=request.pid, pname=request.pname, revision=request.revision)
                             for request in session_requests],
                 trial_interval_fields=config["trial_interval_fields"], bin_size=1/60,
-                quality=None, anatomy=None, coverage="source evidence or unknown"))), flush=True)
+                quality=None, anatomy=None, coverage="AP metadata and clock mapping or unknown",
+                coverage_from_metadata=config["coverage_from_metadata"]))), flush=True)
         generation = generate_neural(access, eid, session_requests, args.output_dir,
                                      workers=args.workers, reuse_identical=args.reuse_identical, **config)
         print(json.dumps(dict(eid=eid, generation_id=generation.generation_id,

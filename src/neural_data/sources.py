@@ -6,8 +6,8 @@ from importlib.metadata import version
 import numpy as np
 import pandas as pd
 from iblatlas.regions import BrainRegions
-from .provenance import content_hash
-from utils.progress import iter_progress
+from .provenance import content_hash, json_value
+from utils.progress import iter_progress, logger
 
 
 @dataclass(frozen=True)
@@ -231,7 +231,71 @@ def _quality_mask(table, policy):
     return (numeric.notna() & np.isfinite(numeric) & (numeric >= policy.minimum)).to_numpy()
 
 
-def load_population(access, eid, recordings, *, quality=None, anatomy=None):
+def _recording_coverage(access, source, supplied):
+    """Use acquisition metadata within measured clock-map support, never spikes."""
+    import json
+    from pathlib import Path
+    from session_data import SessionAccessError
+    from utils.provenance import file_hash
+
+    collection = f"raw_ephys_data/{source.pname}"
+    try:
+        metadata, mapping = access.load_datasets(source.eid,
+            ["*.ap.meta", "_spikeglx_*.timestamps.npy"],
+            collection=collection, download_only=True)
+    except SessionAccessError as exc:
+        if exc.reason not in ("local_source_unavailable", "source_unavailable", "revision_unavailable"):
+            raise
+        logger.warning("neural-data %s/%s: recording coverage remains unknown (%s)",
+                       source.eid, source.pname, exc.reason)
+        result = _coverage(supplied)
+        result["provenance"] = json.dumps(dict(
+            method="AP acquisition metadata and session-clock mapping", unavailable=exc.reason,
+            supplied_provenance=supplied.provenance), sort_keys=True)
+        return result
+    for loaded in (metadata, mapping):
+        if loaded.source.eid != source.eid or loaded.source.collection != collection:
+            raise ValueError("Recording coverage source does not match selected session/probe")
+    if metadata.source.revision != mapping.source.revision:
+        raise ValueError("Recording metadata and time mapping revisions differ")
+    values = dict(line.strip().split("=", 1)
+                  for line in Path(metadata.data).read_text(encoding="utf-8").splitlines()
+                  if "=" in line)
+    rate = float(values.get("imSampRate", values.get("niSampRate", "nan")))
+    channels = int(values["nSavedChans"])
+    size = int(values["fileSizeBytes"])
+    if not np.isfinite(rate) or rate <= 0 or channels <= 0 or size <= 0 or size % (2 * channels):
+        raise ValueError("Invalid AP sample count or sampling rate in recording metadata")
+    sample_count = size // (2 * channels)  # SpikeGLX AP int16 samples, including sync.
+    times = np.load(mapping.data, allow_pickle=False)
+    if (times.ndim != 2 or times.shape[1] != 2 or len(times) < 2
+            or not np.isfinite(times).all() or not (np.diff(times, axis=0) > 0).all()):
+        raise ValueError("Invalid AP-sample/session-time mapping for recording coverage")
+    # IBL reference and linear clocks use knots at probe seconds 0 and 1.
+    # These define an affine conversion, not a one-second acquisition limit.
+    affine = times.shape == (2, 2) and np.array_equal(times[:, 0], [0., rate])
+    if affine:
+        left, right = 0., float(sample_count)
+        slope = (times[1, 1] - times[0, 1]) / rate
+        observed = ((float(times[0, 1]), float(times[0, 1] + right * slope)),)
+    else:
+        left, right = max(0., float(times[0, 0])), min(float(sample_count), float(times[-1, 0]))
+        observed = () if right <= left else (tuple(np.interp([left, right], times[:, 0], times[:, 1])),)
+    evidence = dict(method="AP acquisition metadata with IBL clock-map semantics v2",
+        clock_mapping_policy="IBL affine clock over acquisition" if affine else "bounded clock-map interpolation",
+        clock_mapping_reference="https://docs.internationalbrainlab.org/_modules/ibllib/ephys/sync_probes.html",
+        sources=[dict(source=asdict(item.source), sha256=file_hash(item.data))
+                 for item in (metadata, mapping)],
+        sample_count=sample_count, sampling_frequency_hz=rate,
+        supported_sample_interval=[left, right] if right > left else None,
+        supplied_provenance=supplied.provenance,
+        limitation="Acquisition support; no inference of unit-specific sorting dropouts or unreported invalid intervals")
+    return _coverage(Coverage(observed=observed, invalid=supplied.invalid,
+                             provenance=json.dumps(json_value(evidence), sort_keys=True), qualification="observed"))
+
+
+def load_population(access, eid, recordings, *, quality=None, anatomy=None,
+                    coverage_from_metadata=False):
     """Load explicitly requested recordings in canonical order; see interface.md.
 
     Spike assignments are positions in the returned unit table. source_unit_id
@@ -239,6 +303,8 @@ def load_population(access, eid, recordings, *, quality=None, anatomy=None):
     Missing source errors from SessionAccess propagate without substitution.
     """
     eid = access.canonical_eid(eid)
+    if not isinstance(coverage_from_metadata, bool):
+        raise ValueError("coverage_from_metadata must be boolean")
     requests = tuple(recordings)
     if not requests:
         raise ValueError("Request at least one source recording")
@@ -253,6 +319,8 @@ def load_population(access, eid, recordings, *, quality=None, anatomy=None):
         source = result.source
         if source.eid != eid:
             raise ValueError("Spike source belongs to a different session")
+        if coverage_from_metadata and request.coverage.observed is None:
+            coverage = _recording_coverage(access, source, request.coverage)
         key = (source.pname, source.pid or "", source.collection, source.revision)
         if key in seen:
             raise ValueError("Duplicate recording/sorting request")

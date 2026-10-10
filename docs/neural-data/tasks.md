@@ -58,12 +58,36 @@ Discover session probes and count recorded full-trial intervals at the specified
 
 Inventing recording coverage, changing source acquisition policy, selecting a common multimodal grid, and implicit quality/anatomical filtering.
 
+### [x] T06 - Prepare stimulus-bounded counts with recording support evidence
+
+**Summary:**
+Default preparation to original stimulus onset/offset fields, load auxiliary
+trial events at the source table revision, and optionally resolve recording
+coverage from AP acquisition metadata and its session-clock mapping. Preserve
+missing timing, unknown support, source identity, and explicit coverage overrides.
+
+**Out of scope:**
+Inventing missing stimulus events or coverage, raw trace processing, automatic
+historical generation replacement, and downstream trial filtering.
+
+### [x] T07 - Resolve IBL affine clock coverage
+
+**Summary:**
+Recognize IBL reference/linear clock knots as a conversion over the recorded
+acquisition duration, preserve bounded support for other mappings and known
+invalid intervals, and regenerate affected counts for alignment.
+
+**Out of scope:**
+Inferring coverage from spikes or changing unit selection.
+
 ## Dependencies
 
 - T02 depends on T01.
 - T03 depends on T02.
 - T04 depends on T03.
 - T05 depends on T03.
+- T06 depends on T05.
+- T07 depends on T06.
 
 ## Downstream boundary
 

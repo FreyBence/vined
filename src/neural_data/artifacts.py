@@ -115,7 +115,8 @@ def generate_neural(access, eid, recordings, output_dir, *, intervals=None,
                     request_ids=None, event=None, offsets=None, bin_size=DEFAULT_BIN_SIZE,
                     quality=None, anatomy=None, unit_coverage=None,
                     trial_collection="alf", trial_revision=None, workers=1,
-                    trial_interval_fields=None, reuse_identical=False):
+                    trial_interval_fields=None, reuse_identical=False,
+                    coverage_from_metadata=False):
     """Process one session and atomically publish a new fully accounted generation.
 
     Exactly one of intervals, event, or trial_interval_fields is required. Existing generations are never
@@ -134,7 +135,8 @@ def generate_neural(access, eid, recordings, output_dir, *, intervals=None,
         raise ValueError("Trial processing uses original trial IDs")
     recordings = tuple(recordings)
     implementation = _implementation()
-    population = load_population(access, eid, recordings, quality=quality, anatomy=anatomy)
+    population = load_population(access, eid, recordings, quality=quality, anatomy=anatomy,
+                                 coverage_from_metadata=coverage_from_metadata)
     logger.info("neural-data %s: selected %d units from %d recordings", population.eid,
                 len(population.units), len(population.recordings))
     if intervals is not None:
@@ -144,9 +146,38 @@ def generate_neural(access, eid, recordings, output_dir, *, intervals=None,
     else:
         logger.info("neural-data %s: loading trial timings", population.eid)
         trials = access.load_trials(population.eid, collection=trial_collection, revision=trial_revision)
+        # ALF stores some trial events separately from the table. Preserve the
+        # table's original row identity and exact effective revision.
+        fields = trial_interval_fields or ([event] if event is not None else [])
+        from session_data import LoadedTrials, SessionAccessError
+        frame = trials.data.copy()
+        sources = list(trials.sources)
+        missing = []
+        for field in fields:
+            if field in frame:
+                continue
+            try:
+                loaded = access.load_dataset(population.eid, f"_ibl_trials.{field}.npy",
+                    collection=trial_collection, revision=trials.sources[0].revision)
+            except SessionAccessError as exc:
+                if exc.reason not in ("local_source_unavailable", "source_unavailable", "revision_unavailable"):
+                    raise
+                frame[field] = np.nan
+                missing.append(dict(field=field, reason=exc.reason))
+                logger.warning("neural-data %s: missing %s; affected trials remain unavailable",
+                               population.eid, field)
+                continue
+            values = np.asarray(loaded.data)
+            if values.shape != (len(frame),) or not frame.index.equals(pd.RangeIndex(len(frame))):
+                raise ValueError(f"Auxiliary {field} must match original trial table rows")
+            frame[field] = values
+            sources.append(loaded.source)
+        trials = LoadedTrials(frame, tuple(sources))
         data = count_trials(population, trials, event=event, offsets=offsets,
                             interval_fields=trial_interval_fields,
                             bin_size=bin_size, unit_coverage=unit_coverage, workers=workers)
+        if missing:
+            data.configuration["missing_trial_fields"] = missing
         requested_count = len(trials.data)
     del population
     if len(data.windows) != requested_count or len(data.recordings) != len(recordings):

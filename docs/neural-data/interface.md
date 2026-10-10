@@ -31,7 +31,7 @@ population = load_population(
 )
 ```
 
-`load_population(access, eid, recordings, *, quality=None, anatomy=None)` uses
+`load_population(access, eid, recordings, *, quality=None, anatomy=None, coverage_from_metadata=False)` uses
 only the [session-data public interface](../session-data/interface.md).
 `recordings` is a nonempty sequence of `RecordingRequest` objects. Each requires
 a PID or probe name; supplying both requires them to agree. `collection` and
@@ -117,7 +117,27 @@ Known invalid intervals can accompany unknown observed coverage. Supplied
 intervals require an evidence/assumption description in `provenance`;
 `qualification` is `observed` or `assumed` when observed intervals are supplied,
 and `unknown` otherwise. These records preserve supplied evidence and its
-qualification; source preparation does not infer coverage or compute bin masks.
+qualification; bin masks are computed during counting.
+
+`coverage_from_metadata=True` optionally resolves unknown recording support via
+`SessionAccess.load_datasets` for `*.ap.meta` and `_spikeglx_*.timestamps.npy`
+in `raw_ephys_data/<probe>`. The pair must share a revision and belong to the
+selected session/probe. Acquisition sample count is derived from recorded
+`fileSizeBytes` and `nSavedChans` (int16 AP samples); sampling rate and strictly
+increasing AP-sample/session-time mapping are validated. Support is the
+  full `[0, sample_count)` acquisition interval for IBL affine clock mappings
+  with exactly two knots at sample indices `0` and `sampling_rate`. These knots
+  encode a reference/linear clock conversion rather than coverage endpoints.
+  Other mappings use the intersection with their sample domain and bounded
+  interpolation. The mapping policy and source reference are recorded. This supplies observed
+acquisition support, not evidence about unit-specific sorting dropouts or
+unreported invalid intervals. Known caller-supplied invalid intervals remain
+excluded. Explicit observed/assumed support is preserved rather than replaced.
+No raw voltage traces or binary recordings are loaded. Sources and SHA-256
+content hashes, method, sample count/rate, and limitations are retained in
+coverage provenance. Missing source evidence leaves coverage unknown with a
+warning and recorded reason; ambiguous, malformed, or conflicting sources fail.
+Access policy continues to govern metadata acquisition.
 
 Timing provenance identifies the session-data ALF timestamp contract. No clock
 conversion is applied. Source errors propagate from `SessionAccess`; invalid
@@ -270,7 +290,7 @@ counts = loaded.data
 `generate_neural(access, eid, recordings, output_dir, *, intervals=None,
 request_ids=None, event=None, offsets=None, bin_size=1/60, quality=None,
 anatomy=None, unit_coverage=None, trial_collection="alf", trial_revision=None, workers=1,
-trial_interval_fields=None, reuse_identical=False)`
+trial_interval_fields=None, reuse_identical=False, coverage_from_metadata=False)`
 processes one session. Supply exactly one of absolute `intervals`, a trial
 `event`, or `trial_interval_fields`. Event mode requires offsets; either trial
 mode takes IDs from the original table.
@@ -369,15 +389,38 @@ bash script/prepare_neural_data.sh --eid EID --workers 10
 `SessionAccess.probes`, uses their reported PID/name identities, and explicitly
 requests unrevisioned (`revision=""`) sorting data using session-data's collection
 resolution. No probe or failed recording is silently skipped. It counts each
-original trial over its recorded `intervals_0`/`intervals_1` boundaries at 60 Hz
-(`bin_size=1/60`), with no quality or anatomical filter. Required timing columns
-must exist; missing per-trial timing retains unavailable outcomes. Effective
+original trial over its recorded `stimOn_times`/`stimOff_times` boundaries at 60 Hz
+(`bin_size=1/60`), with no quality or anatomical filter. Missing timing columns are loaded from `_ibl_trials.<field>.npy` at the trial
+table's effective collection/revision. Auxiliary arrays must match original
+RangeIndex rows; their source identities and augmented trial content are recorded.
+Absent fields, nonfinite per-trial bounds, or nonincreasing bounds retain
+unavailable outcomes without renumbering. Invalid finite bounds are recorded in
+`configuration.invalid_trial_bounds`; missing auxiliary sources are recorded in
+`configuration.missing_trial_fields`. Effective
 requests are printed and resolved source identities are stored in the generation.
-No recording coverage is invented: unknown support remains unknown and its
-counts remain unusable as observed training targets. Trial intervals are not
+Automatic mode enables metadata-based recording coverage. Use
+`--no-coverage-from-metadata` to disable it, or `--coverage-from-metadata` to
+enable it with a custom config. `generate_neural` also accepts
+`coverage_from_metadata=False` (the API default), and request JSON accepts the
+same boolean. No recording coverage is invented: missing support remains unknown and its
+counts remain unusable as observed training targets. Stimulus intervals are not
 recording-coverage evidence. Access remains local-only unless remote-allowed is
 explicitly selected. A missing unrevisioned source is an error, not permission
 to switch revisions.
+
+Regenerate old trial-start counts from source spikes; existing count artifacts
+are not rebinned or rewritten. Use a fresh output root to avoid mixing old and
+new generations during alignment selection:
+
+```bash
+bash script/prepare_neural_data.sh --workers 4 --access-policy remote-allowed --output-dir output/neural-onset
+bash script/prepare_data.sh --neural-root output/neural-onset --workers 4
+```
+
+Remote access permits acquisition of missing sorting/timing and small coverage
+metadata through session-data. Local-only remains supported with cached sources.
+Missing visual stimulus bounds still require upstream visual preparation; neural
+preparation does not invent them or change the visual artifact.
 
 Supply `--config request.json` to retain explicit custom requests. Example:
 
