@@ -4,8 +4,9 @@
 
 The CLI uses stderr progress bars for inference samples, session/neuron metrics,
 and artifact writing. Setup, plotting, verification, and publication messages
-appear between bars. Stdout remains the structured JSON result, including in
-setup-only mode.
+appear between bars. Stdout contains a compact JSON summary with `evaluation_id`,
+`global_metrics`, and `artifact_path`; full per-neuron results and PSTH arrays
+remain in the artifact's `result.json`. Setup-only mode prints the setup summary.
 
 Bars show elapsed time, throughput, and remaining time when totals are known,
 refreshing at most twice per second. Standalone progress messages are deferred

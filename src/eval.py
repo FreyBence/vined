@@ -36,7 +36,7 @@ def main():
     parser.add_argument("--no-predictions", action="store_true", help="Publish metrics/provenance without raw prediction arrays")
     parser.add_argument("--save-plot", "--save_plot", dest="save_plot", action="store_true")
     args = parser.parse_args()
-    # Dataset/model diagnostics belong on stderr; stdout is the structured result.
+    # Dataset/model diagnostics belong on stderr; stdout is a compact summary.
     logger.info("evaluation: verifying dataset and restoring checkpoint %s", args.checkpoint)
     with redirect_stdout(sys.stderr):
         setup = resolve_setup(checkpoint_path=args.checkpoint, dataset_generation=args.dataset_generation,
@@ -54,7 +54,12 @@ def main():
     artifact = publish_evaluation(collection, args.output_dir,
                                   metric_config=MetricConfig(args.aggregation, args.bps_baseline, args.psth_grouping),
                                   persist_predictions=not args.no_predictions, save_plots=args.save_plot)
-    print(json.dumps(dict(artifact.result, artifact_path=str(artifact.path)), indent=2, allow_nan=False))
+    summary = {
+        "evaluation_id": artifact.result["evaluation_id"],
+        "global_metrics": artifact.result["global_metrics"],
+        "artifact_path": str(artifact.path),
+    }
+    print(json.dumps(summary, indent=2, allow_nan=False))
 
 
 if __name__ == "__main__":
