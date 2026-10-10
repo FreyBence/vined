@@ -31,7 +31,7 @@ SUPPORTED_OVERRIDES = {
     "training.loss_components.vision-clip.weight",
     "optimizer.name", "optimizer.lr", "optimizer.wd", "optimizer.eps", "optimizer.scheduler",
     "optimizer.warmup_pct", "optimizer.div_factor", "optimizer.gradient_accumulation_steps",
-    "data.max_time_length", "data.load_meta",
+    "data.load_meta",
 }
 
 
@@ -87,7 +87,7 @@ def _known_overrides(base, override, prefix=""):
         if isinstance(base[key], dict):
             _known_overrides(base[key], value, name + ".")
         elif name in ("model.encoder.embedder.max_F", "model.encoder.embedder.n_channels"):
-            raise ValueError(f"{name} is derived from the dataset/runtime layout; configure data.max_time_length for time padding")
+            raise ValueError(f"{name} is derived from the selected dataset/runtime layout")
         elif name not in SUPPORTED_OVERRIDES and not name.startswith(("model.masker.", "model.encoder.transformer.", "model.encoder.embedder.")):
             raise ValueError(f"Unsupported configuration override: {name}")
 
@@ -232,7 +232,6 @@ def resolve_setup(args, tune_config=None):
         _finite(settings["dropout"], "dropout")
         if settings["dropout"] >= 1:
             raise ValueError("dropout must be less than one")
-    _positive(data["max_time_length"], "max_time_length")
     for value in (training["mixed_training"], data["load_meta"], config["wandb"]["use"]):
         if not isinstance(value, bool):
             raise ValueError("mixed_training, load_meta, and wandb.use must be booleans")
@@ -285,8 +284,10 @@ def resolve_setup(args, tune_config=None):
         training["temporal_target_coverage"] = coverage
     if any(sample.visual.shape[1] != 768 for sample in consumed):
         raise ValueError("The current model requires 768-dimensional visual features")
-    if max(sample.sequence_length for sample in consumed) > data["max_time_length"]:
-        raise ValueError("max_time_length would truncate real observations")
+    # Include held-out trial lengths so checkpoint capacity preserves every
+    # selected trial; this does not evaluate held-out targets.
+    data["max_time_length"] = max(sample.sequence_length
+                                  for view in (train, val, _test) for sample in view.samples)
     optimization_sessions = {sample.session_id for sample in train.samples}
     if any(sample.session_id not in optimization_sessions for sample in consumed):
         raise ValueError("Validation sessions must have session-specific parameters learned from training")

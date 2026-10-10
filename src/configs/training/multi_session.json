@@ -34,7 +34,6 @@
     "eval_every": 1
   },
   "data": {
-    "max_time_length": 100,
     "load_meta": true
   },
   "optimizer": {

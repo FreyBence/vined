@@ -16,7 +16,10 @@ on exceptions and interrupted iteration. No logging flag is required.
 ## Scenario launcher
 
 From the checkout root, `python src/run.py train 3` selects scenario 3 from
-`src/configs/scenarios.json`. The launcher accepts only `train|eval` and an integer
+`src/configs/scenarios.json`. The Bash wrapper `bash script/run.sh train 3`
+accepts the same arguments, uses the project virtual environment, and resolves
+the checkout root through `script/environment.sh`. Both entry points support
+`eval` in place of `train`. The launcher accepts only `train|eval` and an integer
 scenario ID. Configure a concrete published `dataset_generation`, optional
 `expected_dataset_generation_id` and `eid`, and operation-specific entry settings
 in `src/configs/run.json`. Paths are resolved from the checkout; null `eid` selects
@@ -147,7 +150,10 @@ Training JSON files contain no filesystem paths or Hugging Face access settings;
 the selected local dataset path is recorded in the effective `dataset` metadata.
 Unused legacy dataset, padding, logging, and optimizer fields are omitted from
 the shipped profiles. Neuron counts come from the selected dataset;
-`model.encoder.embedder.max_F` is derived from training's `data.max_time_length`.
+Runtime `data.max_time_length` is derived from the longest real trial across
+the selected train/validation/test splits. It also sets
+`model.encoder.embedder.max_F`; neither is a configurable trial-length limit.
+Held-out sequence lengths size model capacity without evaluating targets.
 Preserving neuron order, persisted split membership, and the fixed IBL loader
 contract are implementation rules, not overridable profile fields. W&B run names
 use the invocation directory name.
@@ -163,14 +169,14 @@ on predicted log spike counts. Decoding retains unit-weight CLIP cosine loss;
 Other loss names/weights and optimizers besides AdamW are rejected.
 
 Training JSON overrides support the corresponding `training`, `optimizer`,
-`masking`, model embedding/transformer, and runtime time-size/metadata fields.
+`masking`, model embedding/transformer, and runtime metadata fields.
 Training-owned `masking` is composed into `model.masker` for the model consumer;
 the existing `model.masker` override form is also accepted, but specifying both
 forms is an error. For example, `{"masking": {"ratio": 0.1}}` overrides corruption
 without changing architecture. `trainer.setup.load_defaults(root, session_count)`
 composes the profiles; `resolve_setup` derives runtime dimensions after overrides.
 Unknown or unsupported overrides are errors. Neuron size and model time size
-are derived consistently from the selected populations and `data.max_time_length`.
+are derived consistently from the selected populations and trial lengths.
 Search overrides are limited to `learning_rate`, `weight_decay`, `mask_ratio`,
 `hidden_size`, `inter_size`, and `n_layers`; both optimizer and scheduler use
 the resolved learning rate. Search requires validation with metric selection.
