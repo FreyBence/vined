@@ -1,21 +1,22 @@
 {
-  "dataset_generation": null,
+  "dataset_generation": "output/datasets/training-dataset/generations/c9da3a61fb12fa6b6edec61ec0261d067bbe9b970d4adf6ffbc6b0f171402988",
   "expected_dataset_generation_id": null,
-  "eid": null,
+  "eid": "7f6b86f9-879a-4ea2-8531-294a221af5d0",
   "train": {
     "base_path": null,
     "training_config": "src/configs/training/pilot.json",
     "setup_only": false,
     "seed": 42,
-    "epochs": 30,
-    "batch_size": 2,
-    "validation_batch_size": 2,
+    "epochs": 10,
+    "batch_size": 1,
+    "validation_batch_size": 1,
     "learning_rate": 0.0002,
     "weight_decay": 0.01,
     "scheduler": "cosine",
     "eval_every": 1,
     "checkpoint_selection": "validation_metric",
-    "num_sessions": 1
+    "num_sessions": 1,
+    "no_wandb": true
   },
   "eval": {
     "checkpoint": null,
