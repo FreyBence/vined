@@ -32,11 +32,18 @@ Run a configured scenario from the checkout root:
 ```text
 python src/run.py train 3
 python src/run.py eval 3
+python src/run.py eval 3 --attempt 001
 ```
 
-Set the published dataset generation and evaluation checkpoint in
+Set the published dataset generation in
 `src/configs/run.json` (or the selected scenario's `train`/`eval` object).
-The launcher accepts only operation and scenario ID. Scenario direction, temporal
+Training creates `output/runs/scenario-3/001`, then `002`, and so on. Evaluation
+defaults to the latest attempt's training-selected `model_best.pt` and writes to
+`output/evaluation/scenario-3/<attempt>/`. Use `--attempt 001` to evaluate an older
+attempt. Keep `eval.checkpoint` null for automatic selection, or use
+`--checkpoint PATH` for an explicit checkpoint. Existing evaluations are preserved;
+use a different evaluation `output_dir` in the configuration to repeat an attempt.
+Scenario direction, temporal
 context, and neuron selection take precedence; remaining parameters come from
 the existing training/model profiles and `src/configs/evaluation/default.json`.
 Relative paths resolve from the checkout. Visual-only scenarios use the shared
@@ -50,7 +57,8 @@ output/
   datasets/          # ONE cache, aligned data, and dataset caches
   visual_features/   # extracted visual feature archives
   visual_replays/    # replay videos and sidecars
-  results/           # training checkpoints, evaluation metrics, and plots
+  runs/              # scenario-<id>/<attempt>/ training checkpoints and metadata
+  evaluation/        # scenario-<id>/<attempt>/ evaluation metrics and plots
   wandb/             # W&B run logs for training and evaluation
   eid-relevanc.txt   # session relevance discovery output
 ```
@@ -223,6 +231,18 @@ multi-node training currently require Slurm; ordinary single-process training
 does not. Scheduler accounts and partitions must match your cluster.
 
 ## Research documents
+
+Compare two evaluated scenario attempts with an interactive HTML report:
+
+```bash
+bash script/compare_evaluations.sh 13 002 14 001
+```
+
+Arguments are scenario A, attempt A, scenario B, attempt B. Evaluations load from
+the default evaluation folder; reports save under `output/comparisons/` and open
+in a browser. Use `--no-open` to save only. Encoding-versus-decoding comparisons
+and incompatible scoring data or policies fail explicitly. See the
+[evaluation comparison interface](docs/evaluation/interface.md#evaluation-comparison).
 
 - [IBL visual data specifications and parameters](docs/ibl-visual-data-specs.md) â€” sourced stimulus reference, replay settings, CLIP schema, and alignment requirements.
 - [Hungarian research report](docs/Frey_Bence_ITLNUH_BeszĂˇmolĂł.pdf)

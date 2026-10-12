@@ -10,12 +10,15 @@ from evaluation.metrics import MetricConfig
 from evaluation.artifacts import publish_evaluation
 from utils.paths import output_dir
 from utils.progress import configure_progress, logger
+from trainer.run_paths import scenario_directory, attempt_name
 
 
 def main():
     configure_progress()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--checkpoint", required=True, help="Explicit selected training checkpoint")
+    parser.add_argument("--scenario-id", type=int, help="Scenario for matching evaluation artifact folders")
+    parser.add_argument("--attempt", help="Training attempt number associated with this evaluation")
     parser.add_argument("--prediction-direction", choices=["encoding", "decoding"])
     parser.add_argument("--neural-region-selection", choices=["all_recorded", "visual_only"])
     parser.add_argument("--context-mode", required=True, choices=["strict", "full_trial"],
@@ -36,6 +39,12 @@ def main():
     parser.add_argument("--no-predictions", action="store_true", help="Publish metrics/provenance without raw prediction arrays")
     parser.add_argument("--save-plot", "--save_plot", dest="save_plot", action="store_true")
     args = parser.parse_args()
+    if (args.scenario_id is None) != (args.attempt is None):
+        parser.error("--scenario-id and --attempt must be provided together")
+    if args.scenario_id is not None:
+        destination = scenario_directory(args.output_dir, args.scenario_id) / attempt_name(args.attempt)
+        if not args.setup_only and destination.exists():
+            raise FileExistsError(f"Evaluation already exists at {destination}; choose another --output-dir to repeat it")
     # Dataset/model diagnostics belong on stderr; stdout is a compact summary.
     logger.info("evaluation: verifying dataset and restoring checkpoint %s", args.checkpoint)
     with redirect_stdout(sys.stderr):
@@ -46,6 +55,10 @@ def main():
                               prediction_direction=args.prediction_direction,
                               neural_region_selection=args.neural_region_selection)
     logger.info("evaluation: setup complete on %s (%d test samples)", args.device, len(setup.dataset.samples))
+    if args.scenario_id is not None:
+        run = setup.provenance["training_run"]
+        if run.get("scenario_id") != args.scenario_id or run.get("attempt") != attempt_name(args.attempt):
+            raise ValueError("Checkpoint scenario/attempt identity differs from the requested evaluation")
     if args.setup_only:
         print(json.dumps(setup.summary(), indent=2, allow_nan=False))
         return
@@ -53,7 +66,8 @@ def main():
     collection = collect_predictions(setup)
     artifact = publish_evaluation(collection, args.output_dir,
                                   metric_config=MetricConfig(args.aggregation, args.bps_baseline, args.psth_grouping),
-                                  persist_predictions=not args.no_predictions, save_plots=args.save_plot)
+                                  persist_predictions=not args.no_predictions, save_plots=args.save_plot,
+                                  scenario_id=args.scenario_id, attempt=args.attempt)
     summary = {
         "evaluation_id": artifact.result["evaluation_id"],
         "global_metrics": artifact.result["global_metrics"],

@@ -1,12 +1,56 @@
 # Evaluation interface
 
+## Evaluation comparison
+
+```bash
+bash script/compare_evaluations.sh 13 002 14 001
+```
+
+The four positional arguments are scenario A, attempt A, scenario B, attempt B.
+Attempts accept `2` or `002`. Inputs default to
+`<VINED_OUTPUT_DIR>/evaluation/scenario-<id>/<attempt>/`; `--evaluation-dir DIR`
+overrides that root. The command creates a self-contained interactive HTML report
+under `<VINED_OUTPUT_DIR>/comparisons/` and opens it in the browser. `--no-open`
+only saves it; `--output FILE` selects a new destination. Existing files are refused.
+
+The report offers metric/session selection, adjustable shared histogram bins,
+counts or fractions, paired scores with identity tooltips, paired difference
+histograms, recorded aggregate scores, unavailable contributor counts, and
+regional BPS. Encoding comparisons use the intersection of source neuron identities
+within each session, even when region selections or column ordering differ.
+Session/global/regional aggregates are recomputed on that shared population using
+the recorded weighting policy; original and shared population counts are shown.
+Neural distributions pool shared per-neuron scores; decoding distributions
+use per-session cosine scores, allowing different neural input populations.
+Negative scores remain visible; unavailable scores are excluded from
+plots and counted explicitly. Paired differences use only contributors available
+in both evaluations. No statistical significance or checkpoint selection is implied.
+
+`compare_evaluations.compare_evaluations(left, right)` accepts verified
+`EvaluationArtifact` objects and returns JSON-compatible report data. Different
+prediction directions fail. Comparisons require identical dataset generations,
+sample identities and scalar temporal metadata, sessions, bin durations,
+target coverage, H=12 support/boundary policy, and metric definitions/aggregation.
+Context lengths and region selections may differ. Runtime population-selection
+metadata is excluded from the sample metadata comparison; source alignment and
+other observation metadata must still agree. Source neurons are matched by
+session, probe insertion, collection, revision, and source unit ID, never by model
+column. Encoding sessions without shared neurons fail. Incompatible evaluations
+exit with an error.
+
+`load_evaluation(..., load_predictions=False)` retains manifest, file-accounting,
+all payload hash, result identity, unit-table, and sample-membership checks, but
+skips prediction decompression and metric recalculation. It returns
+`collection=None`. The comparison command uses this mode; normal readback defaults
+to `load_predictions=True` and retains full prediction verification.
+
 ## Console progress
 
 The CLI uses stderr progress bars for inference samples, session/neuron metrics,
 and artifact writing. Setup, plotting, verification, and publication messages
 appear between bars. Stdout contains a compact JSON summary with `evaluation_id`,
-`global_metrics`, and `artifact_path`; full per-neuron results and PSTH arrays
-remain in the artifact's `result.json`. Setup-only mode prints the setup summary.
+`global_metrics`, and `artifact_path`; per-neuron metrics remain in `result.json`
+and temporal profiles in `psth.json`. Setup-only mode prints the setup summary.
 
 Bars show elapsed time, throughput, and remaining time when totals are known,
 refreshing at most twice per second. Standalone progress messages are deferred
@@ -16,12 +60,19 @@ on exceptions and interrupted iteration. No logging flag is required.
 ## Scenario launcher
 
 `python src/run.py eval 3` dispatches evaluation for scenario 3, using
-`src/configs/run.json` for the explicit dataset generation, checkpoint, optional
+`src/configs/run.json` for the explicit dataset generation, optional checkpoint and
 session selection, and entry settings. `src/configs/evaluation/default.json`
 supplies inference, metric, and publication defaults. Precedence is scenario
 `eval` settings, then `run.json` entry settings, then evaluation defaults.
 Scenario direction, context, and neural region selection are passed explicitly
 and must match the checkpoint. Relative paths resolve from the checkout.
+With `eval.checkpoint=null`, the launcher selects `model_best.pt` from
+`runs/scenario-3/<latest-attempt>/` under the configured training `base_path` (or
+`VINED_OUTPUT_DIR`). `python src/run.py eval 3 --attempt 001` selects that numbered
+attempt instead. `--checkpoint PATH` explicitly selects a checkpoint, including
+legacy UUID runs; it cannot be combined with `--attempt`. An explicit attempt
+overrides a configured checkpoint. No test scores participate in selection.
+The latest attempt must contain a selected checkpoint; no older fallback occurs.
 Set `eval.setup_only=true` for restoration and compatibility inspection without
 inference or publication.
 
@@ -161,24 +212,37 @@ Individual metric records contain `value`, `status`, `reason`, and coverage. Und
 
 ## Publication and readback
 
-`evaluation.artifacts.publish_evaluation(collection, output_dir, *, metric_config=None, persist_predictions=True, save_plots=False) -> EvaluationArtifact` computes the configured scores, writes and verifies a complete staged artifact, then renames it into a new UUID-named directory. Existing evaluation directories are never replaced or automatically reused. The return exposes `path`, `manifest`, `result`, and `collection` (or `None` when predictions are omitted).
+`evaluation.artifacts.publish_evaluation(collection, output_dir, *, metric_config=None, persist_predictions=True, save_plots=False, scenario_id=None, attempt=None) -> EvaluationArtifact` computes the configured scores, writes and verifies a complete staged artifact, then publishes it. Scenario and attempt must be supplied together and match checkpoint run metadata. Scenario publications use `<output-dir>/scenario-<id>/<training-attempt>/`, with an independent UUID evaluation identity recorded in the manifest and result. Existing evaluation directories are never replaced or automatically reused; repeating an evaluated attempt requires another output root. Direct explicit-checkpoint evaluation without scenario/attempt retains UUID folders. The return exposes `path`, `manifest`, `result`, and `collection` (or `None` when predictions are omitted).
 
 CLI `--output-dir` defaults to `<VINED_OUTPUT_DIR>/evaluation`. Raw prediction persistence is enabled by default; `--no-predictions` produces metrics/provenance only. `--save-plot` (also `--save_plot`) adds a session metric plot and the first available neuron PSTH profile per session, explicitly labelled by session and column. Plots retain negative scores, identify unavailable values, and use stimulus-relative seconds and counts per recorded bin. Neither plots nor display values define the metrics. `--setup-only` continues to avoid inference and publication.
 
-Schema version 2:
+Schema version 3 (new publications):
 
 ```text
-<output-dir>/<evaluation_id>/
+<output-dir>/scenario-<id>/<training-attempt>/  # or <evaluation_id> for direct evaluation
     manifest.json
     result.json
+    psth.json
+    coverage.json
     units/000000.parquet
     predictions/000000.npz     # optional
     plots/*.png               # optional
 ```
 
-`manifest.json` records `schema_version=2`, `kind="evaluation"`, `complete=true`, `evaluation_id`, its `manifest_id` fingerprint, exact payload paths/SHA-256 hashes, inference/metric configuration, checkpoint/dataset provenance, software versions/source hashes, sample index, and session-to-unit-table mapping. Each indexed sample records original identities, scalar timing and full alignment/construction metadata, plus its NPZ path and array shapes/dtypes when persisted. JSON metadata converts arrays to lists and unavailable numeric metadata to null. Parquet retains complete ordered unit columns and dtypes. NPZ contains the array fields in the prediction contract above, including masks, exact targets, physical coordinates and full predictions; absent prediction directions omit their array. NumPy loading disables pickle. Schema 1 artifacts lack directional support and are explicitly rejected rather than reinterpreted.
+`manifest.json` records `schema_version=3`, `kind="evaluation"`, `complete=true`, `evaluation_id`, its `manifest_id` fingerprint, exact payload paths/SHA-256 hashes, inference/metric configuration, checkpoint/dataset provenance, software versions/source hashes, sample index, and session-to-unit-table mapping. Each indexed sample records original identities, scalar timing and full alignment/construction metadata, plus its NPZ path and array shapes/dtypes when persisted. JSON metadata converts arrays to lists and unavailable numeric metadata to null. Parquet retains complete ordered unit columns and dtypes. NPZ contains the array fields in the prediction contract above, including masks, exact targets, physical coordinates and full predictions; absent prediction directions omit their array. NumPy loading disables pickle. Schema 1 artifacts lack directional support and are explicitly rejected rather than reinterpreted.
 
-`result.json` carries the configured neuron/session/global metric records and PSTH profiles, evaluation ID, inference settings, checkpoint selection/run/adaptation lineage, dataset generation/split strategy, software provenance, and relative plot/prediction locations. Source alignment provenance remains associated with every indexed sample even when raw predictions are omitted.
+`result.json` carries neuron/session/global and regional metric records, scalar
+coverage counts, neuron identity, evaluation ID, and relative plot/prediction
+locations. `psth.json` carries temporal profiles keyed by session and neuron
+column. `coverage.json` carries session sample membership and per-neuron metric
+sample/nonfinite-sample attribution. Both analysis files carry the evaluation ID.
+Configuration, checkpoint lineage, dataset/split provenance, and software identity
+are stored once in `manifest.json` (`schema_version=3`). Source alignment
+provenance remains associated with every indexed sample even when raw predictions
+are omitted. The loader checks the analysis identities and memberships and
+reassembles the complete established `EvaluationArtifact.result` in memory,
+including profiles, attribution, and metadata. Existing schema-2 artifacts remain
+readable without conversion; schema 1 remains unsupported.
 
 `load_evaluation(path, *, expected_evaluation_id=None, expected_checkpoint_sha256=None, expected_dataset_generation_id=None) -> EvaluationArtifact` reads one explicitly selected directory. It checks manifest fingerprint, schema/completeness, exact file accounting and payload hashes, result/manifest agreement, sample membership, and prediction array schemas. With persisted predictions, it rebuilds a detached collection and verifies the associated scores using their recorded policy; the checkpoint and source dataset need not remain available. A metrics-only artifact returns `collection=None` and cannot regenerate raw predictions.
 

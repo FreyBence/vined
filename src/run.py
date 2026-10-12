@@ -6,7 +6,8 @@ import subprocess
 import sys
 
 from utils.config_utils import load_config
-from utils.paths import REPO_ROOT
+from utils.paths import REPO_ROOT, output_dir
+from trainer.run_paths import selected_attempt
 
 
 CONFIG_ROOT = Path(__file__).resolve().parent / "configs"
@@ -29,10 +30,14 @@ BOOL_FIELDS = {"setup_only", "no_wandb", "multi_gpu", "debug", "mixed_training",
                "no_predictions", "save_plot"}
 
 
-def build_command(operation, scenario_id):
-    """Resolve explicit inputs; do not search for datasets or checkpoints."""
+def build_command(operation, scenario_id, *, attempt=None, checkpoint=None):
+    """Resolve a scenario and its selected training attempt without test scoring."""
     if operation not in ("train", "eval") or type(scenario_id) is not int:
         raise ValueError("Choose train or eval and an integer scenario ID")
+    if operation != "eval" and (attempt is not None or checkpoint is not None):
+        raise ValueError("--attempt and --checkpoint apply only to evaluation")
+    if attempt is not None and checkpoint is not None:
+        raise ValueError("Choose --attempt or --checkpoint, not both")
     scenarios = load_config(CONFIG_ROOT / "scenarios.json")["scenarios"]
     ids = [item["id"] for item in scenarios]
     if any(type(value) is not int for value in ids) or len(set(ids)) != len(ids):
@@ -61,12 +66,28 @@ def build_command(operation, scenario_id):
     allowed = COMMON | (TRAIN if operation == "train" else EVAL)
     if set(settings) - allowed:
         raise ValueError(f"Unsupported {operation} settings: {sorted(set(settings) - allowed)}")
-    for key in ("dataset_generation", "checkpoint") if operation == "eval" else ("dataset_generation",):
+    for key in ("dataset_generation",):
         if not isinstance(settings.get(key), str) or not settings[key].strip():
             raise ValueError(f"Set {key} in src/configs/run.json or the selected scenario's {operation} object")
     command = [sys.executable, str(REPO_ROOT / "src" / f"{operation}.py"),
                "--context-mode", mode, "--neural-region-selection", selection,
                "--model_mode" if operation == "train" else "--prediction-direction", direction]
+    if operation == "train":
+        command.extend(["--scenario-id", str(scenario_id), "--scenario-name", scenario["name"]])
+    else:
+        explicit = checkpoint if checkpoint is not None else settings.get("checkpoint")
+        if attempt is not None or explicit is None:
+            training_settings = {**run.get("train", {}), **scenario.get("train", {})}
+            base = training_settings.get("base_path") or output_dir()
+            base = Path(base).expanduser()
+            base = base if base.is_absolute() else REPO_ROOT / base
+            number, chosen = selected_attempt(base / "runs", scenario_id, attempt)
+            settings["checkpoint"] = str(chosen)
+            command.extend(["--scenario-id", str(scenario_id), "--attempt", number])
+        else:
+            if not isinstance(explicit, str) or not explicit.strip():
+                raise ValueError("checkpoint must be a nonempty path or null for the latest scenario attempt")
+            settings["checkpoint"] = explicit
     if bins is not None:
         command.extend(["--context-bins", str(bins)])
     for key, value in settings.items():
@@ -100,9 +121,11 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("operation", choices=["train", "eval"])
     parser.add_argument("scenario_id", type=int)
+    parser.add_argument("--attempt", help="Evaluate a numbered training attempt; default: latest")
+    parser.add_argument("--checkpoint", help="Explicit checkpoint override, including older UUID runs")
     args = parser.parse_args()
     try:
-        command = build_command(args.operation, args.scenario_id)
+        command = build_command(args.operation, args.scenario_id, attempt=args.attempt, checkpoint=args.checkpoint)
     except (ValueError, KeyError, TypeError, OSError) as error:
         parser.error(str(error))
     return subprocess.call(command, cwd=REPO_ROOT)

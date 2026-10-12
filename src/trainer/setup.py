@@ -36,6 +36,8 @@ SUPPORTED_OVERRIDES = {
 
 
 def add_setup_arguments(parser):
+    parser.add_argument("--scenario-id", type=int, help="Scenario for numbered artifact folders")
+    parser.add_argument("--scenario-name", help="Scenario description recorded with the run")
     parser.add_argument("--neural-region-selection", choices=["all_recorded", "visual_only"], default="all_recorded")
     parser.add_argument("--context-mode", choices=["strict", "full_trial"],
                         help="Temporal context for encoding/decoding (default: full_trial)")

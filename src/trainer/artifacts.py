@@ -14,6 +14,7 @@ import uuid
 import numpy as np
 import torch
 import torch.distributed as distributed
+from trainer.run_paths import new_attempt_directory
 
 
 FORMAT_VERSION = 1
@@ -51,19 +52,24 @@ def atomic_checkpoint(path, value):
     os.replace(temporary, path)
 
 
-def new_run_directory(base_path, accelerator):
+def new_run_directory(base_path, accelerator, *, scenario_id=None):
     identity = [None, None]
     if accelerator.is_main_process:
-        identity[0] = uuid.uuid4().hex
         try:
-            (Path(base_path).resolve() / "runs" / identity[0]).mkdir(parents=True, exist_ok=False)
-        except OSError as error:
+            root = Path(base_path).resolve() / "runs"
+            if scenario_id is not None:
+                directory = new_attempt_directory(root, scenario_id)
+            else:
+                directory = root / uuid.uuid4().hex
+                directory.mkdir(parents=True, exist_ok=False)
+            identity[0] = str(directory)
+        except (OSError, ValueError) as error:
             identity[1] = str(error)
     if accelerator.num_processes > 1:
         distributed.broadcast_object_list(identity, src=0)
     if identity[1] is not None:
         raise ValueError(f"Cannot create isolated run directory: {identity[1]}")
-    return str(Path(base_path).resolve() / "runs" / identity[0])
+    return identity[0]
 
 
 def load_training_checkpoint(path):
@@ -128,22 +134,34 @@ def capture_rank_states(trainer):
         trainer.rank_states = states
 
 
-def initialize_run(trainer, *, kind, resume_checkpoint=None, pretrained_checkpoint=None):
+def initialize_run(trainer, *, kind, resume_checkpoint=None, pretrained_checkpoint=None,
+                   scenario_id=None, scenario_name=None):
+    attempt_identity = [None]
+    if scenario_id is not None:
+        if trainer.accelerator.is_main_process:
+            attempt_identity[0] = uuid.uuid4().hex
+        if trainer.accelerator.num_processes > 1:
+            distributed.broadcast_object_list(attempt_identity, src=0)
     error = None
     try:
         _initialize_run(trainer, kind=kind, resume_checkpoint=resume_checkpoint,
-                        pretrained_checkpoint=pretrained_checkpoint)
+                        pretrained_checkpoint=pretrained_checkpoint, scenario_id=scenario_id,
+                        scenario_name=scenario_name, attempt_id=attempt_identity[0])
     except Exception as caught:
         error = caught
     trainer._check_all_ranks(error)
 
 
-def _initialize_run(trainer, *, kind, resume_checkpoint=None, pretrained_checkpoint=None):
+def _initialize_run(trainer, *, kind, resume_checkpoint=None, pretrained_checkpoint=None,
+                    scenario_id=None, scenario_name=None, attempt_id=None):
     trainer.history = []
     trainer.selected_checkpoint = None
     trainer.run_compatibility = compatibility(trainer, kind)
-    attempt_id = Path(trainer.log_dir).name
+    attempt_id = attempt_id or Path(trainer.log_dir).name
     trainer.run = dict(run_id=attempt_id, attempt_id=attempt_id, kind=kind, parent=None)
+    if scenario_id is not None:
+        trainer.run.update(scenario_id=scenario_id, scenario_name=scenario_name,
+                           attempt=Path(trainer.log_dir).name)
     if resume_checkpoint:
         checkpoint = load_training_checkpoint(resume_checkpoint)
         if checkpoint["compatibility"] != trainer.run_compatibility:

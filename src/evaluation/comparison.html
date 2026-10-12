@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ViNED evaluation comparison</title>
+<style>
+body{font:16px system-ui;color:#18283d;background:#f4f7fb;margin:24px auto;max-width:1100px;padding:0 20px}
+section{background:white;border:1px solid #dce3ee;border-radius:12px;padding:20px;margin:18px 0}
+label{display:inline-block;margin:8px 20px 8px 0}select,input{font:inherit;padding:5px}svg{width:100%;height:auto}
+table{border-collapse:collapse;width:100%}td,th{text-align:left;padding:8px;border-bottom:1px solid #dce3ee}
+.a{color:#2563eb}.b{color:#d97706}pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px}
+</style>
+<h1>ViNED evaluation comparison</h1><p id="legend"></p>
+<p>Higher scores are better. Negative values remain visible. Hover over marks for values and identities.</p>
+<section><label>Metric <select id="metric"></select></label><label>Session <select id="session"></select></label>
+<label>Histogram bins <input id="bins" type="range" min="5" max="80" value="30"><span id="binCount"></span></label>
+<label><input id="normalize" type="checkbox"> Show fraction of available contributors</label></section>
+<section><h2>Comparison aggregate scores</h2><p id="population"></p><table id="summary"></table><p id="coverage"></p></section>
+<section><h2 id="distributionTitle"></h2><svg id="hist" viewBox="0 0 1000 340" role="img" aria-label="Metric distributions"></svg></section>
+<section><h2>Paired scores (A versus B)</h2><p id="pairInfo"></p><svg id="scatter" viewBox="0 0 1000 340" role="img" aria-label="Paired metric scores"></svg></section>
+<section><h2>Paired differences (B − A)</h2><p>Positive differences favor B. Only contributors available in both evaluations appear.</p>
+<svg id="delta" viewBox="0 0 1000 340" role="img" aria-label="Distribution of paired differences"></svg></section>
+<section id="regions"><h2>Comparison regional bits per spike</h2><table id="regionTable"></table></section>
+<details><summary>Source evaluations and context</summary><pre id="sources"></pre></details>
+<script>
+const data=__REPORT_DATA__;
+const $=id=>document.getElementById(id), colors=['#2563eb','#d97706'];
+const fmt=v=>v===null||v===undefined?'unavailable':Number(v).toPrecision(5);
+const finite=r=>r && typeof r.value==='number' && Number.isFinite(r.value);
+function text(tag,value,parent){const e=document.createElement(tag);e.textContent=value;parent.appendChild(e);return e}
+data.labels.forEach((label,i)=>text('span',label+(i===0?' • ':''),$('legend')).className=i?'b':'a');
+for(const key of Object.keys(data.runs[0].global_metrics))text('option',key,$('metric')).value=key;
+text('option','All sessions',$('session')).value='';
+for(const sid of Object.keys(data.runs[0].sessions))text('option',sid,$('session')).value=sid;
+$('sources').textContent=JSON.stringify(data.runs.map((r,i)=>({label:data.labels[i],path:r.path,evaluation_id:r.evaluation_id,context:r.context,neural_region_selection:r.neural_region_selection})),null,2);
+$('population').textContent=data.direction==='encoding'?Object.entries(data.population).map(([sid,p])=>`${sid}: ${p.shared} shared neurons (A originally ${p.original[0]}, B originally ${p.original[1]}). All displayed scores use shared neurons.`).join('\n'):'Visual scores use the same test observations; neural input populations may differ.';
+function mark(svg,tag,attrs,title){const e=document.createElementNS('http://www.w3.org/2000/svg',tag);for(const [k,v] of Object.entries(attrs))e.setAttribute(k,v);svg.appendChild(e);if(title){const t=document.createElementNS(e.namespaceURI,'title');t.textContent=title;e.appendChild(t)}return e}
+function bounds(values){if(!values.length)return[-1,1];let lo=Infinity,hi=-Infinity;for(const v of values){lo=Math.min(lo,v);hi=Math.max(hi,v)}if(lo===hi){const pad=Math.max(1e-6,Math.abs(lo)*.05,.05);lo-=pad;hi+=pad}return[lo,hi]}
+function axes(svg,lo,hi,maxY,xlabel,ylabel){svg.replaceChildren();const x=v=>70+(v-lo)/(hi-lo)*890,y=v=>280-v/maxY*230;
+mark(svg,'path',{d:'M70 45 V280 H960',fill:'none',stroke:'#8090a5'});
+for(let i=0;i<=5;i++){const v=lo+(hi-lo)*i/5;mark(svg,'text',{x:x(v),y:302,'text-anchor':'middle','font-size':12}).textContent=fmt(v)}
+for(let i=0;i<=4;i++){const v=maxY*i/4;mark(svg,'text',{x:60,y:y(v)+4,'text-anchor':'end','font-size':12}).textContent=fmt(v)}
+mark(svg,'text',{x:515,y:332,'text-anchor':'middle'}).textContent=xlabel;
+mark(svg,'text',{x:70,y:22,'font-size':13}).textContent=ylabel;
+return{x,y}}
+function histogram(id,series,xlabel){const n=Number($('bins').value),values=series.flatMap(s=>s.values),[lo,hi]=bounds(values),width=(hi-lo)/n;
+const counts=series.map(s=>{const c=Array(n).fill(0);for(const v of s.values)c[Math.min(n-1,Math.max(0,Math.floor((v-lo)/width)))]++;return c.map(v=>$('normalize').checked&&s.values.length?v/s.values.length:v)});
+const max=Math.max(1e-9,...counts.flat()),svg=$(id),{x,y}=axes(svg,lo,hi,max,xlabel,$('normalize').checked?'Fraction':'Contributor count');
+series.forEach((s,j)=>counts[j].forEach((c,i)=>{if(c)mark(svg,'rect',{x:x(lo+i*width),y:y(c),width:890/n,height:280-y(c),fill:s.color,'fill-opacity':.45},`${s.label}\n${fmt(lo+i*width)} to ${fmt(lo+(i+1)*width)}\n${fmt(c)}`)}));
+if(!values.length)mark(svg,'text',{x:500,y:140,'text-anchor':'middle'}).textContent='No available values';
+if(lo<=0&&hi>=0)mark(svg,'path',{d:`M${x(0)} 45 V280`,stroke:'#475569','stroke-dasharray':'4 4'});
+}
+function rows(run,metric,sid){const result=[];for(const [session,row] of Object.entries(run.sessions)){if(sid&&sid!==session)continue;
+if(data.direction==='encoding')for(const n of row.neurons)result.push({key:n.key,record:n.metrics[metric],identity:JSON.stringify(n.identity)});
+else result.push({key:session,record:row.metrics[metric],identity:session})}return result}
+function table(id,header,rows){const t=$(id);t.replaceChildren();const h=document.createElement('tr');header.forEach(v=>text('th',v,h));t.appendChild(h);for(const row of rows){const tr=document.createElement('tr');row.forEach(v=>text('td',v,tr));t.appendChild(tr)}}
+function render(){const metric=$('metric').value,sid=$('session').value,rs=data.runs.map(r=>rows(r,metric,sid));$('binCount').textContent=$('bins').value;
+const scores=data.runs.map(r=>sid?r.sessions[sid].metrics[metric]:r.global_metrics[metric]);
+table('summary',['Evaluation',sid?'Session score':'Global score','Status / reason'],scores.map((r,i)=>[data.labels[i],fmt(r.value),r.reason||r.status||'available']));
+$('coverage').textContent=rs.map((r,i)=>`${data.labels[i]}: ${r.filter(x=>finite(x.record)).length} available / ${r.length} total`).join(' • ');
+$('distributionTitle').textContent=(data.direction==='encoding'?'Per-neuron':'Per-session')+' metric distributions';
+histogram('hist',rs.map((r,i)=>({values:r.filter(x=>finite(x.record)).map(x=>x.record.value),color:colors[i],label:data.labels[i]})),metric);
+const right=new Map(rs[1].map(r=>[r.key,r])),pairs=rs[0].filter(r=>finite(r.record)&&finite(right.get(r.key)?.record)).map(r=>({a:r.record.value,b:right.get(r.key).record.value,key:r.key,identity:r.identity}));
+$('pairInfo').textContent=`${pairs.length} paired contributors; x = A, y = B. Dashed line denotes equal scores.`;
+const [lo,hi]=bounds(pairs.flatMap(p=>[p.a,p.b])),svg=$('scatter'),{x}=axes(svg,lo,hi,hi-lo,`${metric} — A`,`${metric} — B`),y=v=>280-(v-lo)/(hi-lo)*230;
+// Scatter y-axis displays metric values rather than histogram counts.
+const labels=svg.querySelectorAll('text');for(let i=0;i<5;i++)labels[6+i].textContent=fmt(lo+(hi-lo)*i/4);
+mark(svg,'path',{d:`M${x(lo)} ${y(lo)} L${x(hi)} ${y(hi)}`,stroke:'#8090a5','stroke-dasharray':'5 5'});
+for(const p of pairs)mark(svg,'circle',{cx:x(p.a),cy:y(p.b),r:3,fill:'#2563eb','fill-opacity':.6},`${p.key}\n${p.identity}\nA: ${fmt(p.a)}\nB: ${fmt(p.b)}\nB − A: ${fmt(p.b-p.a)}`);
+histogram('delta',[{values:pairs.map(p=>p.b-p.a),color:'#7c3aed',label:'B − A'}],`${metric}: B − A`);
+// Session region records are supplied separately from scalar neural scores.
+const regionData=data.runs.map(r=>sid?(r.sessions[sid].regions||{}):r.regions);
+const keys=[...new Set(regionData.flatMap(r=>Object.keys(r)))].sort();$('regions').hidden=!keys.length;
+table('regionTable',['Region','A','B','B − A'],keys.map(k=>{const a=regionData[0][k],b=regionData[1][k];return[k,fmt(a?.value),fmt(b?.value),finite(a)&&finite(b)?fmt(b.value-a.value):'unavailable']}));
+}
+for(const id of ['metric','session','bins','normalize'])$(id).addEventListener('input',render);render();
+</script></html>

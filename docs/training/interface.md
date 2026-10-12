@@ -19,11 +19,15 @@ From the checkout root, `python src/run.py train 3` selects scenario 3 from
 `src/configs/scenarios.json`. The Bash wrapper `bash script/run.sh train 3`
 accepts the same arguments, uses the project virtual environment, and resolves
 the checkout root through `script/environment.sh`. Both entry points support
-`eval` in place of `train`. The launcher accepts only `train|eval` and an integer
-scenario ID. Configure a concrete published `dataset_generation`, optional
+`eval` in place of `train`. The launcher accepts `train|eval` and an integer
+scenario ID; evaluation also accepts `--attempt 001` or `--checkpoint PATH`.
+Configure a concrete published `dataset_generation`, optional
 `expected_dataset_generation_id` and `eid`, and operation-specific entry settings
 in `src/configs/run.json`. Paths are resolved from the checkout; null `eid` selects
-all persisted sessions. Generations and checkpoints are never discovered.
+all persisted sessions. Dataset generations remain explicit. Evaluation defaults
+to `model_best.pt` in the latest numbered training attempt for the chosen scenario.
+Selection uses attempt numbers and the training-selected checkpoint, never test
+scores. A latest attempt without a selected checkpoint fails without falling back.
 
 Scenario direction, temporal context, and neural region selection take precedence
 over module settings. Optional scenario `train`/`eval` objects override matching
@@ -287,12 +291,24 @@ validation-selected `model_best.pt` comes from an earlier epoch.
 
 ## Run artifacts and continuation
 
-Every training or fine-tuning invocation creates an isolated
-`--base_path/runs/<attempt_id>/` directory (default base: project output).
+Scenario training creates `--base_path/runs/scenario-<id>/<attempt>/`, with
+automatically increasing numbers `001`, `002`, etc. Numbers are never reused and
+concurrent invocations reserve different directories. Direct training/fine-tuning
+can supply `--scenario-id` and `--scenario-name`; omission retains the legacy
+`--base_path/runs/<attempt_id>/` layout (default base: project output).
 `run.json` records the stable logical `run_id`, unique invocation `attempt_id`,
-entry-point kind, and any parent checkpoint. Resume preserves the logical run
+entry-point kind, and any parent checkpoint. Numbered runs additionally record
+`scenario_id`, `scenario_name`, and `attempt`; UUID identities remain independent
+of directory names. Resume preserves the logical run
 identity and writes into a new invocation directory; original artifacts are
 never overwritten. `--overwrite` and implicit `--continue_pretrain` are rejected.
+
+`trainer.run_paths.new_attempt_directory(root, scenario_id)` reserves the next
+numbered directory. `selected_attempt(root, scenario_id, attempt=None)` returns
+the selected attempt name and its `model_best.pt` path. Roots are the runs
+directory, not the common output root. Explicit attempts are normalized to at
+least three digits. Legacy UUID directories are excluded from numbered selection;
+they remain accessible through explicit checkpoint paths.
 
 Each directory contains:
 

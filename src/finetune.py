@@ -45,7 +45,7 @@ def main(tune_config=None):
     modal_filter = dict(config.training.modal_filter)
 
     accelerator = make_accelerator()
-    log_dir = new_run_directory(base_path, accelerator)
+    log_dir = new_run_directory(base_path, accelerator, scenario_id=args.scenario_id)
     log_name = os.path.basename(log_dir)
     logging.info("Run artifacts: %s", log_dir)
 
@@ -109,7 +109,9 @@ def main(tune_config=None):
         **meta_data
     )
 
-    initialize_run(trainer_, kind="finetune", resume_checkpoint=args.resume_checkpoint, pretrained_checkpoint=args.pretrained_checkpoint)
+    initialize_run(trainer_, kind="finetune", resume_checkpoint=args.resume_checkpoint,
+                   pretrained_checkpoint=args.pretrained_checkpoint,
+                   scenario_id=args.scenario_id, scenario_name=args.scenario_name)
 
     if args.dummy_load:
         logging.info(f"Starting dummy load with {args.dummy_size} samples")

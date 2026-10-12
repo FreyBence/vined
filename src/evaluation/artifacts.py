@@ -19,12 +19,80 @@ from trainer.artifacts import plain
 from utils.paths import REPO_ROOT
 from utils.provenance import file_hash, fingerprint, write_json
 from utils.progress import iter_progress, logger
+from trainer.run_paths import scenario_directory, attempt_name
 
 
 ARRAY_FIELDS = ("temporal_positions", "physical_timestamps", "bin_start_times", "bin_end_times",
                 "temporal_mask", "neuron_mask", "observed_neural", "observed_visual",
                 "neural_prediction_mask", "visual_prediction_mask", "encoding_target_mask", "decoding_target_mask",
                 "predicted_neural", "predicted_visual")
+
+MANIFEST_RESULT_FIELDS = {
+    "configuration": "metric_configuration",
+    "evaluation_configuration": "configuration",
+    "provenance": "provenance",
+    "software": "software",
+}
+
+
+def _split_result(result):
+    """Separate metric values, temporal profiles, and observation attribution."""
+    scores = {key: value for key, value in result.items()
+              if key not in MANIFEST_RESULT_FIELDS and key != "session_results"}
+    scores["session_results"] = {}
+    profiles = dict(evaluation_id=result["evaluation_id"], sessions={})
+    coverage = dict(evaluation_id=result["evaluation_id"], sessions={})
+    for session, data in result["session_results"].items():
+        session_scores = {key: value for key, value in data.items() if key not in ("neurons", "sample_ids")}
+        session_scores["neurons"] = []
+        session_profiles, neuron_coverage = {}, {}
+        for neuron in data["neurons"]:
+            column = str(neuron["column"])
+            session_profiles[column] = neuron["psth"]
+            metric_scores, metric_coverage = {}, {}
+            for name, record in neuron["metrics"].items():
+                metric_scores[name] = {key: value for key, value in record.items()
+                                       if key not in ("sample_ids", "nonfinite_sample_ids")}
+                metric_coverage[name] = {key: record[key] for key in ("sample_ids", "nonfinite_sample_ids")
+                                         if key in record}
+            session_scores["neurons"].append({**{key: value for key, value in neuron.items()
+                                                if key not in ("psth", "metrics")}, "metrics": metric_scores})
+            neuron_coverage[column] = metric_coverage
+        scores["session_results"][session] = session_scores
+        profiles["sessions"][session] = session_profiles
+        coverage["sessions"][session] = dict(sample_ids=data["sample_ids"], neurons=neuron_coverage)
+    return scores, profiles, coverage
+
+
+def _restore_result(result, manifest, profiles, coverage):
+    """Restore the established in-memory result contract from split payloads."""
+    if (profiles["evaluation_id"] != manifest["evaluation_id"]
+            or coverage["evaluation_id"] != manifest["evaluation_id"]
+            or set(profiles["sessions"]) != set(result["session_results"])
+            or set(coverage["sessions"]) != set(result["session_results"])):
+        raise ValueError("Evaluation analysis payload identities disagree")
+    for session, data in result["session_results"].items():
+        session_profiles = profiles["sessions"][session]
+        session_coverage = coverage["sessions"][session]
+        columns = {str(neuron["column"]) for neuron in data["neurons"]}
+        if set(session_profiles) != columns or set(session_coverage["neurons"]) != columns:
+            raise ValueError("Evaluation analysis neuron membership differs from metrics")
+        data["sample_ids"] = session_coverage["sample_ids"]
+        for neuron in data["neurons"]:
+            column = str(neuron["column"])
+            neuron["psth"] = session_profiles[column]
+            attribution = session_coverage["neurons"][column]
+            if set(attribution) != set(neuron["metrics"]):
+                raise ValueError("Evaluation coverage metric membership differs from metrics")
+            for name, record in neuron["metrics"].items():
+                if set(attribution[name]) - {"sample_ids", "nonfinite_sample_ids"}:
+                    raise ValueError("Unexpected evaluation coverage fields")
+                record.update(attribution[name])
+    for key, manifest_key in MANIFEST_RESULT_FIELDS.items():
+        if key in result:
+            raise ValueError("Duplicated evaluation metadata in metric payload")
+        result[key] = manifest[manifest_key]
+    return result
 
 
 @dataclass(frozen=True)
@@ -112,21 +180,33 @@ def _plots(result, directory):
 
 
 def publish_evaluation(collection, output_dir, *, metric_config=None,
-                       persist_predictions=True, save_plots=False):
+                       persist_predictions=True, save_plots=False, scenario_id=None, attempt=None):
     """Write a new complete artifact, verify it, and never replace an existing run."""
-    config = MetricConfig() if metric_config is None else metric_config
-    result = compute_metrics(collection, config=config)
     root = Path(output_dir).resolve()
+    if (scenario_id is None) != (attempt is None):
+        raise ValueError("Evaluation scenario and attempt must be supplied together")
+    if scenario_id is not None:
+        root = scenario_directory(root, scenario_id)
+        attempt = attempt_name(attempt)
+        training_run = collection.provenance["training_run"]
+        if training_run.get("scenario_id") != scenario_id or training_run.get("attempt") != attempt:
+            raise ValueError("Checkpoint scenario/attempt identity differs from evaluation destination")
+        if (root / attempt).exists():
+            raise FileExistsError(root / attempt)
     root.mkdir(parents=True, exist_ok=True)
     evaluation_id = uuid.uuid4().hex
-    final, staging = root / evaluation_id, root / (".staging-" + evaluation_id)
+    final, staging = root / (evaluation_id if attempt is None else attempt), root / (".staging-" + evaluation_id)
+    config = MetricConfig() if metric_config is None else metric_config
+    result = compute_metrics(collection, config=config)
     staging.mkdir(exist_ok=False)
     try:
         software = _software()
-        manifest = dict(schema_version=2, kind="evaluation", complete=True, evaluation_id=evaluation_id,
+        manifest = dict(schema_version=3, kind="evaluation", complete=True, evaluation_id=evaluation_id,
                         configuration=plain(collection.configuration), provenance=plain(collection.provenance),
                         metric_configuration=plain(result["configuration"]), software=software,
                         predictions_persisted=bool(persist_predictions), samples=[], units={})
+        if scenario_id is not None:
+            manifest.update(scenario_id=scenario_id, attempt=attempt)
         (staging / "units").mkdir()
         if persist_predictions:
             (staging / "predictions").mkdir()
@@ -154,7 +234,10 @@ def publish_evaluation(collection, output_dir, *, metric_config=None,
             _plots(result, staging / "plots")
         result["plots"] = [str(path.relative_to(staging)).replace("\\", "/")
                            for path in sorted((staging / "plots").glob("*.png"))]
-        write_json(staging / "result.json", result)
+        scores, profiles, coverage = _split_result(result)
+        write_json(staging / "result.json", scores)
+        write_json(staging / "psth.json", profiles)
+        write_json(staging / "coverage.json", coverage)
         manifest["files"] = {str(path.relative_to(staging)).replace("\\", "/"): file_hash(path)
                              for path in sorted(staging.rglob("*")) if path.is_file()}
         manifest["manifest_id"] = fingerprint(manifest)
@@ -179,15 +262,20 @@ def _read_json(path):
 
 
 def load_evaluation(path, *, expected_evaluation_id=None, expected_checkpoint_sha256=None,
-                    expected_dataset_generation_id=None):
+                    expected_dataset_generation_id=None, load_predictions=True):
     """Verify one explicit evaluation directory; never infer or repair missing files."""
     path = Path(path).resolve()
     manifest = _read_json(path / "manifest.json")
     identity = manifest.pop("manifest_id", None)
-    if (manifest.get("schema_version") != 2 or manifest.get("kind") != "evaluation"
+    if (manifest.get("schema_version") not in (2, 3) or manifest.get("kind") != "evaluation"
             or manifest.get("complete") is not True or fingerprint(manifest) != identity):
         raise ValueError("Incomplete, unsupported or corrupt evaluation manifest")
     manifest["manifest_id"] = identity
+    if "scenario_id" in manifest or "attempt" in manifest:
+        training_run = manifest["provenance"]["training_run"]
+        if (manifest.get("scenario_id") != training_run.get("scenario_id")
+                or manifest.get("attempt") != training_run.get("attempt")):
+            raise ValueError("Evaluation scenario/attempt differs from checkpoint identity")
     for expected, actual in ((expected_evaluation_id, manifest["evaluation_id"]),
                              (expected_checkpoint_sha256, manifest["provenance"]["checkpoint_sha256"]),
                              (expected_dataset_generation_id, manifest["provenance"]["dataset_generation_id"])):
@@ -201,6 +289,11 @@ def load_evaluation(path, *, expected_evaluation_id=None, expected_checkpoint_sh
         if not target.is_relative_to(path) or target.is_symlink() or file_hash(target) != digest:
             raise ValueError(f"Corrupt evaluation payload: {relative}")
     result = _read_json(path / "result.json")
+    if manifest["schema_version"] == 3:
+        if not {"result.json", "psth.json", "coverage.json"} <= set(manifest["files"]):
+            raise ValueError("Missing split evaluation payloads")
+        result = _restore_result(result, manifest, _read_json(path / "psth.json"),
+                                 _read_json(path / "coverage.json"))
     if (result["evaluation_id"] != manifest["evaluation_id"]
             or result["provenance"] != manifest["provenance"]
             or result["configuration"] != manifest["metric_configuration"]
@@ -221,6 +314,8 @@ def load_evaluation(path, *, expected_evaluation_id=None, expected_checkpoint_sh
             continue
         if entry["path"] not in manifest["files"]:
             raise ValueError("Unaccounted prediction archive")
+        if not load_predictions:
+            continue
         with np.load(path / entry["path"], allow_pickle=False) as archive:
             if set(archive.files) != set(entry["arrays"]):
                 raise ValueError("Prediction archive schema differs from manifest")
@@ -242,7 +337,7 @@ def load_evaluation(path, *, expected_evaluation_id=None, expected_checkpoint_sh
     if (not memberships or set(memberships) != set(result["session_results"])
             or any(ids != result["session_results"][session]["sample_ids"] for session, ids in memberships.items())):
         raise ValueError("Result membership differs from recorded source observations")
-    if manifest["predictions_persisted"]:
+    if manifest["predictions_persisted"] and load_predictions:
         if collection is None:
             raise ValueError("Empty persisted prediction collection")
         # Validate readback semantics and metric association using the stored policy.

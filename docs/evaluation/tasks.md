@@ -44,11 +44,20 @@ Integrate the shared train/eval scenario launcher and evaluation JSON defaults. 
 **Out of scope:**
 Checkpoint search, model adaptation during evaluation, and changes to persisted scientific data.
 
+### [x] T06 — Compare compatible scenario evaluation attempts
+
+**Summary:**
+Load explicitly numbered scenario evaluations and produce an interactive metric comparison report, rejecting incompatible directions, observations, populations, or metric policies.
+
+**Out of scope:**
+New metrics, repeated inference, checkpoint selection, and statistical significance claims.
+
 ## Dependencies
 
 - T02 depends on T01.
 - T03 depends on T02.
 - T04 depends on T01, T02, and T03.
 - T05 depends on T04 and training T06.
+- T06 depends on T04 and T05.
 
 Validation belongs inside each task: use code inspection, existing checks, direct execution, and manual artifact verification proportional to its concrete risks. Do not write or modify tests. Optional visual evaluation is compatibility work only if retained; it must not delay the required neural encoding pipeline.
