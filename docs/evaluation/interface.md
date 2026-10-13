@@ -2,6 +2,31 @@
 
 ## Evaluation comparison
 
+`bash script/compare_evaluations.sh 13 002 --ground-truth` creates an interactive
+prediction/target report for one evaluation. A second scenario/attempt pair is
+optional in this mode and retains the normal pair compatibility checks. Select
+evaluation, session, original trial, and neuron (encoding) or CLIP coordinate
+(decoding) to inspect traces and predicted-versus-target scatter plots. Only
+eligible directional scoring bins appear, with stimulus-relative seconds and
+counts per bin or visual coordinate values; nonfinite predictions leave gaps.
+Neural targets are recorded counts; visual targets are reconstructed CLIP features,
+not independent recordings of the displayed images.
+
+The metric table compares each evaluation's recorded global scores with scores
+computed using the target itself as prediction under the same metric policies,
+support, and population. R²/cosine are 1 where defined. Reference BPS is the
+data-only saturated Poisson likelihood gain over the recorded mean-count baseline,
+not a fixed score of 1 or a realizable predictive model. Zero counts use the
+float64 tiny positive mean as the limiting zero-count reference. Undefined
+reference metrics retain their usual unavailable status. Each run uses its own
+population; this mode does not rank differing populations through these tables.
+`ground_truth_report(artifact)` returns JSON-compatible metric/reference and
+per-trial trace data. It requires a verified artifact with loaded persisted
+predictions; metrics-only artifacts fail with instructions to rerun evaluation
+with predictions enabled. No inference or changes to source artifacts occur.
+The default report filename ends in `_ground-truth.html`; `--output` and
+`--no-open` work as in the two-evaluation report.
+
 ```bash
 bash script/compare_evaluations.sh 13 002 14 001
 ```
@@ -43,6 +68,17 @@ all payload hash, result identity, unit-table, and sample-membership checks, but
 skips prediction decompression and metric recalculation. It returns
 `collection=None`. The comparison command uses this mode; normal readback defaults
 to `load_predictions=True` and retains full prediction verification.
+
+`compact_predictions=True` additionally removes trailing temporal and neural
+runtime padding from loaded prediction arrays after their stored schemas are
+checked. Scientific observations, positions, identities, and support remain
+unchanged; masks are checked before trimming and metrics are still recalculated
+and compared with persisted results. Ground-truth reports use this option to
+avoid retaining large padding allocations. Trace arrays in report data use
+gzip-compressed base64 little-endian float64 (neural) or float32 (visual) with
+shape/item-size metadata; the page decodes only its selected trial using the
+browser's `DecompressionStream` API. Neuron/coordinate labels are shared per
+session to keep large reports smaller.
 
 ## Console progress
 

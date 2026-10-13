@@ -1,11 +1,18 @@
-"""Compare two explicitly selected evaluation attempts without model inference."""
+"""Compare evaluation attempts or inspect predictions against ground truth without inference."""
 
 import argparse
+import base64
+import gzip
 import json
 from copy import deepcopy
+from dataclasses import replace
 import math
 from pathlib import Path
 import webbrowser
+
+import numpy as np
+
+from evaluation.metrics import compute_metrics, MetricConfig
 
 from evaluation.artifacts import load_evaluation
 from trainer.run_paths import attempt_name, scenario_directory
@@ -108,38 +115,105 @@ def compare_evaluations(left, right):
     return dict(direction=direction, runs=reports, population=population)
 
 
+def ground_truth_report(artifact):
+    """Show persisted targets and a saturated, data-only reference prediction."""
+    if artifact.collection is None:
+        raise ValueError("--ground-truth requires persisted predictions; rerun evaluation without --no-predictions")
+    collection = artifact.collection
+    direction = collection.configuration["model_mode"]
+    reference, trials, session_labels = [], [], {}
+    for row in collection.predictions:
+        if direction == "encoding":
+            # Zero counts have saturated Poisson mean zero. A tiny positive mean
+            # represents its limiting log count without introducing -Inf.
+            log_counts = np.log(np.maximum(row.observed_neural.astype(np.float64), np.finfo(np.float64).tiny))
+            reference.append(replace(row, predicted_neural=log_counts))
+            mask = row.encoding_target_mask
+            columns = np.flatnonzero(row.neuron_mask)
+            observed = row.observed_neural[mask][:, columns]
+            with np.errstate(over="ignore", invalid="ignore"):
+                predicted = np.exp(row.predicted_neural[mask][:, columns].astype(np.float64))
+            if row.session_id not in session_labels:
+                session_labels[row.session_id] = [json.dumps(row.neuron_identity.iloc[int(column)].to_dict(), default=str)
+                                                  for column in columns]
+        else:
+            reference.append(replace(row, predicted_visual=row.observed_visual.copy()))
+            mask = row.decoding_target_mask
+            observed, predicted = row.observed_visual[mask], row.predicted_visual[mask]
+            session_labels.setdefault(row.session_id, [f"CLIP coordinate {i}" for i in range(observed.shape[1])])
+        def values(array):
+            dtype = "<f8" if direction == "encoding" else "<f4"
+            packed = np.asarray(array, dtype=dtype, order="C")
+            return dict(shape=list(packed.shape), item_size=packed.dtype.itemsize,
+                        data=base64.b64encode(gzip.compress(packed.tobytes(), compresslevel=1, mtime=0)).decode("ascii"))
+        trials.append(dict(session_id=row.session_id, trial_id=row.trial_id, sample_id=row.sample_id,
+                           times=(row.physical_timestamps[mask] - row.stim_on).tolist(),
+                           observed=values(observed), predicted=values(predicted)))
+    config = artifact.manifest["metric_configuration"]
+    ideal = compute_metrics(replace(collection, predictions=tuple(reference)), config=MetricConfig(
+        config["aggregation"], config["bps_baseline"], config["psth_grouping"], config.get("region_bps", False)))
+    return dict(path=str(artifact.path), evaluation_id=artifact.result["evaluation_id"],
+                metrics=artifact.result["global_metrics"], reference_metrics=ideal["global_metrics"],
+                trials=trials, session_labels=session_labels)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("scenario_a", type=int)
     parser.add_argument("attempt_a", type=attempt_name)
-    parser.add_argument("scenario_b", type=int)
-    parser.add_argument("attempt_b", type=attempt_name)
+    parser.add_argument("scenario_b", type=int, nargs="?")
+    parser.add_argument("attempt_b", type=attempt_name, nargs="?")
+    parser.add_argument("--ground-truth", action="store_true",
+                        help="Show target/prediction traces and data-only reference metrics for one or two evaluations")
     parser.add_argument("--evaluation-dir", type=Path, default=output_dir() / "evaluation")
     parser.add_argument("--output", type=Path, help="HTML destination (must not already exist)")
     parser.add_argument("--no-open", action="store_true", help="Save without opening a browser")
     args = parser.parse_args()
+    if (args.scenario_b is None) != (args.attempt_b is None):
+        parser.error("Provide both scenario_b and attempt_b")
+    if args.scenario_b is None and not args.ground_truth:
+        parser.error("Two evaluations are required unless --ground-truth is selected")
     try:
+        selections = [(args.scenario_a, args.attempt_a)]
+        if args.scenario_b is not None:
+            selections.append((args.scenario_b, args.attempt_b))
         paths = [scenario_directory(args.evaluation_dir, scenario) / attempt
-                 for scenario, attempt in ((args.scenario_a, args.attempt_a), (args.scenario_b, args.attempt_b))]
+                 for scenario, attempt in selections]
         # Reject direction mismatches before reading large prediction payloads.
         manifests = [json.loads((path / "manifest.json").read_text(encoding="utf-8")) for path in paths]
-        if manifests[0]["configuration"]["model_mode"] != manifests[1]["configuration"]["model_mode"]:
+        if len(manifests) == 2 and manifests[0]["configuration"]["model_mode"] != manifests[1]["configuration"]["model_mode"]:
             raise ValueError("Cannot compare encoding and decoding evaluations")
-        artifacts = [load_evaluation(path, load_predictions=False) for path in paths]
-        data = compare_evaluations(*artifacts)
-        data["labels"] = [f"A: scenario {args.scenario_a} / {args.attempt_a}",
-                          f"B: scenario {args.scenario_b} / {args.attempt_b}"]
+        artifacts = [load_evaluation(path, load_predictions=args.ground_truth,
+                                     compact_predictions=args.ground_truth) for path in paths]
+        if len(artifacts) == 2:
+            comparison = compare_evaluations(*artifacts)
+        if args.ground_truth:
+            data = dict(direction=manifests[0]["configuration"]["model_mode"],
+                        runs=[ground_truth_report(artifact) for artifact in artifacts])
+        else:
+            data = comparison
+        data["labels"] = [f"{'AB'[index]}: scenario {scenario} / {attempt}"
+                          for index, (scenario, attempt) in enumerate(selections)]
         destination = args.output or output_dir() / "comparisons" / (
-            f"scenario-{args.scenario_a}-{args.attempt_a}_vs_scenario-{args.scenario_b}-{args.attempt_b}.html")
+            "_vs_".join(f"scenario-{scenario}-{attempt}" for scenario, attempt in selections)
+            + ("_ground-truth" if args.ground_truth else "") + ".html")
         destination = destination.resolve()
         # Reports must stay outside immutable evaluation artifacts.
         if any(destination.is_relative_to(path.resolve()) for path in paths):
             raise ValueError("Comparison report must be outside the source evaluation directories")
-        template = Path(__file__).with_name("evaluation") / "comparison.html"
-        encoded = json.dumps(data, allow_nan=False).replace("<", "\\u003c")
+        template = Path(__file__).with_name("evaluation") / ("ground_truth.html" if args.ground_truth else "comparison.html")
         destination.parent.mkdir(parents=True, exist_ok=True)
-        with destination.open("x", encoding="utf-8") as stream:
-            stream.write(template.read_text(encoding="utf-8").replace("__REPORT_DATA__", encoded))
+        prefix, suffix = template.read_text(encoding="utf-8").split("__REPORT_DATA__")
+        stream = destination.open("x", encoding="utf-8")
+        try:
+            with stream:
+                stream.write(prefix)
+                for chunk in json.JSONEncoder(allow_nan=False, separators=(",", ":")).iterencode(data):
+                    stream.write(chunk.replace("<", "\\u003c"))
+                stream.write(suffix)
+        except BaseException:
+            destination.unlink(missing_ok=True)
+            raise
     except (ValueError, OSError, KeyError) as error:
         parser.exit(2, f"Error: {error}\n")
     print(destination)

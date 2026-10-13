@@ -262,7 +262,7 @@ def _read_json(path):
 
 
 def load_evaluation(path, *, expected_evaluation_id=None, expected_checkpoint_sha256=None,
-                    expected_dataset_generation_id=None, load_predictions=True):
+                    expected_dataset_generation_id=None, load_predictions=True, compact_predictions=False):
     """Verify one explicit evaluation directory; never infer or repair missing files."""
     path = Path(path).resolve()
     manifest = _read_json(path / "manifest.json")
@@ -328,6 +328,39 @@ def load_evaluation(path, *, expected_evaluation_id=None, expected_checkpoint_sh
                 if name not in ("predicted_neural", "predicted_visual"):
                     raise ValueError("Missing scientific prediction array")
                 arrays[name] = None
+        if compact_predictions:
+            # Keep all scientific cells while avoiding retained runtime padding.
+            temporal = arrays["temporal_mask"]
+            neural = arrays["neuron_mask"]
+            width = len(units[scalar["session_id"]])
+            if (temporal.dtype != np.bool_ or temporal.ndim != 1
+                    or neural.dtype != np.bool_ or neural.ndim != 1
+                    or not np.array_equal(neural, np.arange(len(neural)) < width)):
+                raise ValueError("Malformed scientific masks for compact prediction readback")
+            for name, value in arrays.items():
+                if value is None:
+                    continue
+                expected_shape = ((len(neural),) if name == "neuron_mask" else
+                                  (len(temporal), len(neural)) if name in ("observed_neural", "predicted_neural") else
+                                  arrays["observed_visual"].shape if name == "predicted_visual" else
+                                  None if name == "observed_visual" else (len(temporal),))
+                if ((expected_shape is not None and value.shape != expected_shape)
+                        or (name == "observed_visual" and (value.ndim != 2 or value.shape[0] != len(temporal)))):
+                    raise ValueError("Malformed prediction dimensions for compact readback")
+            length = int(np.flatnonzero(temporal)[-1]) + 1 if temporal.any() else 0
+            for name in ("neural_prediction_mask", "visual_prediction_mask",
+                         "encoding_target_mask", "decoding_target_mask"):
+                if arrays[name].dtype != np.bool_ or arrays[name][length:].any():
+                    raise ValueError("Prediction or scoring support extends into temporal padding")
+            for name, value in arrays.items():
+                if value is None:
+                    continue
+                if name == "neuron_mask":
+                    arrays[name] = value[:width].copy()
+                elif name in ("observed_neural", "predicted_neural"):
+                    arrays[name] = value[:length, :width].copy()
+                else:
+                    arrays[name] = value[:length].copy()
         rows.append(EvaluationPrediction(**scalar, neuron_identity=units[scalar["session_id"]].copy(deep=True), **arrays))
     collection = PredictionCollection(tuple(rows), manifest["configuration"], manifest["provenance"]) if rows else None
     memberships = {}

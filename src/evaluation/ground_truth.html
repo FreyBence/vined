@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ViNED predictions and ground truth</title>
+<style>
+body{font:16px system-ui;color:#18283d;background:#f4f7fb;margin:24px auto;max-width:1100px;padding:0 20px}
+section{background:white;border:1px solid #dce3ee;border-radius:12px;padding:20px;margin:18px 0}
+label{display:inline-block;margin:8px 20px 8px 0}select{font:inherit;padding:5px;max-width:650px}svg{width:100%;height:auto}
+table{border-collapse:collapse;width:100%}td,th{text-align:left;padding:8px;border-bottom:1px solid #dce3ee}pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px}
+</style>
+<h1>Predictions and ground truth</h1><p id="target"></p>
+<section><label>Evaluation <select id="run"></select></label><h2>Metric reference</h2>
+<p>Reference scores use the target itself as a prediction on the same scoring support. They describe a perfect data-only reference, not a trained model. R² and cosine are 1 where defined. Reference BPS uses the saturated Poisson likelihood relative to the recorded mean-count baseline; it is not a fixed value of 1. Undefined scores remain unavailable.</p>
+<p>Each evaluation's aggregate includes its own recorded population and weighting policy.</p><table id="metrics"></table></section>
+<section><label>Session <select id="session"></select></label><label>Trial <select id="trial"></select></label>
+<label id="coordinateLabel">Neuron / coordinate <select id="coordinate"></select></label><p id="identity"></p>
+<p>Black: target · Blue: prediction. Hover for values. Only eligible scoring bins appear; missing or nonfinite values leave gaps.</p>
+<svg id="trace" viewBox="0 0 1000 350" role="img" aria-label="Target and prediction over stimulus-relative time"></svg>
+<svg id="scatter" viewBox="0 0 1000 350" role="img" aria-label="Prediction versus target values"></svg></section>
+<details><summary>Source evaluation</summary><pre id="source"></pre></details>
+<script>
+const data=__REPORT_DATA__,$=id=>document.getElementById(id),fmt=v=>v==null?'unavailable':Number(v).toPrecision(5);
+const finite=v=>typeof v==='number'&&Number.isFinite(v);
+function text(tag,value,parent){const e=document.createElement(tag);e.textContent=value;parent.appendChild(e);return e}
+function options(id,entries){$(id).replaceChildren();for(const [value,label] of entries)text('option',label,$(id)).value=value}
+function mark(svg,tag,attrs,title){const e=document.createElementNS('http://www.w3.org/2000/svg',tag);for(const [k,v] of Object.entries(attrs))e.setAttribute(k,v);svg.appendChild(e);if(title){const t=document.createElementNS(e.namespaceURI,'title');t.textContent=title;e.appendChild(t)}return e}
+function bounds(values){let lo=Infinity,hi=-Infinity;for(const v of values)if(finite(v)){lo=Math.min(lo,v);hi=Math.max(hi,v)}if(lo===Infinity)return[0,1];if(lo===hi){const p=Math.max(.05,Math.abs(lo)*.05);lo-=p;hi+=p}return[lo,hi]}
+function axes(id,xvalues,yvalues,xlabel,ylabel){const svg=$(id);svg.replaceChildren();const [xl,xh]=bounds(xvalues),[yl,yh]=bounds(yvalues),x=v=>80+(v-xl)/(xh-xl)*870,y=v=>280-(v-yl)/(yh-yl)*230;
+mark(svg,'path',{d:'M80 45 V280 H950',fill:'none',stroke:'#8090a5'});
+for(let i=0;i<=5;i++){const xv=xl+(xh-xl)*i/5,yv=yl+(yh-yl)*i/5;mark(svg,'text',{x:x(xv),y:302,'text-anchor':'middle','font-size':12}).textContent=fmt(xv);mark(svg,'text',{x:72,y:y(yv)+4,'text-anchor':'end','font-size':12}).textContent=fmt(yv)}
+mark(svg,'text',{x:515,y:335,'text-anchor':'middle'}).textContent=xlabel;mark(svg,'text',{x:80,y:22}).textContent=ylabel;return{svg,x,y,xl,xh}}
+const run=()=>data.runs[Number($('run').value)];
+const trials=()=>run().trials.filter(t=>t.session_id===$('session').value);
+const trial=()=>trials()[Number($('trial').value)];
+let selectedTrial=null,decoded=null;
+async function unpack(packed){const bytes=Uint8Array.from(atob(packed.data),c=>c.charCodeAt(0));const stream=new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));return new DataView(await new Response(stream).arrayBuffer())}
+function coordinate(packed,view,c){return Array.from({length:packed.shape[0]},(_,i)=>packed.item_size===8?view.getFloat64((i*packed.shape[1]+c)*8,true):view.getFloat32((i*packed.shape[1]+c)*4,true))}
+let renderVersion=0;
+async function render(){const version=++renderVersion,t=trial(),c=Number($('coordinate').value);$('identity').textContent=run().session_labels[t.session_id][c]||'No eligible coordinates';
+if(selectedTrial!==t){const arrays=await Promise.all([unpack(t.observed),unpack(t.predicted)]);if(version!==renderVersion)return;selectedTrial=t;decoded=arrays}
+const observed=coordinate(t.observed,decoded[0],c),predicted=coordinate(t.predicted,decoded[1],c);
+const a=axes('trace',t.times,[...observed,...predicted],'Seconds relative to stimulus onset',data.direction==='encoding'?'Spike counts per bin':'CLIP coordinate value');
+for(const [values,color,label] of [[observed,'#18283d','Target'],[predicted,'#2563eb','Prediction']]){let d='',active=false;values.forEach((v,i)=>{if(!finite(v)){active=false;return}d+=`${active?'L':'M'}${a.x(t.times[i])} ${a.y(v)} `;active=true;mark(a.svg,'circle',{cx:a.x(t.times[i]),cy:a.y(v),r:2,fill:color},`${label}: ${fmt(v)}\nTime: ${fmt(t.times[i])} s`)});mark(a.svg,'path',{d,stroke:color,fill:'none','stroke-width':1.5})}
+const both=[...observed,...predicted],b=axes('scatter',both,both,'Target value','Predicted value');mark(b.svg,'path',{d:`M${b.x(b.xl)} ${b.y(b.xl)} L${b.x(b.xh)} ${b.y(b.xh)}`,stroke:'#8090a5','stroke-dasharray':'5 5'});
+observed.forEach((v,i)=>{if(finite(v)&&finite(predicted[i]))mark(b.svg,'circle',{cx:b.x(v),cy:b.y(predicted[i]),r:3,fill:'#2563eb','fill-opacity':.6},`Target: ${fmt(v)}\nPrediction: ${fmt(predicted[i])}\nTime: ${fmt(t.times[i])} s`)});
+if(!t.times.length)for(const p of [a,b])mark(p.svg,'text',{x:500,y:140,'text-anchor':'middle'}).textContent='This trial has no eligible scoring bins';}
+function chooseTrial(){options('coordinate',run().session_labels[trial().session_id].map((label,i)=>[i,data.direction==='encoding'?`Neuron ${i}`:label]));render().catch(error=>{$('identity').textContent=`Unable to display trace: ${error.message}`})}
+function chooseSession(){options('trial',trials().map((t,i)=>[i,`Trial ${t.trial_id}`]));chooseTrial()}
+function chooseRun(){const r=run(),table=$('metrics');table.replaceChildren();let tr=document.createElement('tr');for(const v of ['Metric','Model score','Perfect-reference score','Reference − model'])text('th',v,tr);table.appendChild(tr);
+for(const [name,score] of Object.entries(r.metrics)){const ref=r.reference_metrics[name];tr=document.createElement('tr');for(const v of [name,fmt(score.value),fmt(ref.value),finite(score.value)&&finite(ref.value)?fmt(ref.value-score.value):'unavailable'])text('td',v,tr);table.appendChild(tr)}
+$('source').textContent=JSON.stringify({path:r.path,evaluation_id:r.evaluation_id},null,2);options('session',[...new Set(r.trials.map(t=>t.session_id))].map(s=>[s,s]));chooseSession()}
+$('target').textContent=data.direction==='encoding'?'Targets are recorded neural spike counts. Predictions are expected counts per persisted bin.':'Targets are CLIP features of reconstructed stimulus frames. They are not independently recorded display images.';
+options('run',data.labels.map((label,i)=>[i,label]));$('run').addEventListener('change',chooseRun);$('session').addEventListener('change',chooseSession);$('trial').addEventListener('change',chooseTrial);$('coordinate').addEventListener('change',()=>render().catch(error=>{$('identity').textContent=`Unable to display trace: ${error.message}`}));chooseRun();
+</script></html>

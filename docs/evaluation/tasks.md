@@ -52,6 +52,14 @@ Load explicitly numbered scenario evaluations and produce an interactive metric 
 **Out of scope:**
 New metrics, repeated inference, checkpoint selection, and statistical significance claims.
 
+### [x] T07 — Compare predictions and metrics against their ground-truth reference
+
+**Summary:**
+Add a comparison-script option for one or two persisted evaluations showing prediction/target traces and scores for a perfect data-only reference under the recorded metric policies. Distinguish recorded neural targets from reconstructed visual targets and preserve scoring support and source identity.
+
+**Out of scope:**
+New metrics, new inference, independent display recordings, and upstream data changes.
+
 ## Dependencies
 
 - T02 depends on T01.
@@ -59,5 +67,6 @@ New metrics, repeated inference, checkpoint selection, and statistical significa
 - T04 depends on T01, T02, and T03.
 - T05 depends on T04 and training T06.
 - T06 depends on T04 and T05.
+- T07 depends on T06.
 
 Validation belongs inside each task: use code inspection, existing checks, direct execution, and manual artifact verification proportional to its concrete risks. Do not write or modify tests. Optional visual evaluation is compatibility work only if retained; it must not delay the required neural encoding pipeline.
