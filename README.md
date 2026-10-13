@@ -1,4 +1,4 @@
-# ViNED: Visualâ€“Neural Encoding and Decoding
+# ViNED: Visual-Neural Encoding and Decoding
 
 ViNED is Frey Bence's MSc research project exploring the relationship between visual stimuli and neural activity recorded with implanted Neuropixels electrodes. It builds on **NEDS (Neural Encoding and Decoding at Scale)** and uses International Brain Laboratory (IBL) recordings.
 
