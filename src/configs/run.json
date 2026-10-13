@@ -1,13 +1,13 @@
 {
-  "dataset_generation": "output/datasets/training-dataset/generations/c9da3a61fb12fa6b6edec61ec0261d067bbe9b970d4adf6ffbc6b0f171402988",
-  "expected_dataset_generation_id": null,
-  "eid": "7f6b86f9-879a-4ea2-8531-294a221af5d0",
+  "dataset_generation": "output/datasets/training-dataset/generations/99e803760e5f3769a8a87755bbb9ea00005b2fcf2cb46d92c662225d8f61cc05",
+  "expected_dataset_generation_id": "99e803760e5f3769a8a87755bbb9ea00005b2fcf2cb46d92c662225d8f61cc05",
+  "eid": "0cad7ea8-8e6c-4ad1-a5c5-53fbb2df1a63",
   "train": {
     "base_path": null,
     "training_config": "src/configs/training/pilot.json",
     "setup_only": false,
     "seed": 42,
-    "epochs": 10,
+    "epochs": 300,
     "batch_size": 1,
     "validation_batch_size": 1,
     "learning_rate": 0.0002,
