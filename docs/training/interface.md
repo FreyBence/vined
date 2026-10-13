@@ -19,8 +19,10 @@ From the checkout root, `python src/run.py train 3` selects scenario 3 from
 `src/configs/scenarios.json`. The Bash wrapper `bash script/run.sh train 3`
 accepts the same arguments, uses the project virtual environment, and resolves
 the checkout root through `script/environment.sh`. Both entry points support
-`eval` in place of `train`. The launcher accepts `train|eval` and an integer
-scenario ID; evaluation also accepts `--attempt 001` or `--checkpoint PATH`.
+`finetune` or `eval` in place of `train`. The launcher accepts
+`train|finetune|eval` and an integer scenario ID; fine-tuning and evaluation
+also accept `--attempt 001` or `--checkpoint PATH`. `--setup-only` verifies
+the resolved operation without starting training or evaluation.
 Configure a concrete published `dataset_generation`, optional
 `expected_dataset_generation_id` and `eid`, and operation-specific entry settings
 in `src/configs/run.json`. Paths are resolved from the checkout; null `eid` selects
@@ -39,6 +41,20 @@ optional `training_config` override file. Supported `train` entry settings are
 `checkpoint_selection`, `no_wandb`, `resume_checkpoint`, `multi_gpu`, `debug`,
 `num_sessions`, `mask_mode`, `mask_ratio`, `mixed_training`, and `enc_task_var`.
 Null entry settings preserve the underlying module defaults.
+
+`bash script/run.sh finetune 15 --attempt 002` initializes a new fine-tuning
+run from scenario 15 attempt 002's `model_best.pt`. Omitting `--attempt` uses
+the latest selected attempt; `--checkpoint PATH` selects an explicit source.
+The source directory is preserved and outputs use a new numbered attempt.
+The launcher always selects `src/configs/training/finetune.json` and passes
+`--prefer-training-config`: fields present in that profile override defaults,
+session model profiles and inherited run/scenario entry settings. Unspecified
+fields retain their resolved defaults. Training entry settings supply fallback
+runtime values, with optional run/scenario `finetune` objects overriding those
+fallbacks. Dataset/session and temporal context come from the selected scenario
+and common entry settings. Fine-tuning uses fresh optimizer/scheduler state;
+resume, debug and multi-GPU launcher settings are rejected. Direct training
+commands keep their existing precedence unless the new preference flag is used.
 
 `--neural-region-selection all_recorded|visual_only` defaults to `all_recorded`.
 `trainer.selection.select_neural_regions(views, metadata, selection, *, regions=None)` returns

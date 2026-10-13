@@ -1,4 +1,4 @@
-"""Run training or evaluation with scenario settings taking precedence."""
+"""Run scenario training, fine-tuning or evaluation with explicit precedence."""
 
 import argparse
 from pathlib import Path
@@ -32,10 +32,10 @@ BOOL_FIELDS = {"setup_only", "no_wandb", "multi_gpu", "debug", "mixed_training",
 
 def build_command(operation, scenario_id, *, attempt=None, checkpoint=None):
     """Resolve a scenario and its selected training attempt without test scoring."""
-    if operation not in ("train", "eval") or type(scenario_id) is not int:
-        raise ValueError("Choose train or eval and an integer scenario ID")
-    if operation != "eval" and (attempt is not None or checkpoint is not None):
-        raise ValueError("--attempt and --checkpoint apply only to evaluation")
+    if operation not in ("train", "finetune", "eval") or type(scenario_id) is not int:
+        raise ValueError("Choose train, finetune or eval and an integer scenario ID")
+    if operation == "train" and (attempt is not None or checkpoint is not None):
+        raise ValueError("--attempt and --checkpoint apply to fine-tuning or evaluation")
     if attempt is not None and checkpoint is not None:
         raise ValueError("Choose --attempt or --checkpoint, not both")
     scenarios = load_config(CONFIG_ROOT / "scenarios.json")["scenarios"]
@@ -56,14 +56,27 @@ def build_command(operation, scenario_id, *, attempt=None, checkpoint=None):
             or (mode == "full_trial" and bins is not None)):
         raise ValueError("Scenario requires strict context with bins 1|3|6|9|12, or full_trial without bins")
     run = load_config(CONFIG_ROOT / "run.json")
-    if set(run) - COMMON - {"train", "eval"}:
+    if set(run) - COMMON - {"train", "finetune", "eval"}:
         raise ValueError("Unsupported run configuration fields")
     settings = load_config(CONFIG_ROOT / "evaluation/default.json") if operation == "eval" else {}
     settings.update({key: value for key, value in run.items() if key in COMMON})
     settings.update(run.get(operation, {}))
     settings.update({key: value for key, value in scenario.items() if key in COMMON})
     settings.update(scenario.get(operation, {}))
-    allowed = COMMON | (TRAIN if operation == "train" else EVAL)
+    if operation == "finetune":
+        # Training settings supply unspecified runtime values. The dedicated
+        # profile wins over file-based flat overrides forwarded as CLI options.
+        settings = {**run.get("train", {}), **scenario.get("train", {}), **settings}
+        profile_path = CONFIG_ROOT / "training/finetune.json"
+        if not profile_path.is_file():
+            raise FileNotFoundError(f"Missing fine-tuning profile: {profile_path}")
+        settings["training_config"] = str(profile_path)
+        if settings.get("resume_checkpoint"):
+            raise ValueError("Fine-tuning uses a new run; select its source with --attempt or --checkpoint")
+        for unsupported in ("debug", "multi_gpu"):
+            if settings.pop(unsupported, False):
+                raise ValueError(f"Scenario fine-tuning does not support {unsupported}")
+    allowed = COMMON | (TRAIN if operation != "eval" else EVAL)
     if set(settings) - allowed:
         raise ValueError(f"Unsupported {operation} settings: {sorted(set(settings) - allowed)}")
     for key in ("dataset_generation",):
@@ -71,10 +84,12 @@ def build_command(operation, scenario_id, *, attempt=None, checkpoint=None):
             raise ValueError(f"Set {key} in src/configs/run.json or the selected scenario's {operation} object")
     command = [sys.executable, str(REPO_ROOT / "src" / f"{operation}.py"),
                "--context-mode", mode, "--neural-region-selection", selection,
-               "--model_mode" if operation == "train" else "--prediction-direction", direction]
-    if operation == "train":
+               "--model_mode" if operation != "eval" else "--prediction-direction", direction]
+    if operation != "eval":
         command.extend(["--scenario-id", str(scenario_id), "--scenario-name", scenario["name"]])
-    else:
+    if operation == "finetune":
+        command.append("--prefer-training-config")
+    if operation in ("eval", "finetune"):
         explicit = checkpoint if checkpoint is not None else settings.get("checkpoint")
         if attempt is not None or explicit is None:
             training_settings = {**run.get("train", {}), **scenario.get("train", {})}
@@ -82,12 +97,19 @@ def build_command(operation, scenario_id, *, attempt=None, checkpoint=None):
             base = Path(base).expanduser()
             base = base if base.is_absolute() else REPO_ROOT / base
             number, chosen = selected_attempt(base / "runs", scenario_id, attempt)
-            settings["checkpoint"] = str(chosen)
-            command.extend(["--scenario-id", str(scenario_id), "--attempt", number])
+            if operation == "finetune":
+                command.extend(["--pretrained-checkpoint", str(chosen)])
+            else:
+                settings["checkpoint"] = str(chosen)
+                command.extend(["--scenario-id", str(scenario_id), "--attempt", number])
         else:
             if not isinstance(explicit, str) or not explicit.strip():
                 raise ValueError("checkpoint must be a nonempty path or null for the latest scenario attempt")
-            settings["checkpoint"] = explicit
+            if operation == "finetune":
+                path = Path(explicit).expanduser()
+                command.extend(["--pretrained-checkpoint", str(path if path.is_absolute() else REPO_ROOT / path)])
+            else:
+                settings["checkpoint"] = explicit
     if bins is not None:
         command.extend(["--context-bins", str(bins)])
     for key, value in settings.items():
@@ -103,7 +125,7 @@ def build_command(operation, scenario_id, *, attempt=None, checkpoint=None):
             values = value if isinstance(value, list) else [value]
             if not values or any(not isinstance(item, str) or not item for item in values):
                 raise ValueError("eid must be a session ID or nonempty list of session IDs")
-            if operation == "train" and len(values) != 1:
+            if operation != "eval" and len(values) != 1:
                 raise ValueError("Training accepts one eid or null for all persisted sessions")
             for item in values:
                 command.extend([flag, item])
@@ -119,13 +141,16 @@ def build_command(operation, scenario_id, *, attempt=None, checkpoint=None):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("operation", choices=["train", "eval"])
+    parser.add_argument("operation", choices=["train", "finetune", "eval"])
     parser.add_argument("scenario_id", type=int)
-    parser.add_argument("--attempt", help="Evaluate a numbered training attempt; default: latest")
+    parser.add_argument("--attempt", help="Source attempt for fine-tuning or evaluation; default: latest")
     parser.add_argument("--checkpoint", help="Explicit checkpoint override, including older UUID runs")
+    parser.add_argument("--setup-only", action="store_true", help="Verify configuration without training or evaluation")
     args = parser.parse_args()
     try:
         command = build_command(args.operation, args.scenario_id, attempt=args.attempt, checkpoint=args.checkpoint)
+        if args.setup_only and "--setup-only" not in command:
+            command.append("--setup-only")
     except (ValueError, KeyError, TypeError, OSError) as error:
         parser.error(str(error))
     return subprocess.call(command, cwd=REPO_ROOT)

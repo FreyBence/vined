@@ -1,0 +1,28 @@
+{
+  "training": {
+    "num_epochs": 100,
+    "checkpoint_selection": "validation_loss",
+    "eval_every": 1,
+    "save_every": 10
+  },
+  "optimizer": {
+    "gradient_accumulation_steps": 4,
+    "lr": 0.0002,
+    "wd": 0.01,
+    "scheduler": "none"
+  },
+  "model": {
+    "encoder": {
+      "embedder": {
+        "dropout": 0.1
+      },
+      "transformer": {
+        "n_layers": 2,
+        "hidden_size": 128,
+        "inter_size": 256,
+        "n_heads": 4,
+        "dropout": 0.1
+      }
+    }
+  }
+}

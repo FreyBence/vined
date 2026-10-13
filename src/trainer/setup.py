@@ -46,6 +46,8 @@ def add_setup_arguments(parser):
     parser.add_argument("--dataset-generation", help="Explicit published dataset directory; alternatively use --data_path")
     parser.add_argument("--expected-dataset-generation-id")
     parser.add_argument("--training-config", help="Training JSON override file")
+    parser.add_argument("--prefer-training-config", action="store_true",
+                        help="Apply training JSON after inherited entry settings")
     parser.add_argument("--seed", type=int)
     parser.add_argument("--epochs", type=int)
     parser.add_argument("--batch-size", type=int)
@@ -158,6 +160,10 @@ def resolve_setup(args, tune_config=None):
             _set(config, path, value)
     if args.mixed_training:
         config["training"]["mixed_training"] = True
+    if getattr(args, "prefer_training_config", False):
+        if not args.training_config:
+            raise ValueError("--prefer-training-config requires --training-config")
+        config = update_config(config, override)
     for name, value in (tune_config or {}).items():
         if name not in SEARCH_FIELDS:
             raise ValueError(f"Unsupported search override: {name}")
