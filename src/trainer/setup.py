@@ -1,5 +1,6 @@
 """Shared configuration and verified dataset selection for training entry points."""
 
+import json
 import math
 from pathlib import Path
 
@@ -9,6 +10,7 @@ from training_dataset import TARGET_SUPPORT_BINS
 from utils.config_utils import DictConfig, load_config, update_config
 from utils.utils import set_seed
 from trainer.selection import select_neural_regions
+from trainer.targets import transform_neural_targets, regional_training_means
 
 
 CONFIG_ROOT = Path(__file__).resolve().parents[1] / "configs"
@@ -23,6 +25,7 @@ SEARCH_FIELDS = {
 SUPPORTED_OVERRIDES = {
     "seed", "wandb.use", "wandb.entity", "wandb.project",
     "training.objective", "training.mixed_training", "training.enc_task_var",
+    "training.target_granularity",
     "training.num_epochs", "training.train_batch_size", "training.test_batch_size",
     "training.eval_every", "training.save_every", "training.save_plot_every_n_epochs",
     "training.checkpoint_selection", "training.selection_metric", "training.selection_direction",
@@ -36,6 +39,7 @@ SUPPORTED_OVERRIDES = {
 
 
 def add_setup_arguments(parser):
+    parser.add_argument("--encoder-checkpoint", help="Strict encoder-only initialization of regional encoding")
     parser.add_argument("--scenario-id", type=int, help="Scenario for numbered artifact folders")
     parser.add_argument("--scenario-name", help="Scenario description recorded with the run")
     parser.add_argument("--neural-region-selection", choices=["all_recorded", "visual_only"], default="all_recorded")
@@ -46,6 +50,7 @@ def add_setup_arguments(parser):
     parser.add_argument("--dataset-generation", help="Explicit published dataset directory; alternatively use --data_path")
     parser.add_argument("--expected-dataset-generation-id")
     parser.add_argument("--training-config", help="Training JSON override file")
+    parser.add_argument("--training-overrides", help="JSON object of inline training overrides from run.json")
     parser.add_argument("--prefer-training-config", action="store_true",
                         help="Apply training JSON after inherited entry settings")
     parser.add_argument("--seed", type=int)
@@ -104,6 +109,7 @@ def load_defaults(config_root, session_count):
     training_name = "default" if session_count <= 40 else "multi_session"
     config = load_config(config_root / "training" / (training_name + ".json"))
     model = load_config(config_root / "model" / (model_name + ".json"))
+    model = update_config(model, config.pop("model", {}))
     if ("temporal_context" in config.get("training", {})
             or any(key in model for key in ("temporal_context", "context_mode", "context_bins"))):
         raise ValueError("Temporal context must be selected through CLI arguments, not JSON profiles")
@@ -114,6 +120,8 @@ def load_defaults(config_root, session_count):
 
 def _training_override(override):
     """Accept training-owned masking settings at the runtime model boundary."""
+    if not isinstance(override, dict):
+        raise ValueError("Training overrides must be a JSON object")
     if "masking" in override:
         masking = override.pop("masking")
         model = override.setdefault("model", {})
@@ -144,6 +152,10 @@ def resolve_setup(args, tune_config=None):
         override = _training_override(load_config(args.training_config))
         _known_overrides(config, override)
         config = update_config(config, override)
+    if getattr(args, "training_overrides", None) is not None:
+        inline = _training_override(json.loads(args.training_overrides))
+        _known_overrides(config, inline)
+        config = update_config(config, inline)
     cli_fields = {
         "seed": ("seed",), "epochs": ("training", "num_epochs"),
         "batch_size": ("training", "train_batch_size"),
@@ -172,9 +184,20 @@ def resolve_setup(args, tune_config=None):
         config["wandb"]["use"] = False
 
     training, optimizer, model, data = (config[key] for key in ("training", "optimizer", "model", "data"))
+    granularity = training["target_granularity"]
+    if granularity not in ("neuron", "region"):
+        raise ValueError("training.target_granularity must be neuron or region")
     objective = training["objective"]
+    if granularity == "region" and objective != "encoding":
+        raise ValueError("Regional targets support encoding only")
+    if getattr(args, "encoder_checkpoint", None) and (granularity != "region" or args.resume_checkpoint):
+        raise ValueError("Encoder initialization requires regional targets and fresh optimizer state")
     if objective not in ("encoding", "decoding", "mm"):
         raise ValueError(f"Unsupported objective: {objective}")
+    train, val, _test, metadata = transform_neural_targets(
+        (train, val, _test), metadata, granularity)
+    if granularity == "region":
+        metadata["regional_training_baseline"] = regional_training_means(train)
     mode = getattr(args, "context_mode", None)
     bins = getattr(args, "context_bins", None)
     if objective == "mm":

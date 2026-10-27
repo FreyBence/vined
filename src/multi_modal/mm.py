@@ -20,7 +20,7 @@ from transformers.activations import ACT2FN
 ACT2FN["softsign"] = nn.Softsign
 from models.masker import Masker
 from models.model_output import ModelOutput
-from models.stitcher import StitchDecoder, session_populations, session_indices
+from models.stitcher import StitchDecoder, RegionDecoder, session_populations, session_indices
 from multi_modal.encoder_embeddings import EncoderLayer
 from multi_modal.mm_utils import create_context_mask
 from utils.config_utils import DictConfig, update_config
@@ -61,6 +61,14 @@ class MultiModal(nn.Module):
         self.avail_mod = avail_mod
         self.avail_beh = avail_beh
         self.model_mode = model_mode
+        self.target_granularity = kwargs.get("target_granularity", "neuron")
+        if self.target_granularity not in ("neuron", "region"):
+            raise ValueError("Unknown neural target granularity")
+        if self.target_granularity == "region" and model_mode != "encoding":
+            raise ValueError("Regional targets currently require encoding")
+        self.regional_targets = copy.deepcopy(kwargs.get("regional_targets"))
+        if self.target_granularity == "region" and not self.regional_targets:
+            raise ValueError("Regional heads require explicit anatomical mapping metadata")
         self.eid_list = session_populations(kwargs["eid_list"])
         self.neuron_order = copy.deepcopy(neuron_order)
         if self.neuron_order is not None:
@@ -173,7 +181,8 @@ class MultiModal(nn.Module):
         self.mod_static_weight_dict = nn.ModuleDict()
         self.mod_token_weight_dict = {}
         for mod in mod_list:
-            self.mod_stitcher_proj_dict[mod] = StitchDecoder(
+            decoder = RegionDecoder if mod == "spike" and self.target_granularity == "region" else StitchDecoder
+            self.mod_stitcher_proj_dict[mod] = decoder(
                 eid_list = _eid_list, n_channels = n_channels, mod = mod,
                 max_F=self.max_F, visual_dim=self.visual_dim,
             )
@@ -207,6 +216,8 @@ class MultiModal(nn.Module):
             "ordered_units": self.neuron_order,
             "neural_output": "log_expected_spike_count",
             "neural_head_layout": "real_session_channels_then_padding",
+            **({"target_granularity": "region", "regional_targets": self.regional_targets}
+               if self.target_granularity == "region" else {}),
             "visual_dim": self.visual_dim,
             "temporal_context": {"forward": self.context_forward, "backward": self.context_backward,
                 **({"mode": self.context_mode, "bins": self.context_bins,

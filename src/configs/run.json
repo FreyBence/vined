@@ -4,19 +4,43 @@
   "eid": "0cad7ea8-8e6c-4ad1-a5c5-53fbb2df1a63",
   "train": {
     "base_path": null,
-    "training_config": "src/configs/training/pilot.json",
+    "training_config": null,
     "setup_only": false,
     "seed": 42,
-    "epochs": 300,
+    "epochs": 100,
     "batch_size": 1,
     "validation_batch_size": 1,
     "learning_rate": 0.0002,
     "weight_decay": 0.01,
-    "scheduler": "cosine",
+    "scheduler": "none",
     "eval_every": 1,
-    "checkpoint_selection": "validation_metric",
+    "checkpoint_selection": "validation_loss",
     "num_sessions": 1,
-    "no_wandb": true
+    "no_wandb": true,
+    "training_overrides": {
+      "training": {
+        "target_granularity": "region",
+        "save_every": 10,
+        "save_plot_every_n_epochs": 0
+      },
+      "optimizer": {
+        "gradient_accumulation_steps": 4
+      },
+      "model": {
+        "encoder": {
+          "embedder": {
+            "dropout": 0.1
+          },
+          "transformer": {
+            "n_layers": 2,
+            "hidden_size": 128,
+            "n_heads": 4,
+            "inter_size": 256,
+            "dropout": 0.1
+          }
+        }
+      }
+    }
   },
   "eval": {
     "checkpoint": null,

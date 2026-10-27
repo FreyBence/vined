@@ -1,5 +1,20 @@
 # Model interface
 
+## Regional encoding targets
+
+`MultiModal(..., target_granularity="region", regional_targets=mapping, ...)`
+selects `models.stitcher.RegionDecoder` for neural encoding output. Each session
+uses a trainable `Linear(hidden_width, region_count)` without output LayerNorm;
+predictions are `[B,T,R_max]` log expected **summed** regional spike counts per
+original bin. `eid_list` supplies region widths in this mode. The ordered region
+names, recorded source columns, original neuron counts and ordered source units
+are required in the session-keyed `regional_targets` metadata and checkpoint
+identity. The existing `neuron_mask` field denotes real region channels in this
+mode; temporal validity and H=12 eligibility retain their existing semantics.
+Regional mode currently requires encoding. Default `target_granularity="neuron"`
+preserves the existing head and checkpoint identity. Output dimensions alone
+never authorize transferring a neuron checkpoint into a regional model.
+
 The public encoding boundary is `MultiModal` construction, keyword forward
 or `encode`, `MultiModalOutput`, and checkpoint identity validation. Modality
 dictionary calls provide optional NEDS compatibility. Inputs are already aligned;

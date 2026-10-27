@@ -1,6 +1,7 @@
 """Run scenario training, fine-tuning or evaluation with explicit precedence."""
 
 import argparse
+import json
 from pathlib import Path
 import subprocess
 import sys
@@ -17,6 +18,7 @@ TRAIN = {
     "validation_batch_size", "learning_rate", "weight_decay", "scheduler", "eval_every",
     "checkpoint_selection", "no_wandb", "resume_checkpoint", "multi_gpu", "debug",
     "num_sessions", "mask_mode", "mask_ratio", "mixed_training", "enc_task_var",
+    "training_overrides",
 }
 EVAL = {
     "checkpoint", "setup_only", "batch_size", "device", "seed", "aggregation",
@@ -116,7 +118,11 @@ def build_command(operation, scenario_id, *, attempt=None, checkpoint=None):
         if value is None:
             continue
         flag = "--" + (key if key in LEGACY_FLAGS else key.replace("_", "-"))
-        if key in BOOL_FIELDS:
+        if key == "training_overrides":
+            if not isinstance(value, dict):
+                raise ValueError("training_overrides must be a JSON object")
+            command.extend([flag, json.dumps(value, allow_nan=False)])
+        elif key in BOOL_FIELDS:
             if type(value) is not bool:
                 raise ValueError(f"{key} must be a JSON boolean")
             if value:

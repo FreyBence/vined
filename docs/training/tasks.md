@@ -62,6 +62,22 @@ Provide a train/eval launcher accepting only operation and scenario ID, with sce
 **Out of scope:**
 Dataset/checkpoint discovery, upstream data regeneration, and changes to model architecture.
 
+### [x] T07 — Integrate explicit regional encoding targets and initialization
+
+**Summary:**
+Provide runtime anatomical integer-count aggregation, training-only regional baseline and bias statistics, and verified encoder-only initialization with fresh optimization and complete source/new-parameter accounting.
+
+**Out of scope:**
+Dataset regeneration, temporal smoothing and changes to the Poisson objective.
+
+### [x] T08 — Train and compare the controlled VISpm regional model
+
+**Summary:**
+Complete the requested 100-epoch run using scenario-15/003 data and encoder settings, then report same-bin validation calibration, pooled bits/spike, variability and firing-rate trajectories against the training constant and summed neuron-model predictions.
+
+**Out of scope:**
+Additional experiments, test-based configuration selection and heterogeneous-population research beyond the requested limitation discussion.
+
 ## Dependencies
 
 - T02 depends on T01.
@@ -69,3 +85,5 @@ Dataset/checkpoint discovery, upstream data regeneration, and changes to model a
 - T04 depends on T03.
 - T05 depends on T04.
 - T06 depends on T04.
+- T07 depends on T04 and model T05.
+- T08 depends on T07.

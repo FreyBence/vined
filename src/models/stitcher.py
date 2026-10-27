@@ -172,6 +172,20 @@ class StitchDecoder(nn.Module):
         session_indices(eid, self.eid_list, len(eid), device)
         widths = torch.tensor([self.eid_list[session] for session in eid], device=device)
         return torch.arange(self.N, device=device)[None, :] < widths[:, None]
+
+
+class RegionDecoder(StitchDecoder):
+    """Session-specific log-count projections without output normalization."""
+
+    def __init__(self, eid_list, n_channels, mod="spike", max_F=100, visual_dim=768):
+        nn.Module.__init__(self)
+        if mod != "spike":
+            raise ValueError("RegionDecoder predicts neural counts only")
+        self.mod, self.max_F, self.P = mod, max_F, n_channels
+        self.eid_list = session_populations(eid_list)
+        self.N = max(self.eid_list.values())
+        self.stitch_decoder_dict = nn.ModuleDict({
+            session: nn.Linear(n_channels, width) for session, width in self.eid_list.items()})
     
     
 

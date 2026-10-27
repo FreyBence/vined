@@ -1,5 +1,85 @@
 # Training interface
 
+## Regional count encoding
+
+Training JSON controls prediction granularity through `training.target_granularity`
+(`neuron` in the base profiles, or `region`). The current `run.json` selects
+regional prediction through its inline training overrides. For example:
+
+```json
+{"training": {"target_granularity": "region"}}
+```
+
+The selected scenario's existing `neural_region_selection` controls the population:
+`visual_only` retains the configured visual areas and `all_recorded` retains all
+recorded neurons. Regional aggregation runs after that selection and automatically
+creates one channel per area actually represented in each session. Visual groups
+use the existing roots in `src/configs/visual-regions.json`. All-recorded groups
+use recorded Allen areas, merging layer subdivisions into their parent area.
+There is no separate training region list. Channels are ordered alphabetically
+within each session; absent areas do not create synthetic zero-count channels.
+Different sessions may have different region sets and use normal channel padding.
+Missing or unknown anatomical IDs for valid recorded neurons fail explicitly.
+
+The normal default or multi-session training profile defines the default;
+no separate regional profile is required. Granularity follows normal
+training-profile merge precedence. Derived groups, source columns and
+grouping policy are recorded in effective dataset metadata and checkpoints.
+There are no `--target-granularity` or `--target-regions` CLI options, and
+`training.target_regions` is not a supported override.
+Direct `src/train.py` additionally supports `--encoder-checkpoint PATH` for
+encoder-only initialization. Regional targets support encoding only.
+
+`trainer.targets.transform_neural_targets(views, metadata, granularity, *, regions=None)`
+returns runtime split views and metadata, summing original int64 counts over valid
+recorded source neurons. It preserves physical bins, visual features, sample/trial
+identity and memberships, and zeros temporal padding. Runtime channel identities
+are region rows; `metadata.regional_targets` retains ordered source units,
+source neuron count, root names, source column lists and contributing neuron
+counts per region. The published dataset remains unchanged. Neuron mode returns
+the original views. `regional_training_means(train)` computes count-weighted means
+only on complete H=12 eligible training bins and rejects nontraining samples.
+The optional explicit `regions` argument restores previously recorded root-based
+mappings for checkpoint diagnostics; training derives its groups automatically.
+
+`regional_training_baseline` is recorded in effective dataset metadata and supplies
+regional bias initialization and validation BPS null rates. Regional validation
+BPS retains the existing per-channel/session averaging; the diagnostic command
+below additionally reports pooled bits/spike. The singleton VISpm experiment has
+one channel and one session, so these coincide. Loss reduction and accumulation
+remain valid-cell weighted Poisson NLL with `log_input=True`, `full=False`.
+
+`trainer.pretrained.initialize_regional_encoder(model, path, *, config)` strictly
+restores and validates the complete source checkpoint, checks source population,
+dataset/split provenance, context and encoder architecture, then copies and
+verifies every non-output-head tensor. All source neuron-head keys are excluded;
+the regional projection is new. Its exact transferred, initialized and excluded
+parameter lists appear in `run.json` under `adaptation`; `pretrained` records the
+source path/hash. The optimizer and scheduler are fresh. `initialize_regional_bias`
+sets each intercept to `log(max(training_mean, 1e-8))`; projection weights retain
+ordinary trainable linear initialization. Resume cannot be combined with encoder
+initialization. `model_from_checkpoint` restores regional checkpoints strictly.
+
+`src/configs/training/default.json` and `multi_session.json` supply base settings.
+Their optional `model` objects override the selected session-count architecture
+profile before explicit training configuration/CLI overrides are applied. The
+current `run.json` supplies the controlled 100-epoch, batch-one, accumulation-four
+AdamW configuration, regional granularity, and scenario-15/003 encoder dimensions
+and dropout. The effective run `config.json` is the complete resolved configuration.
+
+After training, run `python src/region_diagnostics.py --checkpoint RUN/model_best.pt
+--source-checkpoint SOURCE/model_best.pt --output-dir NEW_DIRECTORY`. This
+validation-only diagnostic restores the selected regional and source models,
+verifies training/validation membership and anatomical mappings, and compares
+regional predictions, training-derived constant counts and summed neuron-model
+expected counts on identical H=12 bins. It never evaluates test targets. It writes
+`results.json`, `report.md`, original-bin `trajectories.npz`, rate trajectory PNGs
+in spikes/second/source-neuron, and a training history PNG. Calibration error is
+predicted minus observed mean count; pooled BPS uses the training regional null.
+Global and trial-centered temporal standard deviations describe expected-count
+variation separately from observed variability. Existing output directories are
+rejected. No smoothing or further optimization occurs.
+
 ## Console progress
 
 Training and fine-tuning use one stderr progress bar per training epoch, plus
@@ -39,8 +119,20 @@ optional `training_config` override file. Supported `train` entry settings are
 `base_path`, `training_config`, `setup_only`, `seed`, `epochs`, `batch_size`,
 `validation_batch_size`, `learning_rate`, `weight_decay`, `scheduler`, `eval_every`,
 `checkpoint_selection`, `no_wandb`, `resume_checkpoint`, `multi_gpu`, `debug`,
-`num_sessions`, `mask_mode`, `mask_ratio`, `mixed_training`, and `enc_task_var`.
+`num_sessions`, `mask_mode`, `mask_ratio`, `mixed_training`, `enc_task_var`, and
+`training_overrides`.
 Null entry settings preserve the underlying module defaults.
+
+`train.training_overrides` is an inline JSON object using the same schema and
+validation as a `--training-config` file (for example `training`, `optimizer`,
+and `model.encoder` settings). The launcher forwards it intact through
+`--training-overrides`; region lists still come from scenario population selection.
+Precedence is base profiles, optional training configuration file, inline
+overrides, then explicit flat entry/CLI settings and supported search overrides.
+For example, flat `train.epochs` overrides an inline `training.num_epochs`.
+Scenario settings replace matching run entry settings, including the complete
+`training_overrides` object when supplied. Fine-tuning's existing
+`--prefer-training-config` reapplies its dedicated profile after these overrides.
 
 `bash script/run.sh finetune 15 --attempt 002` initializes a new fine-tuning
 run from scenario 15 attempt 002's `model_best.pt`. Omitting `--attempt` uses
@@ -157,7 +249,8 @@ that root. Precedence is defaults, `--training-config JSON`, explicit CLI overri
 then supported Ray trial overrides. Unspecified CLI options preserve JSON values.
 
 `model/default.json`, `single_session.json`, `medium.json`, and `large.json`
-contain architecture settings. Selection uses the selected session count: one
+contain base architecture settings; the selected training profile's `model`
+overrides are applied on top. Selection uses the selected session count: one
 session uses `single_session`, 2–10 uses `default`, 11–69 uses `medium`, and 70+
 uses `large`. `training/default.json` supplies optimization, masking, tracking,
 losses, validation, and runtime batching; 41+ sessions use `training/multi_session.json`.

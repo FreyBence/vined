@@ -143,3 +143,57 @@ def model_from_checkpoint(path):
     model.load_state_dict(checkpoint["model"], strict=True)
     model.eval()
     return model
+
+
+def initialize_regional_encoder(model, path, *, config):
+    """Validate the complete source, transfer every non-head tensor, verify copies."""
+    if model.target_granularity != "region" or model.model_mode != "encoding":
+        raise ValueError("Encoder-only initialization requires a regional encoding model")
+    checkpoint = load_training_checkpoint(path)
+    source_config = checkpoint["config"]
+    for field in ("dataset_generation_id", "selected_session_ids", "dataset_metadata"):
+        if source_config["dataset"].get(field) != plain(config.dataset.get(field)):
+            raise ValueError(f"Encoder initialization dataset provenance differs: {field}")
+    if (_architecture(source_config) != _architecture(config)
+            or source_config["training"]["objective"] != "encoding"
+            or source_config["training"].get("temporal_context") != plain(config.training.temporal_context)):
+        raise ValueError("Source encoder architecture/direction/context differs")
+    # Strict restoration checks all source keys and the source model identity.
+    source_model = model_from_checkpoint(path)
+    if source_model.target_granularity != "neuron":
+        raise ValueError("Expected a neuron-level source checkpoint")
+    for session, mapping in config.dataset.regional_targets.items():
+        source_units = source_config["dataset"]["ordered_units"].get(session)
+        if source_units != plain(mapping["ordered_units"]):
+            raise ValueError("Regional source population differs from source checkpoint")
+    head_prefix = "mod_stitcher_proj_dict."
+    source, current = source_model.state_dict(), model.state_dict()
+    transfer = {k for k in current if not k.startswith(head_prefix)}
+    if transfer != {k for k in source if not k.startswith(head_prefix)}:
+        raise ValueError("Source and target encoder parameter sets differ")
+    for key in transfer:
+        if current[key].shape != source[key].shape or current[key].dtype != source[key].dtype:
+            raise ValueError(f"Incompatible encoder tensor: {key}")
+        if not torch.isfinite(source[key]).all():
+            raise ValueError(f"Non-finite encoder tensor: {key}")
+        current[key] = source[key].clone()
+    model.load_state_dict(current, strict=True)
+    loaded = model.state_dict()
+    if any(not torch.equal(loaded[k], source[k]) for k in transfer):
+        raise ValueError("Encoder transfer verification failed")
+    model.adaptation_report = dict(
+        transferred=sorted(transfer),
+        newly_initialized=sorted(k for k in current if k.startswith(head_prefix)),
+        excluded_source=sorted(k for k in source if k.startswith(head_prefix)),
+        verified_tensors=len(transfer), optimizer="fresh AdamW", scheduler="fresh")
+    return model
+
+
+def initialize_regional_bias(model, metadata):
+    """Initialize log-count intercepts from eligible optimization targets only."""
+    if model.target_granularity != "region":
+        return
+    with torch.no_grad():
+        for session, stats in metadata["regional_training_baseline"].items():
+            head = model.mod_stitcher_proj_dict["spike"].stitch_decoder_dict[session]
+            head.bias.copy_(torch.tensor(stats["mean_counts"], dtype=head.bias.dtype).clamp_min(1e-8).log())

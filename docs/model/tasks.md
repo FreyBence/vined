@@ -38,8 +38,17 @@ Write `interface.md` from the completed implementation, describing public constr
 **Out of scope:**  
 Rewriting authoritative design documents, changing downstream components, or adding implementation history and runtime reports.
 
+### [x] T05 — Support anatomical regional encoding heads
+
+**Summary:**
+Expose regional log-count outputs through dedicated session-specific linear heads without output normalization, preserving the neuron path, temporal support and explicit checkpoint identity.
+
+**Out of scope:**
+Changing the encoder architecture or neuron output head.
+
 ## Dependencies
 
 - T02 depends on T01.
 - T03 depends on T02.
 - T04 depends on T01, T02, T03.
+- T05 depends on T04.

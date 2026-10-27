@@ -7,6 +7,7 @@
   },
   "training": {
     "objective": "encoding",
+    "target_granularity": "neuron",
     "mixed_training": false,
     "enc_task_var": "all",
     "checkpoint_selection": "validation_metric",
@@ -64,5 +65,6 @@
     ],
     "n_mask_regions": 1,
     "causal_zero": true
-  }
+  },
+  "model": {}
 }

@@ -18,6 +18,7 @@ from trainer.make import make_multimodal_trainer
 from trainer.artifacts import new_run_directory, initialize_run
 from trainer.runtime import make_accelerator, prepare_optimization, register_runtime_modules
 from trainer.setup import CONFIG_ROOT, add_setup_arguments, resolve_setup, setup_summary
+from trainer.pretrained import initialize_regional_encoder, initialize_regional_bias
 from utils.utils import dummy_load
 
 
@@ -139,6 +140,9 @@ def main(tune_config=None):
     )
 
     model = register_runtime_modules(model)
+    if args.encoder_checkpoint:
+        initialize_regional_encoder(model, args.encoder_checkpoint, config=config)
+    initialize_regional_bias(model, meta_data)
     optimizer = torch.optim.AdamW(
         model.parameters(),
         lr=max_lr,
@@ -210,6 +214,7 @@ def main(tune_config=None):
     )
 
     initialize_run(trainer_, kind="train", resume_checkpoint=args.resume_checkpoint,
+                   pretrained_checkpoint=args.encoder_checkpoint,
                    scenario_id=args.scenario_id, scenario_name=args.scenario_name)
 
     if args.dummy_load:
