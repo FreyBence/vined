@@ -36,7 +36,9 @@ Attempts accept `2` or `002`. Inputs default to
 `<VINED_OUTPUT_DIR>/evaluation/scenario-<id>/<attempt>/`; `--evaluation-dir DIR`
 overrides that root. The command creates a self-contained interactive HTML report
 under `<VINED_OUTPUT_DIR>/comparisons/` and opens it in the browser. `--no-open`
-only saves it; `--output FILE` selects a new destination. Existing files are refused.
+only saves it; `--output FILE` selects a new destination. Existing files are refused
+unless `--overwrite` is supplied to replace the report. Source evaluation
+directories remain protected from report output.
 
 The report offers metric/session selection, adjustable shared histogram bins,
 counts or fractions, paired scores with identity tooltips, paired difference

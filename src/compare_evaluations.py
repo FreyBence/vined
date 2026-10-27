@@ -166,7 +166,8 @@ def main():
     parser.add_argument("--ground-truth", action="store_true",
                         help="Show target/prediction traces and data-only reference metrics for one or two evaluations")
     parser.add_argument("--evaluation-dir", type=Path, default=output_dir() / "evaluation")
-    parser.add_argument("--output", type=Path, help="HTML destination (must not already exist)")
+    parser.add_argument("--output", type=Path, help="HTML destination (must be new unless --overwrite is supplied)")
+    parser.add_argument("--overwrite", action="store_true", help="Replace an existing comparison report")
     parser.add_argument("--no-open", action="store_true", help="Save without opening a browser")
     args = parser.parse_args()
     if (args.scenario_b is None) != (args.attempt_b is None):
@@ -204,7 +205,10 @@ def main():
         template = Path(__file__).with_name("evaluation") / ("ground_truth.html" if args.ground_truth else "comparison.html")
         destination.parent.mkdir(parents=True, exist_ok=True)
         prefix, suffix = template.read_text(encoding="utf-8").split("__REPORT_DATA__")
-        stream = destination.open("x", encoding="utf-8")
+        try:
+            stream = destination.open("w" if args.overwrite else "x", encoding="utf-8")
+        except FileExistsError:
+            raise ValueError(f"Report already exists: {destination}. Use --overwrite to replace it or --output FILE to choose another destination.") from None
         try:
             with stream:
                 stream.write(prefix)
