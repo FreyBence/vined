@@ -299,9 +299,16 @@ def resolve_setup(args, tune_config=None):
 
     consumed = tuple(train.samples) + (tuple(val.samples) if training["eval_every"] else ())
     if objective != "mm":
-        if any(sample.metadata["alignment"].get("visual_resampling") !=
-               "timestamp-aware held-state over neural intervals v1" for sample in consumed):
-            raise ValueError("Temporal-context runs require held-state aligned data; rebuild interpolated generations")
+        policies = sorted({sample.metadata["alignment"].get("visual_resampling", "") for sample in consumed})
+        if any(policy not in ("timestamp-aware held-state over neural intervals v1",
+                              "L2-normalized linear interpolation at neural bin centers") for policy in policies):
+            raise ValueError("Unsupported alignment policy in selected dataset generation")
+        if len(policies) != 1:
+            raise ValueError("A temporal-context run requires one explicit alignment policy across consumed samples")
+        # Preserve exact historical held-state resume configuration. Its dataset
+        # generation already binds the policy; new interpolation runs name it too.
+        if policies != ["timestamp-aware held-state over neural intervals v1"]:
+            training["alignment_policies"] = policies
         coverage = {}
         for name, view in (("train", train), ("val", val if training["eval_every"] else None)):
             if view is None:

@@ -27,6 +27,18 @@ def neuron_key(neuron):
     return json.dumps([identity.get(key) for key in fields], separators=(",", ":"))
 
 
+def regional_key(neuron, mapping):
+    region = neuron["identity"].get("acronym")
+    if not mapping or region not in mapping["regions"]:
+        raise ValueError("Regional channel lacks its recorded source mapping")
+    index = mapping["regions"].index(region)
+    sources = [neuron_key(dict(identity=mapping["ordered_units"][column]))
+               for column in mapping["source_columns"][index]]
+    if not sources or len(set(sources)) != len(sources):
+        raise ValueError("Regional channel has empty or duplicate source identities")
+    return json.dumps([region, sorted(sources)], separators=(",", ":"))
+
+
 def aggregate(records):
     values = [r["value"] for r in records if r.get("value") is not None and math.isfinite(r["value"])]
     return dict(value=sum(values) / len(values) if values else None,
@@ -42,6 +54,9 @@ def compare_evaluations(left, right):
         raise ValueError("Cannot compare encoding and decoding evaluations")
     if direction not in ("encoding", "decoding"):
         raise ValueError("Only encoding or decoding evaluations are supported")
+    granularity = a["configuration"].get("target_granularity", "neuron")
+    if granularity != b["configuration"].get("target_granularity", "neuron"):
+        raise ValueError("Cannot compare individual-neuron and regional evaluations")
     for key in ("split", "target_coverage"):
         if a["configuration"].get(key) != b["configuration"].get(key):
             raise ValueError(f"Incompatible evaluation {key}")
@@ -83,12 +98,18 @@ def compare_evaluations(left, right):
     if direction == "encoding":
         for session in reports[0]["sessions"]:
             rows = [report["sessions"][session] for report in reports]
-            maps = [{neuron_key(n): n for n in row["neurons"]} for row in rows]
+            maps = []
+            for row, manifest in zip(rows, (a, b)):
+                mapping = next((entry["scalar"]["metadata"].get("regional_targets")
+                                for entry in manifest["samples"]
+                                if entry["scalar"]["session_id"] == session), None)
+                maps.append({(regional_key(n, mapping) if granularity == "region" else neuron_key(n)): n
+                             for n in row["neurons"]})
             if any(len(mapping) != len(row["neurons"]) for mapping, row in zip(maps, rows)):
                 raise ValueError(f"Duplicate source neuron identity for {session}")
             shared = sorted(set(maps[0]) & set(maps[1]))
             if not shared:
-                raise ValueError(f"No shared evaluated neurons for {session}")
+                raise ValueError(f"No shared evaluated {granularity} channels with matching source identities for {session}")
             population[session] = dict(shared=len(shared), original=[len(row["neurons"]) for row in rows])
             for row, mapping in zip(rows, maps):
                 row["neurons"] = [dict(mapping[key], key=key) for key in shared]
@@ -112,7 +133,7 @@ def compare_evaluations(left, right):
             report["global_metrics"] = {name: aggregate(pooled(name)) for name in report["global_metrics"]}
             report["regions"] = {region: aggregate(pooled("bits_per_spike", region))
                                  for region in sorted({region for row in rows for region in row["regions"]})}
-    return dict(direction=direction, runs=reports, population=population)
+    return dict(direction=direction, target_granularity=granularity, runs=reports, population=population)
 
 
 def ground_truth_report(artifact):

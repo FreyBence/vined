@@ -135,10 +135,16 @@ def _validate_trial(trial):
             or metadata["clock"] != "session_seconds" or metadata["neural_intervals"] != "[start,end)"):
         raise ValueError("alignment_metadata must contain physical-time and source provenance")
     resampling = metadata["resampling"]
+    if metadata["visual_resampling"] not in (
+            "timestamp-aware held-state over neural intervals v1",
+            "L2-normalized linear interpolation at neural bin centers"):
+        raise ValueError("Unsupported alignment visual mapping policy")
     required = {"source_times", "source_observation_ids", "source_schedule_indices",
                 "left_source_indices", "right_source_indices", "interpolation_weights"}
     if not isinstance(resampling, dict) or not required.issubset(resampling):
         raise ValueError("Missing visual interpolation provenance")
+    if resampling.get("policy") is not None and resampling["policy"] != metadata["visual_resampling"]:
+        raise ValueError("Visual association policy differs from alignment identity")
     times = np.asarray(resampling["source_times"])
     left, right = (np.asarray(resampling[name]) for name in
                    ("left_source_indices", "right_source_indices"))
@@ -153,6 +159,22 @@ def _validate_trial(trial):
             or weights.dtype.kind not in "fiu" or weights.shape != (length,)
             or not np.isfinite(weights).all() or np.any(weights < 0) or np.any(weights > 1)):
         raise ValueError("Invalid visual interpolation provenance")
+    if "policy_version" in resampling:
+        if (metadata["visual_resampling"] != "L2-normalized linear interpolation at neural bin centers"
+                or resampling["policy_version"] != 1
+                or not np.array_equal(np.asarray(resampling.get("query_times")), centers)
+                or np.any(centers < times[0]) or np.any(centers > times[-1])):
+            raise ValueError("Unsupported interpolation version or query support")
+        expected_right = np.searchsorted(times, centers, side="left")
+        exact = times[expected_right] == centers
+        expected_left = np.where(exact, expected_right, expected_right - 1)
+        expected_weights = np.zeros(length, dtype=np.float64)
+        between = ~exact
+        expected_weights[between] = ((centers[between] - times[expected_left[between]]) /
+                                    (times[expected_right[between]] - times[expected_left[between]]))
+        if (not np.array_equal(left, expected_left) or not np.array_equal(right, expected_right)
+                or not np.allclose(weights, expected_weights, rtol=0, atol=1e-12)):
+            raise ValueError("Interpolation associations disagree with physical bin centers")
 
 
 def _sample(trial, config, source):

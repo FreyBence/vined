@@ -1,5 +1,26 @@
 # Evaluation interface
 
+## Regional count checkpoints
+
+Evaluation restores `training.target_granularity` from the checkpoint (default
+`neuron`). For `region`, it applies training's `transform_neural_targets` after
+the recorded neural selection, then verifies source unit identities, source
+columns, ordered regions and grouping policy against `dataset.regional_targets`
+and `regional_target_policy`. Older explicit-root checkpoints restore their
+recorded common root list. Mapping or policy mismatches raise `ValueError`.
+No published samples or checkpoint weights are changed.
+
+Regional targets and predictions are summed spike counts per original bin.
+Comparison supports regional pairs by matching area names and the complete set
+of contributing source neuron identities within each session. Individual-neuron
+and regional evaluations cannot be paired. Report population labels use regions
+for regional pairs; existing metric channel fields retain their names.
+Existing channel/neuron fields and metric aggregation operate on region channels;
+sample metadata retains contributing source neurons. Effective evaluation
+configuration records `target_granularity`; neuron checkpoints keep individual
+neuron targets and existing scoring behavior. Evaluation BPS continues to use
+its explicit `test_mean_count` baseline, independently of training's baseline.
+
 ## Evaluation comparison
 
 `bash script/compare_evaluations.sh 13 002 --ground-truth` creates an interactive
@@ -140,7 +161,7 @@ intended checkpoint context and cannot change it. Direct module commands do not
 read scenario files; the shared launcher translates scenario context into these
 arguments. Directional checkpoints must record complete H=12 support
 and the requested mode/length; legacy and inherited `mm` checkpoints are rejected
-by this protocol. Test data must carry the shared held-state alignment policy.
+by this protocol. Test data must carry a recognized explicit alignment policy compatible with the checkpoint generation.
 
 `evaluation.setup.resolve_setup(*, checkpoint_path, dataset_generation, context_mode, context_bins=None, expected_generation_id=None, session_ids=None, batch_size=32, device="cpu", seed=42)` returns `EvaluationSetup` with:
 
@@ -294,3 +315,21 @@ artifact = load_evaluation(evaluation_directory, expected_checkpoint_sha256=chec
 if artifact.collection is not None:
     recalculated = compute_metrics(artifact.collection)
 ```
+
+
+## Alignment policy compatibility
+
+New alignment generations use `L2-normalized linear interpolation at neural bin centers`
+with `resampling.policy_version=1`, physical query timestamps and true bracketing
+associations. Historical `timestamp-aware held-state over neural intervals v1`
+generations retain their original identity. Neither policy is converted at load.
+Unknown policies and contradictory association identities are rejected by dataset
+construction/loading. New-version interpolation associations are checked against
+physical bin centers. Source alignment generation identities remain in sample metadata.
+
+Evaluation requires the checkpoint's exact scientific dataset generation, checks
+known sample policies, and checks `training.alignment_policies` when recorded.
+Historical checkpoints without that list remain bound by exact generation identity.
+Context mode/length must agree with checkpoint configuration and restored model.
+See [the manual alignment/context guide](../alignment/manual-verification.md)
+for regeneration and source-level versus runtime evidence.

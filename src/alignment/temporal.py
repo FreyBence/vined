@@ -12,6 +12,7 @@ from .inputs import AlignmentInputs, TrialUnavailable, _id, _window
 
 
 HELD_STATE_POLICY = "timestamp-aware held-state over neural intervals v1"
+INTERPOLATION_POLICY = "L2-normalized linear interpolation at neural bin centers"
 
 
 @dataclass(frozen=True)
@@ -86,7 +87,6 @@ def _visual(trial, starts, ends):
                for start, end, left_closed, right_closed in segments):
         raise TrialUnavailable("Visual reconstruction does not continuously cover the stimulus interval")
     times, features, indices, identities = [], [], [], []
-    update_times, encoded_indices = [], []
     previous_time = None
     for index, row in enumerate(rows):
         meta = row.metadata
@@ -106,8 +106,6 @@ def _visual(trial, starts, ends):
         if abs(time - expected) > tolerance and not (terminal and time < expected):
             raise TrialUnavailable("Missing or irregular expected visual observation; regenerate upstream")
         previous_time = time
-        update_times.append(time)
-        encoded_indices.append(-1)
         if row.status == "encoded":
             feature = np.asarray(row.feature)
             if (not row.selected or feature.shape != (768,) or feature.dtype != np.dtype("float32")
@@ -117,7 +115,6 @@ def _visual(trial, starts, ends):
             features.append(feature)
             indices.append(index)
             identities.append(meta["observation_id"])
-            encoded_indices[-1] = len(features) - 1
         elif row.status != "not_selected" or row.selected or row.feature is not None:
             raise TrialUnavailable("Expected visual extraction is unavailable")
     next_time = trial.stim_on + len(rows) / cadence
@@ -126,32 +123,37 @@ def _visual(trial, starts, ends):
     if not times:
         raise TrialUnavailable("No encoded visual observations; regenerate upstream")
     times = np.asarray(times, dtype=np.float64)
-    updates = np.asarray(update_times, dtype=np.float64)
-    support_ends = np.r_[updates[1:], trial.stim_off]
-    tolerance = 4 * max(abs(np.spacing(trial.stim_on)), abs(np.spacing(trial.stim_off)))
-    # Account only for source-clock roundoff at a bin boundary. Never use a
-    # future observation for a bin merely because its center follows an update.
-    active = np.searchsorted(updates, starts + tolerance, side="right") - 1
-    if np.any(active < 0):
-        raise TrialUnavailable("No active visual state at a neural interval start")
-    if np.any(ends > support_ends[active] + tolerance):
-        raise TrialUnavailable("A display update falls inside a neural bin; matching physical intervals are required")
-    source = np.asarray(encoded_indices, dtype=np.int64)[active]
-    if np.any(source < 0):
-        raise TrialUnavailable("Active visual state was not encoded; extract every required update upstream")
-    for a, b in zip(starts, ends):
-        if not any((a > start or a == start and left_closed) and b <= end
-                   for start, end, left_closed, right_closed in segments):
-            raise TrialUnavailable("Held visual state would cross unsupported coverage")
-    result = np.asarray(features, dtype=np.float32)[source].copy()
-    # Retain the existing association fields for downstream dataset consumers:
-    # identical endpoints and zero weights denote selection, never interpolation.
+    queries = starts + (ends - starts) / 2
+    unsupported = (queries < times[0]) | (queries > times[-1])
+    if np.any(unsupported):
+        k = int(np.flatnonzero(unsupported)[0])
+        raise TrialUnavailable(
+            f"Bin {k} center {queries[k]:.17g} lacks interpolation support in "
+            f"[{times[0]:.17g}, {times[-1]:.17g}]; extract bracketing source "
+            "observations (including a valid terminal representation when needed) upstream; "
+            "neural bins cannot be shortened or extrapolated")
+    right = np.searchsorted(times, queries, side="left")
+    exact = times[right] == queries
+    left = np.where(exact, right, right - 1)
+    weights = np.zeros(len(queries), dtype=np.float64)
+    interpolated = ~exact
+    weights[interpolated] = ((queries[interpolated] - times[left[interpolated]]) /
+                             (times[right[interpolated]] - times[left[interpolated]]))
+    # All scheduled rows were validated above, including unselected observations.
+    # Irregular encoded spacing from explicit feature subsampling is not a gap.
+    values = np.asarray(features, dtype=np.float64)
+    result = (1 - weights[:, None]) * values[left] + weights[:, None] * values[right]
+    norms = np.linalg.norm(result, axis=1, keepdims=True)
+    if not np.isfinite(norms).all() or np.any(norms <= np.finfo(np.float32).eps):
+        raise TrialUnavailable("Interpolated visual vector has no stable L2 direction; inspect source features upstream")
+    result = (result / norms).astype(np.float32)
     provenance = dict(source_times=times.copy(), source_observation_ids=tuple(identities),
-                      source_schedule_indices=tuple(indices), left_source_indices=source.copy(),
-                      right_source_indices=source.copy(), interpolation_weights=np.zeros(len(starts)),
-                      policy=HELD_STATE_POLICY, source_interval_end_times=support_ends[indices].copy(),
+                      source_schedule_indices=tuple(indices), left_source_indices=left,
+                      right_source_indices=right, interpolation_weights=weights,
+                      query_times=queries.copy(), policy=INTERPOLATION_POLICY, policy_version=1,
+                      normalization="L2 after float64 linear interpolation; float32 output",
+                      support="complete valid scheduled observations; no extrapolation",
                       timing_classification=deepcopy(timing),
-                      update_bin_boundaries_coincident=bool(np.all(np.abs(updates[active] - starts) <= tolerance)),
                       verified_display_bin_alignment=False)
     return result, provenance
 
@@ -195,7 +197,7 @@ def _align_trial(inputs, trial):
             raise ValueError("Neural endpoint does not define a complete-bin stimulus interval")
         metadata = dict(
             clock="session_seconds", neural_intervals="[start,end)",
-            visual_resampling=HELD_STATE_POLICY,
+            visual_resampling=INTERPOLATION_POLICY,
             neural_generation_id=inputs.neural_generation_id,
             neural_request_id=trial.neural.request_id,
             neural_configuration=deepcopy(inputs.neural_configuration),

@@ -31,7 +31,8 @@ for(const key of Object.keys(data.runs[0].global_metrics))text('option',key,$('m
 text('option','All sessions',$('session')).value='';
 for(const sid of Object.keys(data.runs[0].sessions))text('option',sid,$('session')).value=sid;
 $('sources').textContent=JSON.stringify(data.runs.map((r,i)=>({label:data.labels[i],path:r.path,evaluation_id:r.evaluation_id,context:r.context,neural_region_selection:r.neural_region_selection})),null,2);
-$('population').textContent=data.direction==='encoding'?Object.entries(data.population).map(([sid,p])=>`${sid}: ${p.shared} shared neurons (A originally ${p.original[0]}, B originally ${p.original[1]}). All displayed scores use shared neurons.`).join('\n'):'Visual scores use the same test observations; neural input populations may differ.';
+const channelLabel=data.target_granularity==='region'?'regions':'neurons';
+$('population').textContent=data.direction==='encoding'?Object.entries(data.population).map(([sid,p])=>`${sid}: ${p.shared} shared ${channelLabel} (A originally ${p.original[0]}, B originally ${p.original[1]}). All displayed scores use shared ${channelLabel}.`).join('\n'):'Visual scores use the same test observations; neural input populations may differ.';
 function mark(svg,tag,attrs,title){const e=document.createElementNS('http://www.w3.org/2000/svg',tag);for(const [k,v] of Object.entries(attrs))e.setAttribute(k,v);svg.appendChild(e);if(title){const t=document.createElementNS(e.namespaceURI,'title');t.textContent=title;e.appendChild(t)}return e}
 function bounds(values){if(!values.length)return[-1,1];let lo=Infinity,hi=-Infinity;for(const v of values){lo=Math.min(lo,v);hi=Math.max(hi,v)}if(lo===hi){const pad=Math.max(1e-6,Math.abs(lo)*.05,.05);lo-=pad;hi+=pad}return[lo,hi]}
 function axes(svg,lo,hi,maxY,xlabel,ylabel){svg.replaceChildren();const x=v=>70+(v-lo)/(hi-lo)*890,y=v=>280-v/maxY*230;

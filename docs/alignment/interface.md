@@ -61,9 +61,9 @@ from source spikes and then regenerate alignment and dependent datasets for the
 new grid. Explicit alternative prepared grids remain supported.
 
 Neural bins and reconstructed replay schedules are anchored at stimulus onset.
-Visual states are mapped by timestamp to whole neural intervals, without CLIP
-interpolation. Equal nominal rates do not establish measured display/bin
-coincidence; supplied timestamps and complete state support are checked explicitly.
+Visual observations are resampled at physical neural bin centers using L2-normalized
+linear interpolation. Equal nominal rates do not establish measured display/bin
+coincidence; source timestamps and bracketing support are checked explicitly.
 
 - Neural counts are raw unsmoothed int64 values with session-clock seconds and
   an explicit positive bin size. Unit rows retain their supplied order and
@@ -81,7 +81,7 @@ coincidence; supplied timestamps and complete state support are checked explicit
 - Visual timestamps must be finite and strictly increasing within each trial.
   All visual observations, including unselected and unavailable records, and
   original trial coverage outcomes are retained. This input boundary does not
-  validate held-state interval coverage or map features; `align_trials` does.
+  validate interpolation support or map features; `align_trials` does.
 
 ## Return contract
 
@@ -136,21 +136,24 @@ onset-anchored, session-second sampling over `visible_interval`, with positive
 consecutive order and valid, including unselected observations. A final terminal
 observation at the exact offset is permitted if it precedes the next cadence
 position. Trial outcomes must be complete with continuously valid reconstruction
-coverage. Each source state is held over `[source_time, next_source_time)`, with
-the final state supported until the known stimulus offset. Every neural interval
-must fit entirely inside one supported state interval. Four endpoint ULPs tolerate
-source-clock roundoff; an update strictly inside a neural bin raises `ValueError`.
-The active observation must be encoded: an unselected update ends the preceding
-state and cannot be bridged using an older feature. Source features are copied
-unchanged, without interpolation or renormalization. No terminal feature is
-required at offset to support the final visible state.
+coverage. Every query is the midpoint of the supplied neural edges. The nearest
+encoded source observations bracketing that timestamp determine
+`alpha=(query-left_time)/(right_time-left_time)`. Arithmetic uses float64,
+followed by L2 normalization and float32 storage, as required by the specification.
+Near-zero interpolated norms are rejected. Exact timestamp matches use identical
+left/right indices and zero weight. There is no timestamp snapping or extrapolation.
+Explicit feature subsampling can yield irregular encoded spacing; all underlying
+scheduled rows must still be accounted for and valid. Unknown irregular replay
+schedules without compatible cadence evidence remain unsupported, rather than
+being interpreted as complete observations.
 
-The shared policy is `timestamp-aware held-state over neural intervals v1`.
-Reconstructed source timing remains reconstructed; alignment does not create
-actual display-update evidence. Nominal schedule/bin coincidence is recorded
-separately and never promoted to verified measured 1:1 display alignment. This
-implements the explicitly accepted held-state requirement; the existing
-`spec.md` interpolation sections have not been rewritten.
+The policy identifier reuses `L2-normalized linear interpolation at neural bin centers`;
+new records add `resampling.policy_version=1`. Missing onset/end bracketing features
+raise an actionable trial error; no neural bin is removed to accommodate support.
+A valid terminal source representation may be needed upstream. Alignment cannot
+manufacture it from the final feature. Reconstructed timestamps remain reconstructed.
+This is offline interpolation: the right source may occur after the query. Strict
+model context restricts aligned token indices, not underlying frame availability.
 
 `AlignedTrial` exposes:
 
@@ -164,23 +167,29 @@ implements the explicitly accepted held-state requirement; the existing
 | `bin_start_times`, `bin_center_times`, `bin_end_times` | Float64 `[T]` physical session timestamps. Centers are midpoints of supplied edges. |
 | `neural_activity` | Int64 `[T,N]` raw counts, retaining zeros and silent units. |
 | `neuron_identity` | Copied full ordered unit table; row `n` identifies neural column `n`. |
-| `visual_features` | Float32 `[T,768]` unchanged source features held over the matching neural intervals. |
+| `visual_features` | Float32 `[T,768]` L2-normalized interpolated features at bin centers. |
 | `alignment_metadata` | Compact trial-specific source definitions/completion identities, neural configuration/recordings/trial sources, request/generation identities, source-bin slice, visual outcome, and resampling policy/associations. |
 
 `alignment_metadata["visual_resampling"]` records the versioned mapping policy.
-The retained `resampling` container provides encoded `source_times`, observation
-IDs, schedule indices, and `source_interval_end_times`. Existing downstream fields
-`left_source_indices` and `right_source_indices` are identical selected-source
-indices; `interpolation_weights` are zero. No arithmetic interpolation occurs.
-`policy`, complete `timing_classification`, `update_bin_boundaries_coincident`,
-and `verified_display_bin_alignment` distinguish representation and evidence.
-The last flag is false for the currently supported reconstructed source timing.
+The `resampling` container provides encoded `source_times`, observation IDs,
+schedule indices, `left_source_indices`, `right_source_indices`, and
+`interpolation_weights` (right endpoint coefficient). Indices address the encoded
+source arrays, not the full schedule. `query_times` equals the bin centers;
+`policy`, `policy_version`, `normalization`, `support`, and `timing_classification`
+record the transformation and evidence. `verified_display_bin_alignment` is false.
+Publication/load verifies new-version associations against physical timestamps.
+
+Historical `timestamp-aware held-state over neural intervals v1` artifacts remain
+loadable and retain their original identical endpoint/zero-weight associations,
+`source_interval_end_times`, and display/bin evidence fields. Loading never
+converts or relabels either policy. New generation publication uses interpolation;
+implementation hashes, values and policy metadata bind a distinct generation ID.
 
 All output cells are supported observations; no padding, missing-data masks, or
 placeholder vectors are returned. Output arrays and metadata are independent
 copies and may be modified by the caller. `ValueError` identifies the affected
 trial for identity, timing, incomplete reconstruction, gaps, unsupported cadence,
-unencoded active states, or updates inside neural bins. `TypeError` rejects
+missing bracketing encoded sources, or unstable interpolated norms. `TypeError` rejects
 an argument other than `AlignmentInputs`. A failed trial prevents return of a
 partial collection. No files or datasets are produced.
 
@@ -257,8 +266,8 @@ The manifest contains `schema_version`, `kind="aligned_trials"`, `complete`,
 `eid`, `requested_trial_ids`, ordered `trials`, `implementation`, `files`, and
 `generation_id`, and `visual_mapping_policies`. The policy list is checked against
 trial metadata and bound into generation identity. The NPZ array fields and dtypes are unchanged;
-historical interpolation generations remain explicitly loadable with their old
-policy/provenance and are never silently converted to held-state data. Trial
+historical generations remain explicitly loadable with their original
+policy/provenance and are never silently converted between policies. Trial
 entries carry original ID, exact stimulus bounds, aligned
 bounds, bin size/count, discarded tail, and complete alignment metadata. `files`
 maps relative payload paths to SHA-256 digests. JSON preserves source paths as

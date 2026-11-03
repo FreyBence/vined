@@ -13,6 +13,7 @@ from training_dataset.handoff import load_dataset_splits
 from training_dataset import TARGET_SUPPORT_BINS
 from training_dataset.context import STRICT_CONTEXT_BINS
 from trainer.selection import select_neural_regions
+from trainer.targets import transform_neural_targets
 
 
 @dataclass
@@ -95,11 +96,29 @@ def resolve_setup(*, checkpoint_path, dataset_generation, context_mode, context_
     recorded_policy = config["dataset"].get("neural_selection_policy")
     if recorded_selection == "visual_only" and not isinstance(recorded_policy, dict):
         raise ValueError("Visual-only checkpoint lacks its anatomical selection policy")
-    _, _, test, metadata = select_neural_regions(
+    train, val, test, metadata = select_neural_regions(
         (train, val, test), metadata, recorded_selection,
         regions=recorded_policy["regions"] if recorded_selection == "visual_only" else None)
     if recorded_selection == "visual_only" and metadata["neural_selection_policy"] != recorded_policy:
         raise ValueError("Runtime atlas descendants differ from the checkpoint selection policy")
+    granularity = config["training"].get("target_granularity", "neuron")
+    regions = None
+    if granularity == "region" and "regional_target_policy" not in config["dataset"]:
+        # Older regional checkpoints used one explicit root list for all sessions.
+        mappings = config["dataset"].get("regional_targets", {})
+        region_sets = {tuple(mapping["regions"]) for mapping in mappings.values()}
+        if len(region_sets) != 1:
+            raise ValueError("Regional checkpoint lacks a consistent anatomical grouping policy")
+        regions = list(next(iter(region_sets)))
+    _, _, test, metadata = transform_neural_targets(
+        (train, val, test), metadata, granularity, regions=regions)
+    if granularity == "region":
+        recorded_mappings = config["dataset"].get("regional_targets", {})
+        for session, mapping in metadata["regional_targets"].items():
+            if plain(mapping) != recorded_mappings.get(session):
+                raise ValueError(f"Regional source population or anatomical mapping differs for {session}")
+        if metadata.get("regional_target_policy") != config["dataset"].get("regional_target_policy"):
+            raise ValueError("Regional anatomical grouping policy differs from the checkpoint")
     if not test:
         raise ValueError("Selected persisted test split is empty")
     # Generation identity binds timing, alignment, feature representation and split
@@ -129,8 +148,13 @@ def resolve_setup(*, checkpoint_path, dataset_generation, context_mode, context_
     max_neurons = config["data"]["max_space_length"]
     width = config["model"]["encoder"]["embedder"].get("visual_dim", 768)
     for sample in test.samples:
-        if sample.metadata["alignment"].get("visual_resampling") != "timestamp-aware held-state over neural intervals v1":
-            raise ValueError("Temporal-context evaluation requires held-state alignment provenance")
+        policy = sample.metadata["alignment"].get("visual_resampling")
+        if policy not in ("timestamp-aware held-state over neural intervals v1",
+                          "L2-normalized linear interpolation at neural bin centers"):
+            raise ValueError("Unsupported evaluation alignment policy")
+        recorded_policies = config["training"].get("alignment_policies")
+        if recorded_policies is not None and recorded_policies != [policy]:
+            raise ValueError("Evaluation alignment policy differs from checkpoint provenance")
         population = populations.get(sample.session_id)
         table = sample.neuron_identity
         if population is None:
@@ -163,6 +187,7 @@ def resolve_setup(*, checkpoint_path, dataset_generation, context_mode, context_
                          dataset_name=config["data"]["dataset_name"], stitching=True,
                          shuffle=False, seed=seed, mode="test", eids=metadata["eids"])
     effective = dict(batch_size=batch_size, device=str(requested_device), seed=seed,
+                     target_granularity=granularity,
                      neural_region_selection=recorded_selection,
                      temporal_context=plain(context),
                      target_coverage=dict(eligible_temporal_targets=eligible,

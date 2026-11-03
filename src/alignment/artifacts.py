@@ -15,7 +15,7 @@ import pandas as pd
 
 from utils.provenance import file_hash, fingerprint, source_hashes, write_json
 from .inputs import prepare_inputs, _id
-from .temporal import AlignedTrial, align_trials, HELD_STATE_POLICY, _validate_workers, _align_available
+from .temporal import AlignedTrial, align_trials, HELD_STATE_POLICY, INTERPOLATION_POLICY, _validate_workers, _align_available
 
 
 @dataclass(frozen=True)
@@ -99,7 +99,7 @@ def _validate(trials):
                     "visual_outcome", "visual_resampling", "resampling")).issubset(metadata):
             raise ValueError("Incomplete alignment source/resampling provenance")
         if metadata["visual_resampling"] not in (
-                HELD_STATE_POLICY, "L2-normalized linear interpolation at neural bin centers"):
+                HELD_STATE_POLICY, INTERPOLATION_POLICY):
             raise ValueError("Unsupported alignment visual mapping policy")
         resampling = metadata["resampling"]
         times = np.asarray(resampling["source_times"])
@@ -135,6 +135,23 @@ def _validate(trials):
                 raise ValueError("Invalid held-state interval associations or timing provenance")
         elif resampling.get("policy") == HELD_STATE_POLICY:
             raise ValueError("Held-state associations disagree with declared visual mapping policy")
+        elif "policy_version" in resampling:
+            expected_right = np.searchsorted(times, centers, side="left")
+            if np.any(expected_right >= len(times)) or np.any(centers < times[0]):
+                raise ValueError("Interpolation queries lack source support")
+            exact = times[expected_right] == centers
+            expected_left = np.where(exact, expected_right, expected_right - 1)
+            expected_weights = np.zeros(t, dtype=np.float64)
+            between = ~exact
+            expected_weights[between] = ((centers[between] - times[expected_left[between]]) /
+                                        (times[expected_right[between]] - times[expected_left[between]]))
+            if (not np.array_equal(left, expected_left) or not np.array_equal(right, expected_right)
+                    or not np.allclose(weights, expected_weights, rtol=0, atol=1e-12)):
+                raise ValueError("Interpolation associations disagree with physical bin centers")
+            if "policy_version" in resampling and (
+                    resampling["policy_version"] != 1 or resampling.get("policy") != INTERPOLATION_POLICY
+                    or not np.array_equal(np.asarray(resampling.get("query_times")), centers)):
+                raise ValueError("Interpolation policy version or query provenance mismatch")
 
 
 def _load_alignment(path, *, expected_generation_id=None):

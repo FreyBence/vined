@@ -311,3 +311,14 @@ and upstream excluded trial records with reasons. These upstream exclusions are
 provenance and are distinct from training-dataset's configured sample exclusions
 and split assignment. Compact trial-specific visual source references preserve
 alignment provenance without copying full session definitions into every sample.
+
+
+## Alignment policy compatibility
+
+New alignment generations use `L2-normalized linear interpolation at neural bin centers`
+with `resampling.policy_version=1`, physical query timestamps and true bracketing
+associations. Historical `timestamp-aware held-state over neural intervals v1`
+generations retain their original identity. Neither policy is converted at load.
+Unknown policies and contradictory association identities are rejected by dataset
+construction/loading. New-version interpolation associations are checked against
+physical bin centers. Source alignment generation identities remain in sample metadata.
