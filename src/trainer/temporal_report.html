@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ViNED frozen temporal diagnostics</title>
+<style>
+body{font:16px system-ui;color:#18283d;background:#f4f7fb;max-width:1200px;margin:24px auto;padding:0 20px}
+section{background:white;border:1px solid #dce3ee;border-radius:12px;padding:20px;margin:18px 0}
+label{display:inline-block;margin:8px 18px 8px 0}select,input{font:inherit;padding:5px}svg{width:100%;height:auto}
+table{border-collapse:collapse;width:100%;font-size:13px}td,th{text-align:left;padding:6px;border-bottom:1px solid #dce3ee}
+pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px}.observed{color:#2563eb}.predicted{color:#d97706}
+</style>
+<h1>Frozen-checkpoint temporal diagnostics</h1><p id="semantics"></p>
+<p>Observed <span class="observed">spike counts (blue)</span> and predicted <span class="predicted">expected counts (orange)</span>.
+Expected counts need not reproduce stochastic peaks. Validation was used for checkpoint selection. No test scoring.</p>
+<section><label>Split <select id="split"><option value="train">Training</option><option value="val">Validation</option></select></label>
+<label>Session <select id="session"></select></label><label>Region <select id="region"></select></label>
+<label>Trial <select id="trial"></select></label><label>Resolution <select id="width"><option value="1">Original bins (~16.67 ms)</option><option value="3">50 ms trailing mean</option><option value="6">100 ms trailing mean</option><option value="12">200 ms trailing mean</option></select></label>
+<p>Smoothing uses complete contiguous eligible windows only. Counts per original bin; time is the window's final bin center. Hover over points for exact values.</p></section>
+<section><h2>Split comparison</h2><p id="coverage"></p><div style="overflow:auto"><table id="comparison"></table></div>
+<p>Equal-trial Pearson averages available within-trial correlations. Pooled values weight bins. Trial-centered values remove each trial mean. Widths above one are supplemental diagnostics.</p></section>
+<section><h2>Interpretation</h2><div id="interpretation"></div><p>Small fitted temporal structure on training supports investigating representation/learnability before a generalization-only explanation. A measured train–validation difference can coexist with that limitation. This descriptive diagnostic does not establish a root cause or noise ceiling.</p></section>
+<section><h2>Trial activity</h2><p id="identity"></p><label>Start (s) <input id="start" type="number" step=".1"></label><label>End (s) <input id="end" type="number" step=".1"></label><button id="reset">Full trial</button>
+<svg id="curve" viewBox="0 0 1100 350" role="img" aria-label="Observed counts and predicted expected counts over time"></svg></section>
+<section><h2>Prediction versus observation</h2><svg id="scatter" viewBox="0 0 1100 350" role="img" aria-label="Observed spike counts versus predicted expected counts"></svg><p>Dashed line: equal observed and expected counts. Each point is one eligible bin or complete trailing window in the selected time range.</p></section>
+<section><h2>Trial and split metrics</h2><p>Split columns below refer to the selected session and region. Percentiles are shown in the expanded record.</p><div style="overflow:auto"><table id="metrics"></table></div>
+<details><summary>Complete selected trial metrics</summary><pre id="details"></pre></details></section>
+<details><summary>Provenance and metric definitions</summary><pre id="provenance"></pre></details>
+<script>
+const data=__REPORT_DATA__, result=data.result, $=id=>document.getElementById(id);
+const fmt=v=>v===null||v===undefined?'unavailable':typeof v==='number'?Number(v).toPrecision(6):String(v);
+function text(tag,value,parent){const e=document.createElement(tag);e.textContent=value;parent.appendChild(e);return e}
+function options(id,values){const e=$(id),old=e.value;e.replaceChildren();for(const [value,label] of values)text('option',label,e).value=value;if(values.some(v=>v[0]===old))e.value=old}
+$('semantics').textContent=result.historical_semantics+' · checkpoint epoch '+result.checkpoint.epoch+' · frozen deterministic visual-only inference';
+for(const note of result.comparison_notes)text('p',note,$('interpretation'));
+$('provenance').textContent=JSON.stringify({checkpoint:result.checkpoint,dataset_generation_id:result.dataset_generation_id,context:result.context,alignment_policies:result.alignment_policies,configuration:result.diagnostic_configuration,training_statistics:result.training_statistics},null,2);
+function rows(){return result.records.filter(r=>r.split===$('split').value&&r.session_id===$('session').value&&r.region===$('region').value)}
+function group(split){return result.splits[split].groups.find(g=>g.session_id===$('session').value&&g.region===$('region').value)}
+function selectSession(){options('session',[...new Set(result.records.filter(r=>r.split===$('split').value).map(r=>r.session_id))].map(s=>[s,s]));selectRegion()}
+function selectRegion(){options('region',[...new Set(result.records.filter(r=>r.split===$('split').value&&r.session_id===$('session').value).map(r=>r.region))].map(r=>[r,r]));selectTrial()}
+function selectTrial(){options('trial',rows().map(r=>[r.array_key,String(r.trial_id)]));reset()}
+function current(){return rows().find(r=>r.array_key===$('trial').value)}
+function reset(){const a=data.arrays[current().array_key];$('start').value=a.time[0];$('end').value=a.time[a.time.length-1];draw()}
+function mark(svg,tag,attrs,title){const e=document.createElementNS('http://www.w3.org/2000/svg',tag);for(const[k,v]of Object.entries(attrs))e.setAttribute(k,v);svg.appendChild(e);if(title){const t=document.createElementNS(e.namespaceURI,'title');t.textContent=title;e.appendChild(t)}return e}
+function axes(svg,xlo,xhi,ylo,yhi,xlabel,ylabel){svg.replaceChildren();if(xhi===xlo)xhi=xlo+1;if(yhi===ylo)yhi=ylo+1;const x=v=>80+970*(v-xlo)/(xhi-xlo),y=v=>285-240*(v-ylo)/(yhi-ylo);
+mark(svg,'path',{d:'M80 40 V285 H1050',fill:'none',stroke:'#8090a5'});
+for(let i=0;i<=5;i++){let v=xlo+(xhi-xlo)*i/5;mark(svg,'text',{x:x(v),y:307,'text-anchor':'middle','font-size':12}).textContent=fmt(v);v=ylo+(yhi-ylo)*i/5;mark(svg,'text',{x:72,y:y(v)+4,'text-anchor':'end','font-size':12}).textContent=fmt(v)}
+mark(svg,'text',{x:550,y:340,'text-anchor':'middle'}).textContent=xlabel;mark(svg,'text',{x:80,y:22}).textContent=ylabel;return{x,y}}
+function table(id,headers,rows){const t=$(id);t.replaceChildren();let r=document.createElement('tr');t.appendChild(r);headers.forEach(v=>text('th',v,r));for(const values of rows){r=document.createElement('tr');t.appendChild(r);values.forEach(v=>text('td',v,r))}}
+function draw(){const r=current(),a=data.arrays[r.array_key],c=r.column,w=Number($('width').value),points=[];
+let sy=0,sp=0,valid=0;for(let i=0;i<a.time.length;i++){sy+=a.observed[i][c];sp+=a.expected[i][c];valid+=Number(a.scoring_mask[i][c]);if(i>=w){sy-=a.observed[i-w][c];sp-=a.expected[i-w][c];valid-=Number(a.scoring_mask[i-w][c])}if(i>=w-1&&valid===w&&a.time[i]>=Number($('start').value)&&a.time[i]<=Number($('end').value))points.push({t:a.time[i],y:sy/w,p:sp/w,i})}
+$('identity').textContent=`${r.split} / ${r.session_id} / ${r.region} / trial ${r.trial_id} / sample ${r.sample_id}`;
+let max=1;for(const q of points)max=Math.max(max,q.y,q.p);const curve=$('curve'),scatter=$('scatter'),ax=axes(curve,Number($('start').value),Number($('end').value),0,max*1.05,'Seconds from stimulus onset','Counts per original bin'),sc=axes(scatter,0,max*1.05,0,max*1.05,'Observed spike counts','Predicted expected counts');
+mark(scatter,'path',{d:`M${sc.x(0)} ${sc.y(0)} L${sc.x(max)} ${sc.y(max)}`,stroke:'#8090a5','stroke-dasharray':'6 4'});
+for(const[key,color]of[['y','#2563eb'],['p','#d97706']]){let path='',previous=-2;for(const q of points){path+=(q.i===previous+1?'L':'M')+ax.x(q.t)+' '+ax.y(q[key]);previous=q.i}mark(curve,'path',{d:path,fill:'none',stroke:color,'stroke-width':key==='p'?2:1});for(const q of points)mark(curve,'circle',{cx:ax.x(q.t),cy:ax.y(q[key]),r:2,fill:color,'fill-opacity':.25},`${q.t.toFixed(6)} s: ${key==='y'?'Observed spike count':'Predicted expected count'} ${q[key]}`)}
+for(const q of points)mark(scatter,'circle',{cx:sc.x(q.y),cy:sc.y(q.p),r:2.5,fill:'#d97706',opacity:.35},`${q.t.toFixed(6)} s; observed ${q.y}; expected ${q.p}`);
+const scale=group($('split').value).scales[String(w)],trial=r.scales[String(w)];
+const keys=['bins','observed_mean','predicted_mean','observed_variance','predicted_variance','variance_ratio','pearson','mean_bias','calibration_ratio','poisson_objective','training_null_bps','predicted_min','predicted_max','elevated_recall','predicted_positive_rate','precision','false_positive_rate','peak_signed_error','peak_mae','ranking_recall_5pct'];
+table('metrics',['Metric (full trial support)','Trial','Equal-trial split mean','Pooled split'],keys.map(k=>[k,fmt(trial[k]),fmt(scale.equal_trial.metrics[k]),fmt(scale.pooled[k])]));
+$('details').textContent=JSON.stringify(trial,null,2);
+const compare=[];for(const split of ['train','val']){const g=group(split);if(!g)continue;const s=g.scales[String(w)],p=s.pooled;compare.push([split,g.trials,p.bins,fmt(s.equal_trial.metrics.pearson),fmt(s.within_trial_pearson_median),fmt(s.trial_mean_pearson),fmt(p.variance_ratio),fmt(p.trial_centered_variance_ratio),fmt(p.trial_centered_pearson),fmt(p.poisson_objective),fmt(p.training_null_bps)])}
+table('comparison',['Split','Trials','Windows','Equal-trial Pearson','Median Pearson','Trial-mean Pearson','Pooled variance ratio','Trial-centered ratio','Trial-centered Pearson','Poisson objective','Train-null BPS'],compare);
+$('coverage').textContent=`Selected ${r.region} in ${r.session_id}. Curve shows ${points.length} complete windows in the time range; metrics use all eligible support. Zero-denominator and constant cases are unavailable.`;
+}
+$('split').onchange=selectSession;$('session').onchange=selectRegion;$('region').onchange=selectTrial;$('trial').onchange=reset;$('width').onchange=draw;$('start').onchange=draw;$('end').onchange=draw;$('reset').onclick=reset;
+selectSession();
+</script></html>

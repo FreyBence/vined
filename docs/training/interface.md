@@ -67,7 +67,7 @@ current `run.json` supplies the controlled 100-epoch, batch-one, accumulation-fo
 AdamW configuration, regional granularity, and scenario-15/003 encoder dimensions
 and dropout. The effective run `config.json` is the complete resolved configuration.
 
-After training, run `python src/region_diagnostics.py --checkpoint RUN/model_best.pt
+After training, run `python script/audit/region_diagnostics.py --checkpoint RUN/model_best.pt
 --source-checkpoint SOURCE/model_best.pt --output-dir NEW_DIRECTORY`. This
 validation-only diagnostic restores the selected regional and source models,
 verifies training/validation membership and anatomical mappings, and compares
@@ -79,6 +79,75 @@ predicted minus observed mean count; pooled BPS uses the training regional null.
 Global and trial-centered temporal standard deviations describe expected-count
 variation separately from observed variability. Existing output directories are
 rejected. No smoothing or further optimization occurs.
+
+The CLI's `--output-dir` is optional. Without it, a new directory is selected at
+`output/audit/<scenario>/<attempt>/regional-NNN/`, using the next unused number.
+`VINED_OUTPUT_DIR` overrides the parent output root. The Python function still
+requires an explicit destination.
+
+## Frozen temporal prediction diagnostic
+
+From the checkout root, run:
+
+```text
+.venv\Scripts\python.exe script/audit/temporal_diagnostics.py --checkpoint output/runs/scenario-15/006/model_best.pt --output-dir output/audit/scenario-15/006/temporal-001 --device cuda
+```
+
+Omit `--output-dir` to select the next unused
+`output/audit/<scenario>/<attempt>/temporal-NNN/` directory automatically.
+`VINED_OUTPUT_DIR` overrides the parent output root. Both diagnostic CLIs use
+`output/audit/<run-directory>/<kind>-NNN/` for checkpoints outside scenario runs.
+
+`trainer.temporal_diagnostics.run_diagnostic(checkpoint, output_dir, *, device="cpu", dataset_path=None)`
+returns the persisted results dictionary. It supports regional encoding checkpoints
+with recorded complete H=12 strict or full-trial context. `dataset_path` permits
+relocating the exact recorded generation, never substituting another generation.
+It verifies generation integrity, selected ordered source units, regional mapping,
+train/validation membership, and recorded training baseline. The existing dataset
+handoff verifies the complete generation; test samples are discarded before runtime
+selection, aggregation, prediction or statistics. No optimizer is constructed.
+Both splits use ordered single-trial visual-only inference under `eval()` and
+`inference_mode()`, preserving checkpoint context and historical alignment policy.
+Unsupported directions/granularities, missing train/validation, incompatible
+identities, or nonfinite selected predictions raise `ValueError`. Existing output
+destinations raise `FileExistsError`; failed runs can leave an incomplete new directory.
+
+The new directory contains:
+
+- `results.json`: schema version 1, checkpoint SHA-256/epoch, generation identity,
+  full context/alignment labels, split memberships, source-unit regional mapping,
+  source and payload hashes, definitions, frozen training statistics, trial/region
+  records and split summaries. Its existence with `complete=true` marks completion.
+- `predictions/{train|val}_NNNNNN.npz`: original-bin `observed` int64 `[T,R]`,
+  `log_expected` and `expected` float64 `[T,R]`, `scoring_mask` bool `[T,R]`,
+  `neuron_mask[R]`, `temporal_mask[T]`, `prediction_mask[T]`, integer model
+  `temporal_positions[T]`, session-clock physical timestamps and bin edges `[T]`,
+  and `time[T]` in seconds from stimulus onset. `T` excludes padding; `R` is the
+  session's ordered region count. Scoring intersects scientific, model-prediction
+  and H=12 eligibility. Stored off-support predictions are never scored.
+- `report.md` and standalone offline `report.html`: split comparisons, original
+  activity/scatter curves, selectable session/region/trial and trailing smoothing
+  at 1, 3, 6 and 12 bins. Time-range controls affect curves; metrics retain full
+  eligible trial support. Observed counts and expected counts have distinct labels.
+
+All quantities use counts per original bin. Smoothing uses complete contiguous
+eligible trailing means and never crosses trials; smoothed objectives are descriptive,
+not official scores. Original-bin Poisson objective is `mean(exp(z)-y*z)`.
+Auxiliary BPS uses the training session/region mean. Threshold recall uses
+`y>=q95` and `p>=q95` from the bin-weighted eligible training counts, with linear
+quantiles. Ranking recall separately compares within-trial top `ceil(.05*n)`
+indices, breaking ties by earlier eligible bin. Calibration uses frozen training
+prediction-decile edges and reports mean bias, mean ratio and bin reliability.
+Training statistics are fixed before validation scoring.
+
+`records` contains per-trial/region `scales` keyed by bin width. `splits` contains
+session/region `groups` with equal-trial means and contributor counts, median
+within-trial and between-trial-mean correlations, and separately labeled pooled
+metrics including trial-centered variance/correlation. It additionally supplies
+equal-region session and equal-session means. Constants and zero denominators
+return null; empty support has an explicit reason and zero bins. No scientific
+requirement is imposed on matching noisy observed variance or individual peaks.
+Official evaluation and historical scientific artifacts remain unchanged.
 
 ## Console progress
 
@@ -158,7 +227,7 @@ columns and original neuron count in `metadata.runtime_neural_selection`; effect
 dataset metadata and checkpoint populations record the selected mapping and policy.
 These runtime views are not newly published dataset generations.
 
-`src/configs/visual-regions.json` is shared with `script/find_visual_eids.py`:
+`src/configs/visual-regions.json` is shared with `script/audit/find_visual_eids.py`:
 LGd, VISp, VISl, VISli, VISpl, VISpor, VISpm, VISam, VISa, VISrl, and VISal.
 Selection matches absolute Allen atlas IDs, including descendants and both
 hemispheres, using the same hierarchy rule as relevance discovery. Missing atlas
@@ -216,9 +285,9 @@ Resolved `training.temporal_context` records mode, bins, fixed
 trials without targets for optimization and enabled validation. This metadata is
 generated from arguments and the dataset, not accepted as JSON configuration.
 
-Context-selected runs require held-state alignment provenance
-(`timestamp-aware held-state over neural intervals v1`). Interpolated generations
-must be regenerated through the shared alignment policy. A train or required
+Context-selected runs accept explicit interpolated or historical held-state
+alignment provenance independently of temporal context. See alignment policy
+compatibility below; new experiments must select their regenerated dataset explicitly. A train or required
 validation split with no complete H=12 targets is rejected at setup. Real trials
 are retained, including shorter trials, with unchanged identities and splits.
 
@@ -553,3 +622,23 @@ and adaptation checkpoints with recorded mappings. Earlier snapshots lacking
 these mappings cannot be adapted or restored through this helper; compatibility
 checks also reject them for continuation. Existing legacy evaluation scripts
 remain unchanged and require their older directory/model conventions.
+
+
+## Alignment policy compatibility
+
+New alignment generations use `L2-normalized linear interpolation at neural bin centers`
+with `resampling.policy_version=1`, physical query timestamps and true bracketing
+associations. Historical `timestamp-aware held-state over neural intervals v1`
+generations retain their original identity. Neither policy is converted at load.
+Unknown policies and contradictory association identities are rejected by dataset
+construction/loading. New-version interpolation associations are checked against
+physical bin centers. Source alignment generation identities remain in sample metadata.
+
+Temporal-context setup accepts either known policy independently of context mode,
+requires one policy across consumed training/validation samples, and records
+`training.alignment_policies` for interpolation runs in effective configuration and
+checkpoints. Historical held-state configurations keep their existing fields for
+exact resume compatibility; their dataset generation binds the policy. Resume
+retains existing generation/configuration compatibility checks. For the upcoming
+Scenario 11 baseline explicitly select a newly interpolated dataset; selecting a
+historical dataset intentionally retains its historical representation.

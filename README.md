@@ -60,7 +60,7 @@ output/
   runs/              # scenario-<id>/<attempt>/ training checkpoints and metadata
   evaluation/        # scenario-<id>/<attempt>/ evaluation metrics and plots
   wandb/             # W&B run logs for training and evaluation
-  eid-relevanc.txt   # session relevance discovery output
+  audit/             # audit reports, diagnostics, and eid-relevanc.txt
 ```
 
 Published reproducibility inputs remain version-controlled under `eids/` and `src/configs/`.

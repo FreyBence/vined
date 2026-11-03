@@ -7,15 +7,14 @@ from pathlib import Path
 import sys
 import uuid
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "src"))
+from audit_paths import ROOT, AUDIT_ROOT
 from prepare_replay import main as prepare_session
 from utils.paths import replay_dir
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("audit_file", nargs="?", type=Path, default=ROOT / "output/audit-replay.txt")
+    parser.add_argument("audit_file", nargs="?", type=Path, default=AUDIT_ROOT / "audit-replay.txt")
     parser.add_argument("--config", type=Path, default=ROOT / "src/configs/replay-config.json")
     parser.add_argument("--output", type=Path)
     parser.add_argument("--projection", choices=("on", "off"), default="on")
@@ -37,7 +36,7 @@ def main():
         lines = args.audit_file.read_text(encoding="utf-8").splitlines()
         header = "eid\ttrial_id\tcategory\timage_files\toutcome_status\treason\tgeneration\tFixable"
         if header not in lines:
-            raise ValueError("Audit must include the boolean Fixable column; rerun script/audit_replay.py")
+            raise ValueError("Audit must include the boolean Fixable column; rerun script/audit/audit_replay.py")
         start = lines.index(header)
         for line in lines[start + 1:]:
             if not line.strip():

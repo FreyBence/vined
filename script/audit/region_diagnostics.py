@@ -5,6 +5,8 @@ import hashlib
 import json
 from pathlib import Path
 
+from audit_paths import next_output
+
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -209,8 +211,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--checkpoint", required=True)
     parser.add_argument("--source-checkpoint", required=True)
-    parser.add_argument("--output-dir", required=True)
+    parser.add_argument("--output-dir", help="New diagnostic directory (default: output/audit/<scenario>/<attempt>/regional-NNN)")
     parser.add_argument("--device", default="cuda")
     args = parser.parse_args()
-    result = regional_diagnostics(args.checkpoint, args.source_checkpoint, args.output_dir, device=args.device)
+    destination = args.output_dir or next_output(args.checkpoint, "regional")
+    result = regional_diagnostics(args.checkpoint, args.source_checkpoint, destination, device=args.device)
     print(json.dumps(result["metrics"], indent=2))

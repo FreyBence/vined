@@ -2,7 +2,7 @@
 Find and rank IBL Brain Wide Map sessions by visual-region relevance.
 
 Output:
-    output/eid-relevanc.txt
+    output/audit/eid-relevanc.txt
 
 Relevance definition:
     relevant good mapped units / all good mapped units * 100
@@ -11,8 +11,8 @@ Only sessions with relevance > 0 are written to the output.
 The optional --min-relevance argument can raise this threshold.
 
 Example:
-    python find_visual_eids.py
-    python find_visual_eids.py --min-relevance 50
+    python script/audit/find_visual_eids.py
+    python script/audit/find_visual_eids.py --min-relevance 50
 
 Dependencies:
     one-api
@@ -50,16 +50,16 @@ ONE_BASE_URL = "https://openalyx.internationalbrainlab.org"
 # Fixed as requested: only Brain Wide Map data are considered.
 IBL_PROJECT = "brainwide"
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from utils.paths import dataset_dir, output_dir
+from audit_paths import ROOT, AUDIT_ROOT
+from utils.paths import dataset_dir
 
-OUTPUT_FILE = output_dir() / "eid-relevanc.txt"
+OUTPUT_FILE = AUDIT_ROOT / "eid-relevanc.txt"
 
 # Shared with training/evaluation visual_only runtime selection.
 from utils.config_utils import load_config
 
 RELEVANT_REGIONS = tuple(load_config(
-    Path(__file__).resolve().parents[1] / "src/configs/visual-regions.json"
+    ROOT / "src/configs/visual-regions.json"
 )["regions"])
 
 

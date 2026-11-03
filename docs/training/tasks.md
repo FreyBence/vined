@@ -78,6 +78,14 @@ Complete the requested 100-epoch run using scenario-15/003 data and encoder sett
 **Out of scope:**
 Additional experiments, test-based configuration selection and heterogeneous-population research beyond the requested limitation discussion.
 
+### [x] T09 — Diagnose frozen training/validation temporal predictions
+
+**Summary:**
+Restore an encoding checkpoint and its exact runtime population and split identities, collect deterministic original-bin train/validation trajectories, and produce supplemental temporal metrics and an interactive report with a split comparison.
+
+**Out of scope:**
+Optimization, test scoring, correction of historical alignment/context, and changes to official evaluation metrics.
+
 ## Dependencies
 
 - T02 depends on T01.
@@ -87,3 +95,4 @@ Additional experiments, test-based configuration selection and heterogeneous-pop
 - T06 depends on T04.
 - T07 depends on T04 and model T05.
 - T08 depends on T07.
+- T09 depends on T04 and T07.

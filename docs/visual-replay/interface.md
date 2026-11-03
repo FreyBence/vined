@@ -528,8 +528,8 @@ use Python's `if __name__ == "__main__":` guard. Worker/storage failures prevent
 manifest publication, and existing output remains protected during replacement.
 
 `src/prepare_replay.py --generate`, `src/generate_replays.py`,
-`script/generate_replay.sh`, and `script/auto_fix_replay.py` (also through
-`script/auto-fix-replay.sh`) accept `--workers N`, defaulting to one.
+`script/generate_replay.sh`, and `script/audit/auto_fix_replay.py` (also through
+`script/audit/auto-fix-replay.sh`) accept `--workers N`, defaulting to one.
 
 An optional `on_trial_published(outcome)` callback receives a defensive copy of
 each trial outcome after its directory has been published, including optional
@@ -778,7 +778,9 @@ remains separate.
 
 ## Missing-trial audit
 
-Run `python script/audit_replay.py` to write `output/audit-replay.txt`.
+Run `python script/audit/audit_replay.py` to write `output/audit/audit-replay.txt`.
+`--output-dir` overrides the report directory; its default follows
+`<VINED_OUTPUT_DIR>/audit/` when the output root is configured.
 `--replay-dir DIR` overrides the normal replay directory. The script selects the
 newest saved definition by modification time per (EID, original trial ID), so
 subset retries do not hide other trials. Each missing or incomplete trial includes EID, trial ID,
@@ -798,9 +800,9 @@ status, as does finding no definitions; reported missing trials alone do not.
 
 ## Retry audited trials
 
-Run `bash script/auto-fix-replay.sh [AUDIT_FILE]`, or
-`python script/auto_fix_replay.py [AUDIT_FILE]`. The default input is
-`output/audit-replay.txt` from the audit script (not the categorized analysis).
+Run `bash script/audit/auto-fix-replay.sh [AUDIT_FILE]`, or
+`python script/audit/auto_fix_replay.py [AUDIT_FILE]`. The default input is
+`output/audit/audit-replay.txt` from the audit script (not the categorized analysis).
 Every missing or incomplete row with `Fixable=True` is selected, deduplicated by
 EID/trial ID, and retried once, grouped by session. Auto-fix consumes the audit's
 boolean decision without reclassifying statuses or reasons. `Fixable=False` rows

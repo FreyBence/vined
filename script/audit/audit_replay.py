@@ -1,6 +1,6 @@
 """Report missing/incomplete trials using the newest saved definition per trial.
 
-Run from any directory: python script/audit_replay.py [--replay-dir DIR]
+Run from any directory: python script/audit/audit_replay.py [--replay-dir DIR]
 Only trials requested by saved definitions are audited; no downloads or renders.
 """
 
@@ -11,8 +11,7 @@ import os
 from pathlib import Path
 import sys
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "src"))
+from audit_paths import AUDIT_ROOT
 from utils.paths import replay_dir
 
 
@@ -96,6 +95,7 @@ def audit(root):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--replay-dir", type=Path, default=replay_dir())
+    parser.add_argument("--output-dir", type=Path, default=AUDIT_ROOT, help="Report directory (default: output/audit)")
     args = parser.parse_args()
     root = args.replay_dir.expanduser().resolve()
     if not root.is_dir():
@@ -118,7 +118,7 @@ def main():
         report.append("No replay definitions found; no trials audited.")
     if errors:
         report.extend(["", "Discovery errors (audit coverage is incomplete):", *errors])
-    destination = ROOT / "output" / "audit-replay.txt"
+    destination = args.output_dir.expanduser().resolve() / "audit-replay.txt"
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_text("\n".join(report) + "\n", encoding="utf-8")
     print(report[5])
