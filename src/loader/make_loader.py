@@ -70,7 +70,6 @@ def make_loader(
         eids=eids,
     )
 
-    print(f"[DEBUG] BaseDataset length: {len(dataset)}")
 
     if len(dataset) == 0:
         raise ValueError(

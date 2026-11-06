@@ -88,7 +88,8 @@ def _verify_support(output, view):
 
 def _infer(model, batch, device):
     view = temporal_context_view(batch["temporal_positions"].to(device), batch["temporal_mask"].to(device),
-        direction=model.model_mode, mode=model.context_mode, context_bins=model.context_bins)
+        direction=model.model_mode, mode=model.context_mode, context_bins=model.context_bins,
+        target_delay_bins=model.target_delay_bins, target_support_bins=model.target_support_bins)
     if model.model_mode == "encoding":
         output = model(visual_features=batch["vision-clip"].to(device),
                        temporal_positions=batch["temporal_positions"].to(device),
@@ -113,8 +114,11 @@ def collect_predictions(setup: EvaluationSetup) -> PredictionCollection:
     device = next(model.parameters()).device
     expected = setup.dataset.samples
     records, seen = [], set()
-    progress = Progress(f"evaluation: {model.model_mode} inference on {device}", len(expected), "samples")
-    with progress, torch.inference_mode():
+    seen_sessions = set()
+    with Progress("evaluation: sessions seen", len({row.session_id for row in expected}),
+                  "sessions") as sessions, Progress(
+                      f"evaluation: {model.model_mode} inference on {device}", len(expected),
+                      "samples") as progress, torch.inference_mode():
         for batch in setup.dataloader:
             batch_size = len(batch["sample_id"])
             offset = len(records)
@@ -177,7 +181,9 @@ def collect_predictions(setup: EvaluationSetup) -> PredictionCollection:
                     predicted_neural=None if neural_prediction is None else neural_prediction[index].cpu().numpy().copy(),
                     predicted_visual=None if visual_prediction is None else visual_prediction[index].cpu().numpy().copy(),
                     metadata=deepcopy(source.metadata)))
-            progress.update(len(records), f"batch_size={batch_size}, session={batch['session_id'][-1]}")
+            seen_sessions.update(batch["session_id"])
+            sessions.update(len(seen_sessions))
+            progress.update(len(records))
     if len(records) != len(expected):
         raise ValueError(f"Incomplete test coverage: collected {len(records)} of {len(expected)} samples")
     progress.finish()

@@ -1,6 +1,7 @@
 """Console progress bars with stage messages only between active bars."""
 
 import logging
+import warnings
 from tqdm import tqdm
 
 
@@ -11,6 +12,7 @@ _active_bars = 0
 class _StageHandler(logging.StreamHandler):
     def __init__(self):
         super().__init__()
+        self.setLevel(logging.WARNING)
         self.pending = []
 
     def emit(self, record):
@@ -26,13 +28,26 @@ class _StageHandler(logging.StreamHandler):
 
 
 def configure_progress():
-    """Enable stderr bars and timestamped messages between pipeline stages."""
+    """Enable bars and defer warning/error notifications until bars close."""
     if not logger.handlers:
         handler = _StageHandler()
         handler.setFormatter(logging.Formatter("%(asctime)s %(message)s", datefmt="%H:%M:%S"))
         logger.addHandler(handler)
     logger.setLevel(logging.INFO)
     logger.propagate = False
+    root = logging.getLogger()
+    root.setLevel(logging.WARNING)
+    for handler in tuple(root.handlers):
+        if isinstance(handler, logging.StreamHandler) and not isinstance(handler, logging.FileHandler):
+            root.removeHandler(handler)
+    for handler in logger.handlers:
+        if isinstance(handler, _StageHandler):
+            root.addHandler(handler)
+    warnings.showwarning = _stage_warning
+
+
+def _stage_warning(message, category, filename, lineno, file=None, line=None):
+    logger.warning(warnings.formatwarning(message, category, filename, lineno, line).rstrip())
 
 
 class Progress:

@@ -1,0 +1,18 @@
+{
+  "dataset_generation": "output/datasets/training-dataset/generations/01e5d3830786d45e1aa6f074d3e6c08fb0e476165f93b11a94d605edefb7995c",
+  "expected_dataset_generation_id": "01e5d3830786d45e1aa6f074d3e6c08fb0e476165f93b11a94d605edefb7995c",
+  "session_id": "0cad7ea8-8e6c-4ad1-a5c5-53fbb2df1a63",
+  "context_bins": 12,
+  "delays": [
+    0,
+    2,
+    4,
+    6,
+    8,
+    12
+  ],
+  "training_defaults": "script/experiment/target-delay/configs/training-defaults.json",
+  "evaluation_config": "script/experiment/target-delay/configs/evaluation.json",
+  "comparison_config": "script/experiment/target-delay/configs/comparison.json",
+  "output_root": "output/experiment/target-delay/region"
+}

@@ -88,7 +88,7 @@ def resolve_setup(*, checkpoint_path, dataset_generation, context_mode, context_
         raise ValueError("Evaluation requires strict context with bins 1|3|6|9|12, or full_trial without bins")
     if (config["training"]["objective"] not in ("encoding", "decoding") or context is None
             or context.get("mode") != context_mode or context.get("bins") != context_bins
-            or context.get("target_support_bins") != TARGET_SUPPORT_BINS
+            or context.get("target_support_bins", 0) < TARGET_SUPPORT_BINS
             or context.get("boundary_policy") != "complete"):
         raise ValueError("Requested evaluation context/support differs from the checkpoint; legacy checkpoints require a separate protocol")
     train, val, test, metadata = load_dataset_splits(
@@ -166,7 +166,7 @@ def resolve_setup(*, checkpoint_path, dataset_generation, context_mode, context_
             raise ValueError(f"Checkpoint ordered population differs for {sample.session_id}")
         if sample.visual.shape[1] != width or sample.sequence_length > max_time or sample.neuron_count > max_neurons:
             raise ValueError("Dataset feature or temporal/neural dimensions are incompatible with checkpoint")
-    eligible = sum(max(0, sample.sequence_length - TARGET_SUPPORT_BINS + 1) for sample in test.samples)
+    eligible = sum(max(0, sample.sequence_length - context["target_support_bins"] + 1) for sample in test.samples)
     if not eligible:
         raise ValueError("Selected test split has no complete H=12 targets")
     model = model_from_checkpoint(checkpoint_path)
@@ -192,7 +192,7 @@ def resolve_setup(*, checkpoint_path, dataset_generation, context_mode, context_
                      temporal_context=plain(context),
                      target_coverage=dict(eligible_temporal_targets=eligible,
                          excluded_temporal_targets=sum(sample.sequence_length for sample in test.samples) - eligible,
-                         trials_without_targets=sum(sample.sequence_length < TARGET_SUPPORT_BINS for sample in test.samples)),
+                         trials_without_targets=sum(sample.sequence_length < context["target_support_bins"] for sample in test.samples)),
                      model_mode=model.model_mode, modal_filter=config["training"]["modal_filter"],
                      split="test", session_ids=metadata["selected_session_ids"])
     provenance = dict(checkpoint_path=str(checkpoint_path), checkpoint_sha256=_sha256(checkpoint_path),

@@ -1,15 +1,5 @@
 # Neural-data interface
 
-## Console progress
-
-The CLI uses stderr progress bars for recording loading, window counting, and
-compression, including parallel processing. Selection, timing, verification, and
-publication messages appear between bars.
-
-Bars show elapsed time, throughput, and remaining time when totals are known,
-refreshing at most twice per second. Standalone progress messages are deferred
-until all active bars close; no messages are emitted during a bar. Bars also close
-on exceptions and interrupted iteration. No logging flag is required.
 
 ## Scope and entry point
 

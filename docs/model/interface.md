@@ -1,5 +1,17 @@
 # Model interface
 
+## Delayed strict encoding runtime
+
+`MultiModal` accepts optional `target_delay_bins=0` and `target_support_bins=12`
+alongside `context_mode`/`context_bins`. Nondefault values require strict encoding
+and S>=H+D, S>=12. They do not add parameters or change learned tensor shapes.
+For target t the supplied context view must identify exactly H stimulus tokens
+at `t-D-H+1..t-D`; each window is independently encoded and the last token is
+read into output position t. Prediction validity and common target eligibility
+remain separate. The model independently checks both against real temporal
+positions/validity and rejects mismatched views. Nondefault D/S are included in
+checkpoint identity; the identity of default historical models is unchanged.
+
 ## Regional encoding targets
 
 `MultiModal(..., target_granularity="region", regional_targets=mapping, ...)`

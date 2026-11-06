@@ -22,7 +22,7 @@ from utils.utils import dummy_load
 
 def main(tune_config=None):
     configure_progress()
-    logger.info("fine-tuning: resolving configuration and verifying dataset")
+    logger.debug("fine-tuning: resolving configuration and verifying dataset")
 
     config, train_dataloader, val_dataloader, meta_data = resolve_setup(args, tune_config)
     if args.eid in (None, "None") or meta_data["num_sessions"] != 1:
@@ -47,7 +47,7 @@ def main(tune_config=None):
     accelerator = make_accelerator()
     log_dir = new_run_directory(base_path, accelerator, scenario_id=args.scenario_id)
     log_name = os.path.basename(log_dir)
-    logging.info("Run artifacts: %s", log_dir)
+    logging.debug("Run artifacts: %s", log_dir)
 
 
     if config.wandb.use and accelerator.is_main_process:
@@ -63,14 +63,14 @@ def main(tune_config=None):
     # ----------
     # LOAD MODEL
     # ----------
-    logging.info(f"Start model finetuning:")
+    logging.debug(f"Start model finetuning:")
 
     if args.resume_checkpoint:
         model = build_model(config=config, metadata=meta_data, modal_filter=modal_filter)
     else:
         model = load_pretrained_model(args.pretrained_checkpoint, config=config,
                                       metadata=meta_data, modal_filter=modal_filter)
-    logging.info("Total parameters: %s", sum(parameter.numel() for parameter in model.parameters()))
+    logging.debug("Total parameters: %s", sum(parameter.numel() for parameter in model.parameters()))
 
     optimizer = torch.optim.AdamW(
         model.parameters(),
@@ -83,8 +83,6 @@ def main(tune_config=None):
         accelerator, model, optimizer, train_dataloader, config
     )
 
-    print("modal_filter: ")
-    print(modal_filter)
 
     trainer_kwargs = {
         "log_dir": log_dir,
@@ -114,7 +112,7 @@ def main(tune_config=None):
                    scenario_id=args.scenario_id, scenario_name=args.scenario_name)
 
     if args.dummy_load:
-        logging.info(f"Starting dummy load with {args.dummy_size} samples")
+        logging.debug(f"Starting dummy load with {args.dummy_size} samples")
         dummy_thread = threading.Thread(target=dummy_load, args=(stop_dummy_load, args.dummy_size))
         dummy_thread.start()
         try:
@@ -170,8 +168,6 @@ if __name__ == "__main__":
             grace_period=1,
             reduction_factor=2
         )
-        print("Starting hyperparameter search")
-        print(f"saving to {ray_path}")
 
         eid_ = args.eid[:5] if args.eid else "session"
 
@@ -194,10 +190,10 @@ if __name__ == "__main__":
             metric="eval_avg_metric",
             mode="max"
         )
-        logging.info(f"Best hyperparameters: {best_hyperparameters}")
+        logging.debug(f"Best hyperparameters: {best_hyperparameters}")
     else:
         current_path = os.path.dirname(os.path.realpath(__file__))
-        logging.info(f"No hyperparameter search, Starting training")
+        logging.debug(f"No hyperparameter search, Starting training")
         main()
 
 

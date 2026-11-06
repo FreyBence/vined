@@ -84,7 +84,8 @@ def prepare_inputs(batch, *, model, training_mode, enc_task_var=None):
         if training_mode != model.model_mode:
             raise ValueError("Training scheme differs from the model's context direction")
         support = temporal_context_view(batch["spikes_timestamps"], temporal,
-            direction=model.model_mode, mode=model.context_mode, context_bins=model.context_bins).target_mask
+            direction=model.model_mode, mode=model.context_mode, context_bins=model.context_bins,
+            target_delay_bins=model.target_delay_bins, target_support_bins=model.target_support_bins).target_mask
     random_mask = None
     if any(mode in ("self-spike", "self-vision", "random_token") for mode in modes):
         _, random_mask = model.masker(torch.zeros_like(batch["spikes_data"]), None)
@@ -138,7 +139,8 @@ def forward_objective(model, data, selectors, *, components):
     core = model.module if hasattr(model, "module") else model
     view = (temporal_context_view(runtime["spike"]["inputs_timestamp"],
              runtime["spike"]["inputs_attn_mask"].bool(), direction=core.model_mode,
-             mode=core.context_mode, context_bins=core.context_bins)
+             mode=core.context_mode, context_bins=core.context_bins,
+             target_delay_bins=core.target_delay_bins, target_support_bins=core.target_support_bins)
             if core.context_mode is not None else None)
     outputs = model(runtime, context_view=view)
     for name in ("temporal_mask", "neuron_mask", "prediction_mask", "target_eligibility"):

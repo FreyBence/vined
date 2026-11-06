@@ -159,7 +159,8 @@ def _plots(result, directory):
         figure.tight_layout()
         figure.savefig(directory / "region_bits_per_spike.png", dpi=150)
         plt.close(figure)
-    for session, data in sessions.items():
+    for session, data in iter_progress(sessions.items(), "evaluation: session plots",
+                                       total=len(sessions), unit="sessions"):
         # One explicitly identified representative profile per session avoids
         # producing an unbounded figure set for large neural populations.
         neuron = next((item for item in data["neurons"] if item["psth"] is not None), None)
@@ -230,7 +231,7 @@ def publish_evaluation(collection, output_dir, *, metric_config=None,
         result.update(evaluation_id=evaluation_id, evaluation_configuration=plain(collection.configuration),
                       software=software, prediction_artifact="predictions" if persist_predictions else None)
         if save_plots:
-            logger.info("evaluation: rendering diagnostic plots")
+            logger.debug("evaluation: rendering diagnostic plots")
             _plots(result, staging / "plots")
         result["plots"] = [str(path.relative_to(staging)).replace("\\", "/")
                            for path in sorted((staging / "plots").glob("*.png"))]
@@ -242,7 +243,7 @@ def publish_evaluation(collection, output_dir, *, metric_config=None,
                              for path in sorted(staging.rglob("*")) if path.is_file()}
         manifest["manifest_id"] = fingerprint(manifest)
         write_json(staging / "manifest.json", manifest)
-        logger.info("evaluation: verifying staged artifact")
+        logger.debug("evaluation: verifying staged artifact")
         load_evaluation(staging, expected_evaluation_id=evaluation_id)
         if final.exists():
             raise FileExistsError(final)
@@ -251,7 +252,7 @@ def publish_evaluation(collection, output_dir, *, metric_config=None,
         if staging.parent == root and staging.name == ".staging-" + evaluation_id:
             shutil.rmtree(staging)
         raise
-    logger.info("evaluation: published %s", final)
+    logger.debug("evaluation: published %s", final)
     return EvaluationArtifact(final, manifest, result, collection if persist_predictions else None)
 
 
@@ -284,7 +285,8 @@ def load_evaluation(path, *, expected_evaluation_id=None, expected_checkpoint_sh
     actual_files = {str(item.relative_to(path)).replace("\\", "/") for item in path.rglob("*") if item.is_file()}
     if actual_files != set(manifest["files"]) | {"manifest.json"}:
         raise ValueError("Evaluation artifact has missing or unaccounted payload files")
-    for relative, digest in manifest["files"].items():
+    for relative, digest in iter_progress(manifest["files"].items(), "evaluation: verifying artifacts",
+                                          total=len(manifest["files"]), unit="files"):
         target = (path / relative).resolve()
         if not target.is_relative_to(path) or target.is_symlink() or file_hash(target) != digest:
             raise ValueError(f"Corrupt evaluation payload: {relative}")
@@ -303,7 +305,8 @@ def load_evaluation(path, *, expected_evaluation_id=None, expected_checkpoint_sh
         raise ValueError("Unaccounted unit identity table")
     units = {session: pd.read_parquet(path / relative) for session, relative in manifest["units"].items()}
     rows, seen = [], set()
-    for entry in manifest["samples"]:
+    for entry in iter_progress(manifest["samples"], "evaluation: reading predictions",
+                               total=len(manifest["samples"]), unit="samples"):
         scalar = entry["scalar"]
         if scalar["sample_id"] in seen or scalar["session_id"] not in units:
             raise ValueError("Duplicate sample or unknown neural population in evaluation artifact")
@@ -364,7 +367,8 @@ def load_evaluation(path, *, expected_evaluation_id=None, expected_checkpoint_sh
         rows.append(EvaluationPrediction(**scalar, neuron_identity=units[scalar["session_id"]].copy(deep=True), **arrays))
     collection = PredictionCollection(tuple(rows), manifest["configuration"], manifest["provenance"]) if rows else None
     memberships = {}
-    for entry in manifest["samples"]:
+    for entry in iter_progress(manifest["samples"], "evaluation: reading predictions",
+                               total=len(manifest["samples"]), unit="samples"):
         scalar = entry["scalar"]
         memberships.setdefault(scalar["session_id"], []).append(scalar["sample_id"])
     if (not memberships or set(memberships) != set(result["session_results"])

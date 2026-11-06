@@ -1,0 +1,12 @@
+{
+  "run_ids": [
+    "delay_00",
+    "delay_02",
+    "delay_04",
+    "delay_06",
+    "delay_08",
+    "delay_12"
+  ],
+  "reference_run": "delay_00",
+  "representative_trials": 4
+}

@@ -1,0 +1,5 @@
+{
+  "run_id": "delay_02",
+  "context_bins": 12,
+  "target_delay_bins": 2
+}

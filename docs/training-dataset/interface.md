@@ -1,15 +1,5 @@
 # Training-dataset interface
 
-## Console progress
-
-The CLI uses stderr progress bars for alignment generation loading and sample
-writing. Construction, split sizes, hashing, verification, and publication
-messages appear between bars.
-
-Bars show elapsed time, throughput, and remaining time when totals are known,
-refreshing at most twice per second. Standalone progress messages are deferred
-until all active bars close; no messages are emitted during a bar. Bars also close
-on exceptions and interrupted iteration. No logging flag is required.
 
 ## Sample construction
 
@@ -242,6 +232,16 @@ use the 60 Hz experimental grid.
 For direct evaluation metadata access, `PersistedSplit` supports `cluster_regions`, `cluster_uuids`, `eid`, `intervals`, `sample_id`, `trial_id`, `sequence_length`, `neuron_count`, and `split` column lookups. `cluster_uuids` uses recorded UUIDs when complete; otherwise it exposes stable `unit-<SHA-256>` labels derived from the full scoped unit identity, not invented biological UUIDs. Unit-level evaluation callers that assume one population should select an explicit EID. Arbitrary Hugging Face columns/methods and legacy behavioral modalities are not provided by this view.
 
 ## Runtime temporal context
+
+For controlled strict encoding, `temporal_context_view` additionally accepts
+`target_delay_bins=0` and `target_support_bins=12`. Nondefault values require
+strict encoding, nonnegative integer D, and integer common support S>=12 and
+S>=context_bins+D. Context indices for target t are
+`t-D-H+1..t-D`; target eligibility requires S consecutive real bins ending at t.
+The returned view exposes both parameters. This changes runtime selection only;
+physical arrays, trial identities and split memberships remain unchanged.
+Default calls retain the contracts below. Complete common support can exclude
+otherwise predictable targets without removing their observations as context.
 
 `training_dataset.temporal_context_view(temporal_positions, temporal_mask, *,
 direction, mode, context_bins=None) -> TemporalContextView` exposes runtime

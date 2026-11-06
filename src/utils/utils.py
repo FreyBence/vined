@@ -11,6 +11,7 @@ from sklearn.metrics import accuracy_score
 from sklearn.metrics import r2_score as r2_score_sklearn
 from torcheval.metrics import R2Score
 from tqdm import tqdm
+from utils.progress import logger
 
 PROJ_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 with open(f"{PROJ_DIR}/eids/test_eids.txt") as file:
@@ -24,7 +25,6 @@ def dummy_load(stop_event, dummy_size=60000, check_interval=1, device="cuda"):
             time.sleep(check_interval)  # Adjust the sleep interval as needed
 
 def set_seed(seed):
-    print("Global seed set to {}.".format(seed))
 
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)

@@ -98,6 +98,16 @@ class MultiModal(nn.Module):
             raise ValueError("Context limits must be -1 or nonnegative integer positions")
         self.context_mode = kwargs.get("context_mode")
         self.context_bins = kwargs.get("context_bins")
+        self.target_delay_bins = kwargs.get("target_delay_bins", 0)
+        self.target_support_bins = kwargs.get("target_support_bins", 12)
+        if (type(self.target_delay_bins) is not int or self.target_delay_bins < 0
+                or type(self.target_support_bins) is not int or self.target_support_bins < 12):
+            raise ValueError("Invalid delay/common support")
+        if self.target_delay_bins or self.target_support_bins != 12:
+            if (self.context_mode != "strict" or model_mode != "encoding"
+                    or self.context_bins is None
+                    or self.target_support_bins < self.context_bins + self.target_delay_bins):
+                raise ValueError("Delay/common support requires complete strict encoding windows")
         self.context_chunk_size = kwargs.get("context_chunk_size", 256)
         if self.context_mode not in (None, "strict", "full_trial"):
             raise ValueError("Context mode must be strict or full_trial")
@@ -221,6 +231,8 @@ class MultiModal(nn.Module):
             "visual_dim": self.visual_dim,
             "temporal_context": {"forward": self.context_forward, "backward": self.context_backward,
                 **({"mode": self.context_mode, "bins": self.context_bins,
+                    **({"target_delay_bins": self.target_delay_bins, "target_support_bins": self.target_support_bins}
+                       if self.target_delay_bins or self.target_support_bins != 12 else {}),
                     "semantics": "isolated-target-windows-v1" if self.context_mode == "strict" else "full-trial-v1"}
                    if self.context_mode is not None else {})},
         })
@@ -346,7 +358,8 @@ class MultiModal(nn.Module):
             return self.forward_encoder(x, positions, valid), valid, valid
         if (self.context_mode is None or view.mode != self.context_mode
                 or view.direction != self.model_mode or view.context_bins != self.context_bins
-                or view.target_support_bins != 12):
+                or view.target_support_bins != self.target_support_bins
+                or view.target_delay_bins != self.target_delay_bins):
             raise ValueError("Runtime context semantics differ from model identity")
         b, t = valid.shape
         for row, mask in zip(positions, valid):
@@ -362,26 +375,26 @@ class MultiModal(nn.Module):
         targets = self._valid_mask(view.target_mask, valid.shape, x.device, "context target_mask")
         anchors = torch.arange(t, device=x.device)
 
-        def complete(length):
+        def complete(length, delay=0):
             offsets = torch.arange(length, device=x.device)
             if self.model_mode == "encoding":
                 offsets = offsets - (length - 1)
-            indices = anchors[:, None] + offsets
+            indices = anchors[:, None] + offsets - delay
             safe = indices.clamp(0, t - 1)
             coordinates = positions[:, safe]
             good = ((indices >= 0) & (indices < t)).all(-1)[None, :]
-            good = good & valid[:, safe].all(-1)
+            good = good & valid[:, safe].all(-1) & valid
             good = good & (coordinates[:, :, 1:] - coordinates[:, :, :-1] == 1).all(-1)
             return indices.expand(b, -1, -1).masked_fill(~good[:, :, None], -1), good
 
-        _, expected_targets = complete(12)
+        _, expected_targets = complete(self.target_support_bins)
         if not torch.equal(targets, expected_targets):
-            raise ValueError("Runtime targets do not provide complete H=12 support")
+            raise ValueError("Runtime targets differ from the configured complete common support")
         if self.context_mode == "full_trial":
             if view.context_indices is not None or view.readout_index is not None or not torch.equal(prediction, valid):
                 raise ValueError("Malformed full-trial context view")
             return self.forward_encoder(x, positions, valid), prediction, targets
-        indices, expected_prediction = complete(self.context_bins)
+        indices, expected_prediction = complete(self.context_bins, self.target_delay_bins)
         readout = self.context_bins - 1 if self.model_mode == "encoding" else 0
         supplied = view.context_indices
         if (not isinstance(supplied, torch.Tensor) or supplied.dtype != torch.long

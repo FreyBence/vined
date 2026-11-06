@@ -1,0 +1,109 @@
+{
+  "entry_arguments": {
+    "seed": 42,
+    "epochs": 50,
+    "batch_size": 1,
+    "validation_batch_size": 1,
+    "learning_rate": 0.0002,
+    "weight_decay": 0.01,
+    "scheduler": "none",
+    "eval_every": 1,
+    "checkpoint_selection": "validation_loss",
+    "num_sessions": 1,
+    "no_wandb": true
+  },
+  "training_overrides": {
+    "seed": 42,
+    "wandb": {
+      "use": false,
+      "entity": null,
+      "project": "NEDS"
+    },
+    "training": {
+      "objective": "encoding",
+      "target_granularity": "region",
+      "mixed_training": false,
+      "enc_task_var": "all",
+      "checkpoint_selection": "validation_loss",
+      "selection_metric": "eval_avg_metric",
+      "selection_direction": "max",
+      "validation_metrics": [
+        "bps"
+      ],
+      "loss_components": {
+        "spike": {
+          "name": "poisson_nll",
+          "weight": 1.0
+        },
+        "vision-clip": {
+          "name": "cosine",
+          "weight": 1.0
+        }
+      },
+      "num_epochs": 50,
+      "train_batch_size": 1,
+      "test_batch_size": 1,
+      "save_plot_every_n_epochs": 50,
+      "save_every": 5,
+      "eval_every": 1
+    },
+    "data": {
+      "load_meta": true
+    },
+    "optimizer": {
+      "name": "adamw",
+      "gradient_accumulation_steps": 4,
+      "lr": 0.0002,
+      "wd": 0.01,
+      "eps": 1e-08,
+      "warmup_pct": 0.15,
+      "div_factor": 10,
+      "scheduler": "none"
+    },
+    "model": {
+      "encoder": {
+        "embedder": {
+          "n_modality": 5,
+          "mult": 2,
+          "pos": true,
+          "act": "softsign",
+          "scale": 1,
+          "bias": true,
+          "dropout": 0.1
+        },
+        "transformer": {
+          "use_rope": true,
+          "n_layers": 2,
+          "hidden_size": 128,
+          "use_scalenorm": false,
+          "n_heads": 4,
+          "attention_bias": true,
+          "act": "gelu",
+          "inter_size": 256,
+          "mlp_bias": true,
+          "dropout": 0.1,
+          "fixup_init": true
+        }
+      },
+      "masker": {
+        "force_active": true,
+        "mode": "temporal",
+        "ratio": 0.3,
+        "zero_ratio": 1.0,
+        "random_ratio": 1.0,
+        "expand_prob": 0.0,
+        "max_timespan": 1,
+        "channels": null,
+        "timesteps": null,
+        "mask_regions": [
+          "all"
+        ],
+        "target_regions": [
+          "all"
+        ],
+        "n_mask_regions": 1,
+        "causal_zero": true
+      }
+    }
+  }
+}

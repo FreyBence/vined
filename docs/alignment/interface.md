@@ -1,15 +1,5 @@
 # Alignment interface
 
-## Console progress
-
-The CLI uses stderr progress bars for visual record reading, trial pairing,
-resampling, and compression. Input verification and publication messages appear
-between bars. Structured results remain on stdout.
-
-Bars show elapsed time, throughput, and remaining time when totals are known,
-refreshing at most twice per second. Standalone progress messages are deferred
-until all active bars close; no messages are emitted during a bar. Bars also close
-on exceptions and interrupted iteration. No logging flag is required.
 
 ## Prepared input boundary
 

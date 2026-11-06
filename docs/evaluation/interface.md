@@ -1,5 +1,24 @@
 # Evaluation interface
 
+## Controlled target-delay experiment
+
+Production setup/restoration and `collect_predictions` propagate recorded
+`target_delay_bins` and `target_support_bins` from strict encoding checkpoints.
+Inference uses exact delayed contexts and retains target-bin timestamps and
+counts without shifting scientific arrays. Setup coverage reflects the recorded
+support length. Defaults remain D=0 and twelve-bin support.
+
+The experiment's `evaluate.py` reuses complete persisted-test inference but adds
+its own training-derived constant baseline and matched W-window metric layer.
+The experiment supports recorded neuron or region target granularity. Regional
+counts and baselines use identical production neuron-to-region mappings; plots
+show regional summed rates, and per-target-channel metrics refer to regions.
+Use its [README](../../script/experiment/target-delay/README.md) for commands,
+artifact schemas and comparison rules. General `evaluation.metrics` and ordinary
+evaluation reports retain their H=12/test-mean-baseline protocol and do not score
+the experiment's extended-support collections. `compare.py` reads verified saved
+experiment metrics/predictions without inference or weight loading.
+
 ## Regional count checkpoints
 
 Evaluation restores `training.target_granularity` from the checkpoint (default
@@ -103,18 +122,6 @@ shape/item-size metadata; the page decodes only its selected trial using the
 browser's `DecompressionStream` API. Neuron/coordinate labels are shared per
 session to keep large reports smaller.
 
-## Console progress
-
-The CLI uses stderr progress bars for inference samples, session/neuron metrics,
-and artifact writing. Setup, plotting, verification, and publication messages
-appear between bars. Stdout contains a compact JSON summary with `evaluation_id`,
-`global_metrics`, and `artifact_path`; per-neuron metrics remain in `result.json`
-and temporal profiles in `psth.json`. Setup-only mode prints the setup summary.
-
-Bars show elapsed time, throughput, and remaining time when totals are known,
-refreshing at most twice per second. Standalone progress messages are deferred
-until all active bars close; no messages are emitted during a bar. Bars also close
-on exceptions and interrupted iteration. No logging flag is required.
 
 ## Scenario launcher
 
@@ -233,7 +240,7 @@ The collection carries detached copies of setup `configuration` and `provenance`
 
 ## Scientific metrics
 
-`evaluation.metrics.compute_metrics(collection, *, config=None)` returns a JSON-compatible dictionary containing `configuration` (definitions/policies), `session_results`, `global_metrics`, and checkpoint/dataset `provenance`. `MetricConfig(aggregation="session_weighted", bps_baseline="test_mean_count", psth_grouping="all_trials")` supplies the supported policies. The CLI exposes corresponding `--aggregation`, `--bps-baseline`, and `--psth-grouping` options, publishes the result, and prints JSON including its `artifact_path`. Diagnostics go to stderr.
+`evaluation.metrics.compute_metrics(collection, *, config=None)` returns a JSON-compatible dictionary containing `configuration` (definitions/policies), `session_results`, `global_metrics`, and checkpoint/dataset `provenance`. `MetricConfig(aggregation="session_weighted", bps_baseline="test_mean_count", psth_grouping="all_trials")` supplies the supported policies. The CLI exposes corresponding `--aggregation`, `--bps-baseline`, and `--psth-grouping` options, publishes the result with its configuration and provenance.
 
 Encoding scores all real neurons without a firing-rate threshold. Each neuron result carries its session-scoped source identity, column, metric records, and available PSTH profile. Decoding scores full visual vectors on decoding support. Metrics operate in float64 and retain finite negative results:
 

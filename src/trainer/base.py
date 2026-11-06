@@ -23,7 +23,6 @@ OUTPUT_DIM = {
 
 def set_seed(epoch, base_seed=42):
     seed = (base_seed + epoch) % 2**32
-    print("Train seed set to {}.".format(seed))
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.deterministic = True
@@ -142,7 +141,7 @@ class MultiModalTrainer():
 
     def train(self):
         if self.accelerator.is_main_process:
-            logger.info("training: starting epochs %d-%d (%d batches per epoch)",
+            logger.debug("training: starting epochs %d-%d (%d batches per epoch)",
                         self.start_epoch + 1, self.config.training.num_epochs, len(self.train_dataloader))
         for epoch in range(self.start_epoch, self.config.training.num_epochs):
             train_results = self.train_epoch(epoch)
@@ -177,7 +176,8 @@ class MultiModalTrainer():
                             and epoch % self.config.training.save_plot_every_n_epochs == 0):
                         self._plot_log_epoch(epoch, results)
                     logs = dict(epoch=epoch, **train_results, **public)
-                    wandb.log(logs) if self.config.wandb.use else print(logs)
+                    if self.config.wandb.use:
+                        wandb.log(logs)
                 except (ValueError, KeyError, TypeError, RuntimeError, IndexError) as caught:
                     error = caught
                 finally:
@@ -215,8 +215,7 @@ class MultiModalTrainer():
         report = {key: value for key, value in best.items()
                   if key == "eval_loss" or key.endswith("_metric")}
         if self.accelerator.is_main_process:
-            logger.info("training: finished; selected checkpoint %s", selected)
-            print({"selected_checkpoint": selected})
+            logger.debug("training: finished; selected checkpoint %s", selected)
             if self.config.wandb.use:
                 wandb.log(dict(best_epoch=selected["epoch"], **{f"best_{k}": v for k, v in report.items()}))
         return report
@@ -232,7 +231,10 @@ class MultiModalTrainer():
         self.model.train()
         iterator = iter(self.train_dataloader)
         updates_before = self.optimizer_steps
-        with Progress(f"training: epoch {epoch + 1}/{self.config.training.num_epochs}",
+        seen_sessions = set()
+        with Progress("training: sessions seen this epoch", len(self.eid_list), "sessions",
+                      disable=not self.accelerator.is_main_process) as sessions, Progress(
+                      f"training: epoch {epoch + 1}/{self.config.training.num_epochs}",
                       len(self.train_dataloader), "batches",
                       disable=not self.accelerator.is_main_process) as progress:
             while True:
@@ -244,6 +246,9 @@ class MultiModalTrainer():
                 self._check_all_ranks(error)
                 if not window:
                     break
+                for batch in window:
+                    seen_sessions.update(batch["session_id"])
+                sessions.update(len(seen_sessions))
                 prepared, error = [], None
                 try:
                     for batch in window:
@@ -300,8 +305,6 @@ class MultiModalTrainer():
                        optimizer_step=self.optimizer_steps, scheduler_step=self.scheduler_steps,
                        valid_target_counts={mod: int(totals[1,i]) for i, mod in enumerate(mods)},
                        learning_rate=self.optimizer.param_groups[0]["lr"])
-        if self.accelerator.is_main_process:
-            print({"epoch": epoch, **results})
         return results
 
     @torch.no_grad()
@@ -353,7 +356,7 @@ class MultiModalTrainer():
             losses[f"eval_{mod}_loss"] = numerator / count
         gt, preds, metrics, unavailable = {}, {}, {}, {}
         session_metrics = {}
-        for session, modalities in iter_progress(records.items(), "training: validation metrics",
+        for session, modalities in iter_progress(records.items(), "training: validation sessions",
                                                 total=len(records), unit="sessions"):
             idx = self.eid_list.index(session)
             gt[idx], preds[idx], session_metrics[session] = {}, {}, {}

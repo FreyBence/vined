@@ -25,18 +25,31 @@ class TemporalContextView:
     target_mask: torch.Tensor
     readout_index: int | None
     target_support_bins: int = TARGET_SUPPORT_BINS
+    target_delay_bins: int = 0
 
 
 def temporal_context_view(temporal_positions, temporal_mask, *, direction,
-                          mode, context_bins=None):
-    """Return strict windows or full-trial context and separate fixed-H targets.
+                          mode, context_bins=None, target_delay_bins=0,
+                          target_support_bins=TARGET_SUPPORT_BINS):
+    """Return trial-local contexts and separate complete common-support targets.
 
     Accept int64 positions and boolean validity shaped [T] or [B,T], as NumPy
     arrays or tensors. Results always have a batch axis and retain tensor device.
     Entire incomplete strict windows use -1; never gather those indices directly.
     Empty target selections are returned for caller-owned coverage/error handling.
+    Strict encoding may delay the context by D and require a common preceding
+    support length >= H+D. Defaults retain the historical D=0/H-support=12 view.
     """
     import torch
+
+    if (type(target_delay_bins) is not int or target_delay_bins < 0
+            or type(target_support_bins) is not int or target_support_bins < TARGET_SUPPORT_BINS):
+        raise ValueError("Delay must be nonnegative and common support at least 12 bins")
+    if target_delay_bins or target_support_bins != TARGET_SUPPORT_BINS:
+        if direction != "encoding" or mode != "strict":
+            raise ValueError("Delayed/common support requires strict encoding")
+        if context_bins is None or target_support_bins < context_bins + target_delay_bins:
+            raise ValueError("Common support must cover the complete delayed context")
 
     if direction not in ("encoding", "decoding"):
         raise ValueError("Context direction must be encoding or decoding")
@@ -71,25 +84,26 @@ def temporal_context_view(temporal_positions, temporal_mask, *, direction,
     anchors = torch.arange(t, device=positions.device)
     safe_positions = torch.where(valid, positions, torch.zeros_like(positions))
 
-    def windows(length):
+    def windows(length, delay=0):
         offsets = torch.arange(length, device=positions.device)
         if direction == "encoding":
             offsets = offsets - (length - 1)
-        indices = anchors[:, None] + offsets
+        indices = anchors[:, None] + offsets - delay
         in_bounds = ((indices >= 0) & (indices < t)).all(-1)
         safe = indices.clamp(0, t - 1)
         selected_valid = valid[:, safe]
         selected_positions = safe_positions[:, safe]
         # Differences avoid integer overflow when adding offsets to positions.
         consecutive = (selected_positions[:, :, 1:] - selected_positions[:, :, :-1] == 1).all(-1)
-        complete = in_bounds[None, :] & selected_valid.all(-1) & consecutive
+        complete = in_bounds[None, :] & selected_valid.all(-1) & consecutive & valid
         indices = indices.expand(b, -1, -1).clone()
         return indices.masked_fill(~complete[:, :, None], -1), complete
 
-    _, targets = windows(TARGET_SUPPORT_BINS)
+    _, targets = windows(target_support_bins)
     if mode == "full_trial":
         return TemporalContextView(direction, mode, None, None, valid.clone(),
                                    targets, None)
-    indices, complete = windows(context_bins)
+    indices, complete = windows(context_bins, target_delay_bins)
     return TemporalContextView(direction, mode, context_bins, indices, complete,
-                               targets, context_bins - 1 if direction == "encoding" else 0)
+                               targets, context_bins - 1 if direction == "encoding" else 0,
+                               target_support_bins, target_delay_bins)

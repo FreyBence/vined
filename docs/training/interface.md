@@ -1,5 +1,22 @@
 # Training interface
 
+## Controlled target delay
+
+Training setup accepts `--target-delay-bins D` (default 0) and
+`--target-support-bins S` (default 12). Nondefault values require strict encoding
+and S>=H+D, S>=12. Resolved values are recorded in `training.temporal_context`,
+used by objective selection and model construction, and checked on checkpoint
+resume/restoration. Coverage counts use S rather than the historical fixed 12.
+Default D=0/S=12 configuration and checkpoint identities remain unchanged.
+
+The independent `script/experiment/target-delay/` workflow consumes the existing
+configuration resolver, model builder, production trainer and checkpoint APIs.
+Its [README](../../script/experiment/target-delay/README.md) defines run JSON,
+common-support preflight, isolated output manifests, resume and stage commands.
+It supports the configured neuron or regional count targets using production
+aggregation and changes no production training profiles. Regional experiment
+bias initialization and baselines use its recorded common-support training bins.
+
 ## Regional count encoding
 
 Training JSON controls prediction granularity through `training.target_granularity`
@@ -149,18 +166,6 @@ return null; empty support has an explicit reason and zero bins. No scientific
 requirement is imposed on matching noisy observed variance or individual peaks.
 Official evaluation and historical scientific artifacts remain unchanged.
 
-## Console progress
-
-Training and fine-tuning use one stderr progress bar per training epoch, plus
-validation batch/session bars. Epoch bars display optimizer steps and learning
-rate; skipped updates are shown in the bar. Only the main process displays training
-bars. Setup, epoch metrics, and checkpoint messages appear between bars, including
-when W&B is enabled.
-
-Bars show elapsed time, throughput, and remaining time when totals are known,
-refreshing at most twice per second. Standalone progress messages are deferred
-until all active bars close; no messages are emitted during a bar. Bars also close
-on exceptions and interrupted iteration. No logging flag is required.
 
 ## Scenario launcher
 

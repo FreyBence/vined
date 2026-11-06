@@ -740,16 +740,6 @@ trials. Omission processes all trials. With multiple EIDs, the selection applies
 to each session. `--projection on|off` defaults to `on`, mapping to `mouse_view`
 or `display`. The same selectors are supported by `src/generate_replays.py`.
 
-The wrapper delegates session coordination to `src/generate_replays.py`, which
-displays two `tqdm` progress bars: accounted EIDs and published trials for the
-current EID. The trial bar starts after preparation establishes the trial count,
-resets for each session, and advances after image/metadata publication.
-Unavailable, invalid, and failed trials count as accounted work.
-Session failures advance the EID bar and allow later sessions to continue;
-interruptions do not advance unfinished work. A full bar describes accounting,
-not successful reconstruction. Preparation/downloads may take time before the
-trial bar appears. Progress is written to stderr; terminal cursor support is
-needed to display both bars in place.
 
 Each invocation defaults to `VINED_REPLAY_DIR` (normally
 `output/visual_replays`); `--output` overrides this root. Each EID gets a separate

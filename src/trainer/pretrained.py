@@ -18,9 +18,9 @@ SESSION_LAYERS = ("stitcher_dict", "project_dict", "stitch_decoder_dict")
 
 def build_model(*, config, metadata, modal_filter):
     context = config.training.get("temporal_context")
-    if context is not None and (context.get("target_support_bins") != 12
+    if context is not None and (context.get("target_support_bins", 0) < 12
                                 or context.get("boundary_policy") != "complete"):
-        raise ValueError("Checkpoint/runtime context requires complete H=12 target support")
+        raise ValueError("Checkpoint/runtime context requires complete target support of at least 12 bins")
     hidden = config.model.encoder.transformer.hidden_size
     embeddings = {mod: EncoderEmbedding(
         hidden_size=hidden, n_channel=hidden, output_channel=hidden,
@@ -30,7 +30,9 @@ def build_model(*, config, metadata, modal_filter):
     model = MultiModal(embeddings, avail_mod=["spike", "vision-clip"], avail_beh=["vision-clip"],
                        model_mode=config.training.objective, config=config.model,
                        **({"context_mode": config.training.temporal_context.mode,
-                           "context_bins": config.training.temporal_context.bins}
+                           "context_bins": config.training.temporal_context.bins,
+                           "target_delay_bins": context.get("target_delay_bins", 0),
+                           "target_support_bins": context.get("target_support_bins", 12)}
                           if "temporal_context" in config.training else {}),
                        **metadata)
     # Bind the existing embedding operation to the selected explicit sessions.

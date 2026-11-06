@@ -43,6 +43,8 @@ def add_setup_arguments(parser):
     parser.add_argument("--scenario-id", type=int, help="Scenario for numbered artifact folders")
     parser.add_argument("--scenario-name", help="Scenario description recorded with the run")
     parser.add_argument("--neural-region-selection", choices=["all_recorded", "visual_only"], default="all_recorded")
+    parser.add_argument("--target-delay-bins", type=int, default=0)
+    parser.add_argument("--target-support-bins", type=int, default=12)
     parser.add_argument("--context-mode", choices=["strict", "full_trial"],
                         help="Temporal context for encoding/decoding (default: full_trial)")
     parser.add_argument("--context-bins", type=int, choices=[1, 3, 6, 9, 12],
@@ -198,6 +200,12 @@ def resolve_setup(args, tune_config=None):
         (train, val, _test), metadata, granularity)
     if granularity == "region":
         metadata["regional_training_baseline"] = regional_training_means(train)
+    delay = getattr(args, "target_delay_bins", 0)
+    support = getattr(args, "target_support_bins", 12)
+    _positive(delay, "target delay", zero=True)
+    _positive(support, "target support")
+    if support < 12:
+        raise ValueError("Common target support must be at least 12")
     mode = getattr(args, "context_mode", None)
     bins = getattr(args, "context_bins", None)
     if objective == "mm":
@@ -214,6 +222,10 @@ def resolve_setup(args, tune_config=None):
             raise ValueError("CLI context conflicts with finite legacy attention limits")
         training["temporal_context"] = dict(mode=mode, bins=bins, target_support_bins=TARGET_SUPPORT_BINS,
                                            boundary_policy="complete", source="entry_arguments")
+    if delay or support != 12:
+        if objective != "encoding" or mode != "strict" or support < bins + delay:
+            raise ValueError("Delay/common support requires strict encoding and sufficient support")
+        training["temporal_context"].update(target_delay_bins=delay, target_support_bins=support)
     if args.modality not in (["ap", "vision-clip"], ["spike", "vision-clip"]):
         raise ValueError("Supported modalities are spike (or ap) and vision-clip, in that order")
     if training["mixed_training"] and objective != "mm":
@@ -313,12 +325,12 @@ def resolve_setup(args, tune_config=None):
         for name, view in (("train", train), ("val", val if training["eval_every"] else None)):
             if view is None:
                 continue
-            eligible = sum(max(0, sample.sequence_length - TARGET_SUPPORT_BINS + 1) for sample in view.samples)
+            eligible = sum(max(0, sample.sequence_length - support + 1) for sample in view.samples)
             if not eligible:
                 raise ValueError(f"No complete H=12 targets in {name} split")
             coverage[name] = dict(eligible_temporal_targets=eligible,
                                  excluded_temporal_targets=sum(sample.sequence_length for sample in view.samples) - eligible,
-                                 trials_without_targets=sum(sample.sequence_length < TARGET_SUPPORT_BINS for sample in view.samples))
+                                 trials_without_targets=sum(sample.sequence_length < support for sample in view.samples))
         training["temporal_target_coverage"] = coverage
     if any(sample.visual.shape[1] != 768 for sample in consumed):
         raise ValueError("The current model requires 768-dimensional visual features")

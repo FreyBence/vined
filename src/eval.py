@@ -46,7 +46,7 @@ def main():
         if not args.setup_only and destination.exists():
             raise FileExistsError(f"Evaluation already exists at {destination}; choose another --output-dir to repeat it")
     # Dataset/model diagnostics belong on stderr; stdout is a compact summary.
-    logger.info("evaluation: verifying dataset and restoring checkpoint %s", args.checkpoint)
+    logger.debug("evaluation: verifying dataset and restoring checkpoint %s", args.checkpoint)
     with redirect_stdout(sys.stderr):
         setup = resolve_setup(checkpoint_path=args.checkpoint, dataset_generation=args.dataset_generation,
                               context_mode=args.context_mode, context_bins=args.context_bins,
@@ -54,7 +54,7 @@ def main():
                               session_ids=args.eid, batch_size=args.batch_size, device=args.device, seed=args.seed,
                               prediction_direction=args.prediction_direction,
                               neural_region_selection=args.neural_region_selection)
-    logger.info("evaluation: setup complete on %s (%d test samples)", args.device, len(setup.dataset.samples))
+    logger.debug("evaluation: setup complete on %s (%d test samples)", args.device, len(setup.dataset.samples))
     if args.scenario_id is not None:
         run = setup.provenance["training_run"]
         if run.get("scenario_id") != args.scenario_id or run.get("attempt") != attempt_name(args.attempt):
@@ -64,16 +64,11 @@ def main():
         return
 
     collection = collect_predictions(setup)
-    artifact = publish_evaluation(collection, args.output_dir,
+    publish_evaluation(collection, args.output_dir,
                                   metric_config=MetricConfig(args.aggregation, args.bps_baseline, args.psth_grouping),
                                   persist_predictions=not args.no_predictions, save_plots=args.save_plot,
                                   scenario_id=args.scenario_id, attempt=args.attempt)
-    summary = {
-        "evaluation_id": artifact.result["evaluation_id"],
-        "global_metrics": artifact.result["global_metrics"],
-        "artifact_path": str(artifact.path),
-    }
-    print(json.dumps(summary, indent=2, allow_nan=False))
+
 
 
 if __name__ == "__main__":

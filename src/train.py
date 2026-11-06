@@ -24,7 +24,7 @@ from utils.utils import dummy_load
 
 def main(tune_config=None):
     configure_progress()
-    logger.info("training: resolving configuration and verifying dataset")
+    logger.debug("training: resolving configuration and verifying dataset")
 
     neural_acronyms = {
         "ap": "spike"
@@ -55,8 +55,8 @@ def main(tune_config=None):
     mask_ratio = config.model.masker.ratio
     lr = config.optimizer.lr
     wd = config.optimizer.wd
-    logging.info(f"EID: {eid} model mode: {args.model_mode} mask ratio: {mask_ratio}")
-    logging.info(f"Available modality: {modality}")
+    logging.debug(f"EID: {eid} model mode: {args.model_mode} mask ratio: {mask_ratio}")
+    logging.debug(f"Available modality: {modality}")
 
     neural_mods, static_mods, dynamic_mods = [], [], []
     for mod in modality:
@@ -91,14 +91,14 @@ def main(tune_config=None):
     # --------
     log_dir = new_run_directory(base_path, accelerator, scenario_id=args.scenario_id)
     log_name = os.path.basename(log_dir)
-    logging.info("Run artifacts: %s", log_dir)
+    logging.debug("Run artifacts: %s", log_dir)
 
 
     # ------------
     # SET UP MODEL
     # ------------
 
-    logging.info(f"Start model training:")
+    logging.debug(f"Start model training:")
 
     if config.wandb.use:
         if accelerator.is_main_process:
@@ -134,7 +134,9 @@ def main(tune_config=None):
         model_mode = model_mode,
         config = config.model,
         **({"context_mode": config.training.temporal_context.mode,
-            "context_bins": config.training.temporal_context.bins}
+            "context_bins": config.training.temporal_context.bins,
+            "target_delay_bins": config.training.temporal_context.get("target_delay_bins", 0),
+            "target_support_bins": config.training.temporal_context.target_support_bins}
            if "temporal_context" in config.training else {}),
         **meta_data
     )
@@ -161,28 +163,28 @@ def main(tune_config=None):
     n_mods = len(modal_filter["input"])
     n_tokens_per_mod = config.model.encoder.embedder.max_F
     num_train = len(train_dataloader.dataset)
-    logging.info(f"Total modality: {n_mods} Total tokens per modality: {n_tokens_per_mod}")
-    logging.info(f"Total trials: {num_train}")
+    logging.debug(f"Total modality: {n_mods} Total tokens per modality: {n_tokens_per_mod}")
+    logging.debug(f"Total trials: {num_train}")
 
     total_tokens = n_mods*n_tokens_per_mod*num_train
-    logging.info(f"Total tokens: {total_tokens}")
+    logging.debug(f"Total tokens: {total_tokens}")
 
     trial_length = 2 # Seconds
     total_neurons = sum(list(meta_data["eid_list"].values()))
     total_hours = num_train * trial_length / 3_600
     neuron_hours = total_neurons * total_hours
-    logging.info(f"Total neurons: {total_neurons}")
-    logging.info(f"Total hours: {total_hours}")
-    logging.info(f"Neuron hours: {neuron_hours}")
+    logging.debug(f"Total neurons: {total_neurons}")
+    logging.debug(f"Total hours: {total_hours}")
+    logging.debug(f"Neuron hours: {neuron_hours}")
 
     total_params = sum(p.numel() for p in model.parameters())
-    logging.info(f"Total parameters: {total_params}")
+    logging.debug(f"Total parameters: {total_params}")
 
     total_capacity = sum(
         p.numel() for name, p in model.named_parameters()
         if "stitch" not in name and "static_weight" not in name
     )
-    logging.info(f"Total parameters (excluding stitcher): {total_capacity}")
+    logging.debug(f"Total parameters (excluding stitcher): {total_capacity}")
 
 
     # -----
@@ -218,7 +220,7 @@ def main(tune_config=None):
                    scenario_id=args.scenario_id, scenario_name=args.scenario_name)
 
     if args.dummy_load:
-        logging.info(f"Starting dummy load with {args.dummy_size} samples")
+        logging.debug(f"Starting dummy load with {args.dummy_size} samples")
         dummy_thread = threading.Thread(target=dummy_load, args=(stop_dummy_load, args.dummy_size))
         dummy_thread.start()
         try:
@@ -267,7 +269,7 @@ if __name__ == "__main__":
         torch.backends.cudnn.benchmark = False
         torch.backends.cudnn.deterministic = True
         os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
-        logging.info("Deterministic mode is activated. This will negatively impact performance.")
+        logging.debug("Deterministic mode is activated. This will negatively impact performance.")
 
     if args.search:
         ray.init(address="auto")
@@ -286,8 +288,6 @@ if __name__ == "__main__":
             grace_period=1,
             reduction_factor=2
         )
-        print("Starting hyperparameter search")
-        print(f"Saving to {ray_path}")
 
         eid_ = args.eid[:5] if args.eid and args.eid != "None" else "multi"
 
@@ -310,9 +310,9 @@ if __name__ == "__main__":
             metric="eval_avg_metric",
             mode="max"
         )
-        logging.info(f"Best hyperparameters: {best_hyperparameters}")
+        logging.debug(f"Best hyperparameters: {best_hyperparameters}")
     else:
         current_path = os.path.dirname(os.path.realpath(__file__))
-        logging.info(f"No hyperparameter search, Starting training")
+        logging.debug(f"No hyperparameter search, Starting training")
         main()
 

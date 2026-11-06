@@ -246,4 +246,3 @@ def save_training_checkpoint(trainer, name, epoch):
     atomic_checkpoint(Path(trainer.log_dir) / filename, checkpoint)
     atomic_json(Path(trainer.log_dir) / "history.json", trainer.history)
     atomic_json(Path(trainer.log_dir) / "selection.json", trainer.selected_checkpoint)
-    print(f"Saved {filename} at epoch {epoch} in {trainer.log_dir}")
