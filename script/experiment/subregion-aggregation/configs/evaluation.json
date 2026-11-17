@@ -1,0 +1,14 @@
+{
+  "split": "test",
+  "response_windows": [
+    1,
+    3,
+    6,
+    12
+  ],
+  "batch_size": 2,
+  "device": "cuda",
+  "seed": 42,
+  "representative_trials": 4,
+  "minimum_contrast_trials": 3
+}

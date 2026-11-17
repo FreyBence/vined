@@ -68,7 +68,9 @@ def _consumed_observations(checkpoint, path, visited=None, lineage=None):
 
 def resolve_setup(*, checkpoint_path, dataset_generation, context_mode, context_bins=None, expected_generation_id=None,
                   session_ids=None, batch_size=32, device="cpu", seed=42,
-                  prediction_direction=None, neural_region_selection=None):
+                  prediction_direction=None, neural_region_selection=None, split="test"):
+    if split not in ("val", "test"):
+        raise ValueError("Evaluation split must be val or test")
     if isinstance(batch_size, bool) or not isinstance(batch_size, int) or batch_size <= 0:
         raise ValueError("Inference batch size must be a positive integer")
     if isinstance(seed, bool) or not isinstance(seed, int) or seed < 0:
@@ -110,9 +112,11 @@ def resolve_setup(*, checkpoint_path, dataset_generation, context_mode, context_
         if len(region_sets) != 1:
             raise ValueError("Regional checkpoint lacks a consistent anatomical grouping policy")
         regions = list(next(iter(region_sets)))
-    _, _, test, metadata = transform_neural_targets(
-        (train, val, test), metadata, granularity, regions=regions)
-    if granularity == "region":
+    _, val, test, metadata = transform_neural_targets(
+        (train, val, test), metadata, granularity, regions=regions,
+        selection=config["training"].get("target_selection"))
+    test = val if split == "val" else test
+    if granularity in ("region", "subregion"):
         recorded_mappings = config["dataset"].get("regional_targets", {})
         for session, mapping in metadata["regional_targets"].items():
             if plain(mapping) != recorded_mappings.get(session):
@@ -141,7 +145,7 @@ def resolve_setup(*, checkpoint_path, dataset_generation, context_mode, context_
         raise ValueError("Unsupported checkpoint-selection policy")
     lineage = []
     consumed = _consumed_observations(checkpoint, checkpoint_path, lineage=lineage)
-    if any((sample.session_id, sample.trial_id) in consumed for sample in test.samples):
+    if split == "test" and any((sample.session_id, sample.trial_id) in consumed for sample in test.samples):
         raise ValueError("Test observations overlap optimization or checkpoint-selection observations")
     populations = checkpoint["compatibility"]["populations"]
     max_time = config["data"]["max_time_length"]
@@ -185,7 +189,7 @@ def resolve_setup(*, checkpoint_path, dataset_generation, context_mode, context_
                          max_time_length=max_time, max_space_length=max_neurons,
                          pad_to_right=True, pad_value=-1., load_meta=config["data"]["load_meta"],
                          dataset_name=config["data"]["dataset_name"], stitching=True,
-                         shuffle=False, seed=seed, mode="test", eids=metadata["eids"])
+                         shuffle=False, seed=seed, mode=split, eids=metadata["eids"])
     effective = dict(batch_size=batch_size, device=str(requested_device), seed=seed,
                      target_granularity=granularity,
                      neural_region_selection=recorded_selection,
@@ -194,7 +198,8 @@ def resolve_setup(*, checkpoint_path, dataset_generation, context_mode, context_
                          excluded_temporal_targets=sum(sample.sequence_length for sample in test.samples) - eligible,
                          trials_without_targets=sum(sample.sequence_length < context["target_support_bins"] for sample in test.samples)),
                      model_mode=model.model_mode, modal_filter=config["training"]["modal_filter"],
-                     split="test", session_ids=metadata["selected_session_ids"])
+                     split=split, session_ids=metadata["selected_session_ids"],
+                     interpretation="model-development validation" if split == "val" else "held-out test")
     provenance = dict(checkpoint_path=str(checkpoint_path), checkpoint_sha256=_sha256(checkpoint_path),
                       checkpoint_epoch=checkpoint["epoch"], checkpoint_selection_policy=rule,
                       checkpoint_selection=selection, training_run=checkpoint["run"],

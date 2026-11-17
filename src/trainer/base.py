@@ -371,7 +371,7 @@ class MultiModalTrainer():
                     count = valid.sum((0, 1))
                     spikes = target.nan_to_num().sum((0, 1))
                     mean = spikes / count.clamp_min(1)
-                    if self.config.dataset.get("target_granularity") == "region":
+                    if self.config.dataset.get("target_granularity") in ("region", "subregion"):
                         mean = torch.tensor(self.config.dataset.regional_training_baseline[session]["mean_counts"],
                                             dtype=target.dtype, device=target.device)
                     model_nll = (prediction - target * torch.stack(entry["log_preds"])).masked_fill(~valid, 0).sum((0, 1))

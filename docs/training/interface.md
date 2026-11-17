@@ -1,5 +1,47 @@
 # Training interface
 
+## Fixed train-derived source-column screening
+
+`--target-selection-json PATH` optionally supplies a JSON mapping
+`session_id -> recorded_subregion -> sorted source-column integers`. Setup embeds
+the mapping in `training.target_selection` before deriving targets and dimensions.
+`transform_neural_targets(..., selection=mapping)` supports it only for subregion
+encoding; each retained group must contain a nonempty unique ordered subset of
+its original anatomical columns. Unknown groups, invalid columns and empty
+session selections raise `ValueError`. Omitted groups have no learned output.
+Original scientific samples and CLIP arrays remain unchanged. Both training and
+restoration derive the same selected int64 count sums, identities and widths;
+the mapping is checkpoint-bound through configuration and derived populations.
+Caller workflows own train-only score fitting and provenance verification.
+
+[Experiment 3](../../script/experiment/information-filtering/README.md) publishes
+one selection per strategy shared by both delays and supplies common-support
+training means before bias initialization and validation BPS. Its default runner
+performs CPU scoring/preflight only; production training remains an explicit action.
+
+## Recorded subregion targets
+
+`training.target_granularity="subregion"` is supported for encoding. The runtime
+transform refines the existing parent-region population by recorded Allen labels
+without activity filtering. It sums original int64 counts and preserves all
+trial/bin identities, visual values and split memberships. Region and neuron
+behavior remains unchanged. Explicit legacy `regions=` restoration is available
+only in region mode; subregion grouping derives from the selected population.
+
+`dataset.regional_targets[session]` retains the existing source units/columns,
+ordered target names and neuron counts, and adds parallel `parent_regions`,
+`aggregation="sum"`, `units="spike_count_per_bin"` and unchanged temporal-index
+semantics. Subregion identities include `parent_region`; channels are sorted by
+parent and recorded acronym. Missing anatomical IDs fail rather than drop units.
+The existing linear count head, bias initializer and training-baseline validation
+BPS apply to subregions. Subregion encoder-checkpoint initialization is rejected;
+the experiment starts fresh. Mapping and granularity are checkpoint identity.
+
+The [Experiment 2 entrypoints](../../script/experiment/subregion-aggregation/README.md)
+provide H=12/S=24 common-support training means, standalone D=0/6 training,
+CPU preflight and exact Experiment 1 references. Default orchestration performs
+preflight only. Full training requires explicit stages.
+
 ## Controlled target delay
 
 Training setup accepts `--target-delay-bins D` (default 0) and

@@ -1,0 +1,10 @@
+{
+  "run_ids": [
+    "region_00",
+    "region_06",
+    "subregion_00",
+    "subregion_06"
+  ],
+  "reference_run": "region_00",
+  "representative_trials": 4
+}

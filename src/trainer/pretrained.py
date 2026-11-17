@@ -193,7 +193,7 @@ def initialize_regional_encoder(model, path, *, config):
 
 def initialize_regional_bias(model, metadata):
     """Initialize log-count intercepts from eligible optimization targets only."""
-    if model.target_granularity != "region":
+    if model.target_granularity not in ("region", "subregion"):
         return
     with torch.no_grad():
         for session, stats in metadata["regional_training_baseline"].items():

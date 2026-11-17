@@ -39,6 +39,7 @@ SUPPORTED_OVERRIDES = {
 
 
 def add_setup_arguments(parser):
+    parser.add_argument("--target-selection-json", help="Train-derived session/subregion source-column mapping JSON")
     parser.add_argument("--encoder-checkpoint", help="Strict encoder-only initialization of regional encoding")
     parser.add_argument("--scenario-id", type=int, help="Scenario for numbered artifact folders")
     parser.add_argument("--scenario-name", help="Scenario description recorded with the run")
@@ -187,18 +188,21 @@ def resolve_setup(args, tune_config=None):
 
     training, optimizer, model, data = (config[key] for key in ("training", "optimizer", "model", "data"))
     granularity = training["target_granularity"]
-    if granularity not in ("neuron", "region"):
-        raise ValueError("training.target_granularity must be neuron or region")
+    if granularity not in ("neuron", "region", "subregion"):
+        raise ValueError("training.target_granularity must be neuron, region or subregion")
     objective = training["objective"]
-    if granularity == "region" and objective != "encoding":
+    if granularity in ("region", "subregion") and objective != "encoding":
         raise ValueError("Regional targets support encoding only")
     if getattr(args, "encoder_checkpoint", None) and (granularity != "region" or args.resume_checkpoint):
         raise ValueError("Encoder initialization requires regional targets and fresh optimizer state")
     if objective not in ("encoding", "decoding", "mm"):
         raise ValueError(f"Unsupported objective: {objective}")
+    selection_path = getattr(args, "target_selection_json", None)
+    if selection_path:
+        training["target_selection"] = json.loads(Path(selection_path).read_text(encoding="utf-8"))
     train, val, _test, metadata = transform_neural_targets(
-        (train, val, _test), metadata, granularity)
-    if granularity == "region":
+        (train, val, _test), metadata, granularity, selection=training.get("target_selection"))
+    if granularity in ("region", "subregion"):
         metadata["regional_training_baseline"] = regional_training_means(train)
     delay = getattr(args, "target_delay_bins", 0)
     support = getattr(args, "target_support_bins", 12)

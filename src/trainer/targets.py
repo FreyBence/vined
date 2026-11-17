@@ -45,11 +45,15 @@ def _recorded_groups(sample, metadata, atlas):
     return names, [np.asarray(labels[name], dtype=np.int64) for name in names]
 
 
-def transform_neural_targets(views, metadata, granularity="neuron", *, regions=None):
-    """Sum selected recorded units by area; explicit roots restore older mappings."""
+def transform_neural_targets(views, metadata, granularity="neuron", *, regions=None, selection=None):
+    """Sum recorded units by parent area or recorded anatomical subdivision."""
+    if selection is not None and (granularity != "subregion" or regions is not None):
+        raise ValueError("Explicit source-column selection requires subregion encoding")
     if granularity == "neuron":
         return (*views, metadata)
-    if granularity != "region" or (regions is not None and (
+    if granularity == "subregion" and regions is not None:
+        raise ValueError("Subregion targets derive their parent partition from the selected population; explicit roots are unsupported")
+    if granularity not in ("region", "subregion") or (regions is not None and (
             not regions or len(set(regions)) != len(regions))):
         raise ValueError("Region targets require unique explicit Allen root acronyms")
     atlas = BrainRegions()
@@ -74,6 +78,24 @@ def transform_neural_targets(views, metadata, granularity="neuron", *, regions=N
                 if sample.session_id not in session_groups:
                     session_groups[sample.session_id] = _recorded_groups(sample, metadata, atlas)
                 names, columns = session_groups[sample.session_id]
+                if granularity == "subregion":
+                    # Refine the existing parent partition using recorded Allen IDs,
+                    # including unsplit noncortical areas and area-only labels.
+                    refined = {}
+                    for parent, indices in zip(names, columns):
+                        for column in indices:
+                            atlas_id = abs(int(table.iloc[column].atlas_id))
+                            matches = np.flatnonzero(atlas.id == atlas_id)
+                            if not len(matches):
+                                raise ValueError(f"Unknown recorded Allen atlas ID: {atlas_id}")
+                            label = str(atlas.acronym[int(matches[0])])
+                            refined.setdefault((parent, label), []).append(int(column))
+                    keys = sorted(refined)
+                    parents = [key[0] for key in keys]
+                    names = [key[1] for key in keys]
+                    if len(set(names)) != len(names):
+                        raise ValueError("Recorded anatomical label belongs to multiple parent regions")
+                    columns = [np.asarray(refined[key], dtype=np.int64) for key in keys]
                 expected_valid = sorted(int(c) for group in columns for c in group)
                 if expected_valid != np.flatnonzero(sample.neuron_mask[:len(table)]).tolist():
                     raise ValueError("Recorded-neuron validity differs within a session")
@@ -81,12 +103,30 @@ def transform_neural_targets(views, metadata, granularity="neuron", *, regions=N
                 names = list(regions)
                 columns = [np.flatnonzero(table.atlas_id.abs().isin(ids).to_numpy()
                            & sample.neuron_mask[:len(table)]) for ids in groups]
+            if selection is not None:
+                chosen = selection.get(sample.session_id)
+                if not isinstance(chosen, dict) or not chosen or set(chosen) - set(names):
+                    raise ValueError("Selection requires known, nonempty session subregion mappings")
+                retained = []
+                for label, parent, original in zip(names, parents, columns):
+                    if label not in chosen:
+                        continue
+                    indices = chosen[label]
+                    if (not isinstance(indices, list) or not indices or
+                            any(type(c) is not int for c in indices) or
+                            indices != sorted(set(indices)) or not set(indices) <= set(original.tolist())):
+                        raise ValueError("Selected columns must be unique ordered members of their anatomical group")
+                    retained.append((label, parent, np.asarray(indices, dtype=np.int64)))
+                names, parents, columns = map(list, zip(*retained))
             if any(not len(indices) for indices in columns):
                 raise ValueError(f"Empty recorded regional population in {sample.session_id}")
             mapping = dict(source_neuron_count=sample.neuron_count,
                            ordered_units=table.astype(object).where(pd.notna(table), None).to_dict(orient="records"),
                            regions=names, source_columns=[c.tolist() for c in columns],
                            region_neuron_counts=[len(c) for c in columns])
+            if granularity == "subregion":
+                mapping.update(parent_regions=parents, aggregation="sum", units="spike_count_per_bin",
+                               temporal_indices="unchanged original sample.temporal_positions")
             if sample.session_id in populations and not table.equals(populations[sample.session_id]):
                 raise ValueError("Source neuron ordering differs within a session")
             if sample.session_id in mappings and mapping["source_columns"] != mappings[sample.session_id]["source_columns"]:
@@ -98,19 +138,23 @@ def transform_neural_targets(views, metadata, granularity="neuron", *, regions=N
             provenance = deepcopy(sample.metadata)
             provenance["regional_targets"] = mapping
             identity = pd.DataFrame(dict(acronym=names,
-                uuids=[f"{sample.session_id}:region:{r}" for r in names],
+                uuids=[f"{sample.session_id}:{granularity}:{r}" for r in names],
                 source_neuron_count=[len(c) for c in columns]))
+            if granularity == "subregion":
+                identity["parent_region"] = parents
             samples.append(replace(sample, neural=neural, neuron_identity=identity,
                 neuron_count=len(names), neuron_mask=np.ones(len(names), dtype=bool), metadata=provenance))
         result.append(replace(view, samples=tuple(samples)))
     widths = {s: len(mappings[s]["regions"]) for s in metadata["eid_list"]}
-    metadata.update(target_granularity="region", regional_targets=mappings,
+    metadata.update(target_granularity=granularity, regional_targets=mappings,
                     eid_list=widths, num_neurons=sorted(set(widths.values())))
     if regions is None:
         metadata["regional_target_policy"] = dict(
             source="scenario_selected_recorded_population", ordering="alphabetical_per_session",
             anatomical_groups="configured visual roots" if metadata.get("neural_selection_policy")
                               else "recorded Allen areas with cortical layers merged into their parent area")
+        if granularity == "subregion":
+            metadata["regional_target_policy"]["anatomical_groups"] = "recorded Allen labels within the existing parent-area partition; no activity filtering"
     return (*result, metadata)
 
 

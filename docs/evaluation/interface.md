@@ -1,5 +1,48 @@
 # Evaluation interface
 
+## Filtered population validation diagnostics
+
+`evaluation.setup.resolve_setup(..., split="test")` retains isolated held-out
+test inference by default. Explicit `split="val"` collects model-development
+validation diagnostics with the same restoration, scientific generation,
+population, temporal support and selected-checkpoint checks. Validation may
+overlap checkpoint-selection observations and is labeled accordingly; test
+overlap rejection remains unchanged. Other split names raise `ValueError`.
+`collect_predictions` verifies each batch membership against the requested split.
+The setup summary retains legacy `test_sample_count`/`test_batches` field names;
+`evaluation_configuration.split` identifies their actual split.
+
+Checkpoint `training.target_selection`, when present, is reapplied by the training
+transform before checking recorded anatomical mappings and ordered populations.
+It does not modify the model architecture or original published dataset.
+
+[Experiment 3](../../script/experiment/information-filtering/README.md) exposes
+standalone validation inference for six configurations. It evaluates native
+selected groups separately, and forms full original regional predictions from
+included expected counts plus excluded train-derived constants. Region ground
+truth remains the complete original int64 sum. Comparison requires identical
+trial IDs, original bin indices, target values, anatomical mapping and baselines,
+and reports global cell-weighted and equal-trial paired NLL gains separately.
+These development diagnostics are distinct from final isolated test evaluation.
+
+## Subregion aggregation experiment
+
+Production setup restores `target_granularity="subregion"` through the training
+transform and verifies ordered source neurons, group/parent labels, source
+columns and grouping policy against the checkpoint. Neural values remain summed
+counts per original bin; predicted values remain log expected counts. The
+existing prediction record's neural channel axis denotes subregion groups.
+
+[Experiment 2](../../script/experiment/subregion-aggregation/README.md) evaluates
+native subregions and reconstructs parent outputs by summing Poisson intensities
+(`logsumexp` on log predictions). It verifies exact ground-truth reconstruction
+against Experiment 1 and retains original H=12/S=24 trial/bin support. Native
+metrics/predictions are separate artifacts; the four-model comparison accepts
+only identical reconstructed parent observations and training-derived means.
+Comparison reads saved artifacts without inference. Its JSON/CSV reports retain
+single-bin likelihood separately from W=1,3,6,12 curve metrics, per-region
+summaries, six paired trial contrasts and all four original artifact references.
+
 ## Controlled target-delay experiment
 
 Production setup/restoration and `collect_predictions` propagate recorded

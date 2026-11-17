@@ -127,7 +127,8 @@ def collect_predictions(setup: EvaluationSetup) -> PredictionCollection:
                     raise ValueError("Duplicate or unexpected test sample in inference loader")
                 source = expected[offset + index]
                 if (sample_id != source.sample_id or batch["session_id"][index] != source.session_id
-                        or int(batch["trial_id"][index]) != source.trial_id or batch["split"][index] != "test"):
+                        or int(batch["trial_id"][index]) != source.trial_id
+                        or batch["split"][index] != setup.configuration.get("split", "test")):
                     raise ValueError("Inference loader identity/order differs from selected test split")
                 length, neurons = source.sequence_length, source.neuron_count
                 temporal = batch["temporal_mask"][index]

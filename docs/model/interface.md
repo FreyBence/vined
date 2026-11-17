@@ -1,5 +1,17 @@
 # Model interface
 
+## Recorded subregion encoding targets
+
+`MultiModal(..., target_granularity="subregion", regional_targets=mapping)`
+uses the existing `RegionDecoder` linear count head, with `[B,T,G_max]` log
+expected summed spike counts per original bin. `G_max` is the padded maximum
+recorded-subregion count; `neuron_mask` marks real target groups. Mapping includes
+ordered group labels, parent labels, source neuron identities/columns and counts.
+Subregion mode requires encoding and explicit mapping. Checkpoint identity
+records `target_granularity="subregion"` plus the mapping; it cannot restore a
+region checkpoint by matching tensor dimensions. Region/neuron identities and
+the shared transformer are unchanged.
+
 ## Delayed strict encoding runtime
 
 `MultiModal` accepts optional `target_delay_bins=0` and `target_support_bins=12`

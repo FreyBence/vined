@@ -62,12 +62,12 @@ class MultiModal(nn.Module):
         self.avail_beh = avail_beh
         self.model_mode = model_mode
         self.target_granularity = kwargs.get("target_granularity", "neuron")
-        if self.target_granularity not in ("neuron", "region"):
+        if self.target_granularity not in ("neuron", "region", "subregion"):
             raise ValueError("Unknown neural target granularity")
-        if self.target_granularity == "region" and model_mode != "encoding":
+        if self.target_granularity in ("region", "subregion") and model_mode != "encoding":
             raise ValueError("Regional targets currently require encoding")
         self.regional_targets = copy.deepcopy(kwargs.get("regional_targets"))
-        if self.target_granularity == "region" and not self.regional_targets:
+        if self.target_granularity in ("region", "subregion") and not self.regional_targets:
             raise ValueError("Regional heads require explicit anatomical mapping metadata")
         self.eid_list = session_populations(kwargs["eid_list"])
         self.neuron_order = copy.deepcopy(neuron_order)
@@ -191,7 +191,7 @@ class MultiModal(nn.Module):
         self.mod_static_weight_dict = nn.ModuleDict()
         self.mod_token_weight_dict = {}
         for mod in mod_list:
-            decoder = RegionDecoder if mod == "spike" and self.target_granularity == "region" else StitchDecoder
+            decoder = RegionDecoder if mod == "spike" and self.target_granularity in ("region", "subregion") else StitchDecoder
             self.mod_stitcher_proj_dict[mod] = decoder(
                 eid_list = _eid_list, n_channels = n_channels, mod = mod,
                 max_F=self.max_F, visual_dim=self.visual_dim,
@@ -226,8 +226,8 @@ class MultiModal(nn.Module):
             "ordered_units": self.neuron_order,
             "neural_output": "log_expected_spike_count",
             "neural_head_layout": "real_session_channels_then_padding",
-            **({"target_granularity": "region", "regional_targets": self.regional_targets}
-               if self.target_granularity == "region" else {}),
+            **({"target_granularity": self.target_granularity, "regional_targets": self.regional_targets}
+               if self.target_granularity in ("region", "subregion") else {}),
             "visual_dim": self.visual_dim,
             "temporal_context": {"forward": self.context_forward, "backward": self.context_backward,
                 **({"mode": self.context_mode, "bins": self.context_bins,
