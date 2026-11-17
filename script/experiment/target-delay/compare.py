@@ -50,7 +50,6 @@ def main():
                                   total=len(artifacts), unit="runs"):
         resolved=artifact["resolved"]
         if (artifact["support"] != reference["support"] or resolved["experiment"] != exp or
-                resolved["sources"] != base["sources"] or
                 controlled_configuration(resolved) != controlled_configuration(base) or
                 artifact["metrics"]["definitions"] != reference["metrics"]["definitions"]):
             raise ValueError("Incompatible dataset generation, splits, units, target bins, definitions or controlled training settings")
@@ -96,6 +95,7 @@ def main():
             reference_run=reference["run_id"],matrix=matrix,paired_trial_comparisons=paired,
             evaluations={a["run_id"]:dict(evaluation_path=str(a["attempt"]),
                 manifest=a["manifest"],single_bin=a["metrics"]["single_bin"],
+                execution_sources=a["metrics"].get("execution_sources", {"training": a["resolved"]["sources"]}),
                 regions=a["metrics"]["regions"],neurons=a["metrics"]["neurons"],
                 contrasts=a["metrics"]["contrasts"],windows=a["metrics"]["windows"])
                 for a in artifacts})

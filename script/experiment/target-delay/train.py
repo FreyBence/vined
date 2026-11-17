@@ -6,7 +6,7 @@ import sys
 
 from common import (parser, run_settings, setup_arguments, support_record, source_identity,
                     bind_experiment, stage, read, completed, path, atomic_json, plain,
-                    fingerprint, file_hash)
+                    fingerprint, file_hash, changed_settings)
 
 
 class Tee:
@@ -53,12 +53,20 @@ def main():
     bind_experiment(directory.parent.parent, experiment_record)
     resolved = plain(dict(run=run, configuration=config, support=record,
                          experiment=exp, evaluation=evaluation, sources=sources))
-    identity = fingerprint(resolved)
     directory.mkdir(parents=True, exist_ok=True)
     snapshot = directory / "resolved.json"
-    if snapshot.exists() and read(snapshot) != resolved:
-        raise ValueError("Existing run has incompatible resolved parameters; use a new --run-id")
-    atomic_json(snapshot, resolved)
+    if snapshot.exists():
+        previous = read(snapshot)
+        different = changed_settings(previous, resolved)
+        if different:
+            raise ValueError("Existing run has incompatible resolved parameters ("
+                             + ", ".join(different) + "); use a new --run-id")
+    else:
+        previous = resolved
+        atomic_json(snapshot, resolved)
+    # Preserve the original snapshot and legacy stage identity. Every new
+    # attempt separately records its effective configuration and actual code.
+    identity = fingerprint(previous)
     atomic_json(directory / "preflight.json", dict(identity=identity, counts=record["counts"],
         mapping_examples=record["mapping_examples"], context=config.training.temporal_context,
         seed=config.seed, optimizer=config.optimizer, architecture=config.model,
@@ -71,6 +79,7 @@ def main():
     with stage(directory, "train", identity, skip=args.skip_completed) as attempt:
         if attempt is None:
             return
+        atomic_json(attempt / "resolved.json", resolved)
         import torch
         from trainer.pretrained import build_model, initialize_regional_bias
         from trainer.runtime import make_accelerator, prepare_optimization

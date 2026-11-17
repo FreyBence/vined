@@ -188,10 +188,19 @@ def bind_experiment(out, record):
     out.mkdir(parents=True, exist_ok=True)
     manifest = out / "manifest.json"
     if manifest.exists():
-        if read(manifest) != record:
-            raise ValueError("Experiment manifest differs; select a new output_root for a changed experiment")
+        previous = read(manifest)
+        different = changed_settings(previous, record)
+        if different:
+            raise ValueError("Experiment settings differ (" + ", ".join(different)
+                             + "); select a new output_root for a changed experiment")
     else:
         atomic_json(manifest, record)
+
+
+def changed_settings(previous, current):
+    """Source hashes describe execution provenance, not scientific settings."""
+    return sorted(key for key in set(previous) | set(current)
+                  if key != "sources" and previous.get(key) != current.get(key))
 
 
 @contextmanager

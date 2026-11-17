@@ -17,9 +17,8 @@ def main():
     resolved = read(directory/"resolved.json")
     if fingerprint(resolved) != manifest["identity"]:
         raise ValueError("Resolved run snapshot differs from completed training identity")
-    if (resolved["experiment"] != exp or resolved["evaluation"] != evaluation or resolved["run"] != run
-            or resolved["sources"] != source_identity()):
-        raise ValueError("Current experiment/configuration/source differs from the recorded run")
+    if (resolved["experiment"] != exp or resolved["evaluation"] != evaluation or resolved["run"] != run):
+        raise ValueError("Current experiment/configuration differs from the recorded run")
     result = read(train_attempt/"result.json")
     checkpoint = Path(result["checkpoint"])
     if file_hash(checkpoint) != result["checkpoint_sha256"]:
@@ -31,6 +30,10 @@ def main():
     with stage(directory,"evaluate",identity,skip=args.skip_completed,allow_new_inputs=True) as attempt:
         if attempt is None:
             return
+        trained_snapshot = train_attempt / "resolved.json"
+        training_sources = read(trained_snapshot)["sources"] if trained_snapshot.exists() else resolved["sources"]
+        execution_sources = dict(training=training_sources, evaluation=source_identity())
+        atomic_json(attempt / "sources.json", execution_sources)
         from evaluation.setup import resolve_setup
         from evaluation.predictions import collect_predictions
         setup = resolve_setup(checkpoint_path=checkpoint, dataset_generation=resolved["configuration"]["dataset"]["dataset_path"],
@@ -51,6 +54,7 @@ def main():
             raise ValueError("Evaluated trial membership differs from preflight")
         metrics,saved = analyze(collection.predictions,resolved["support"],effective)
         metrics.update(run=run, run_id=directory.name, compatibility_id=resolved["support"]["compatibility_id"],
+            execution_sources=execution_sources,
             checkpoint_sha256=result["checkpoint_sha256"], evaluation_configuration=effective,
             training_identity=manifest["identity"])
         predictions = attempt/"predictions"; predictions.mkdir()

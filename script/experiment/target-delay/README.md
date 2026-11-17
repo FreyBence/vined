@@ -166,8 +166,12 @@ resume with the standalone command, then restart orchestration to skip completio
 Partial/failed attempts remain available. Ordinary exceptions and Ctrl+C record
 failed/interrupted states. A hard process kill may leave `*.lock` and a running
 state; verify the process is gone before manually removing that lock. A directory
-alone never proves completion. Changing scientific settings or source code after
-preflight requires a new `output_root` under the experiment directory. Existing
+alone never proves completion. Changing scientific settings after preflight
+requires a new `output_root` under the experiment directory. Source hashes are
+execution provenance rather than a compatibility requirement. The original root
+and run snapshots are retained, and each new training attempt saves its own
+`resolved.json`; evaluation saves training/inference identities in `sources.json`.
+Dataset, support, model and optimization settings must still agree. Existing
 incompatible runs are rejected. Re-evaluating a compatible newly trained attempt
 or recomparing a new selection creates fresh outputs and retains older attempts.
 
