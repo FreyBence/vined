@@ -1,0 +1,15 @@
+{
+  "method": "projected_visual_ridge_count",
+  "projection_dimensions": 12,
+  "folds": 3,
+  "ridge_alpha": 10.0,
+  "count_floor": 1e-08,
+  "scoring_delays": [
+    0,
+    6
+  ],
+  "combination": "arithmetic_mean_oof_gain",
+  "seed": 42,
+  "neuron_fraction": 0.5,
+  "subregion_fraction": 0.5
+}

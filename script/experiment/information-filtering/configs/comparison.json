@@ -1,0 +1,13 @@
+{
+  "run_ids": [
+    "unfiltered_00",
+    "unfiltered_06",
+    "neuron_filtered_00",
+    "neuron_filtered_06",
+    "subregion_filtered_00",
+    "subregion_filtered_06"
+  ],
+  "reference": "matched_delay_unfiltered",
+  "gain": "reference_nll_minus_candidate_nll",
+  "representative_trials": 4
+}
