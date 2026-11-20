@@ -94,6 +94,10 @@ def _known_overrides(base, override, prefix=""):
         raise ValueError("Training configuration must be a mapping")
     for key, value in override.items():
         name = f"{prefix}{key}"
+        if name == "model.encoder.embedder.visual_dim":
+            if type(value) is not int or value not in (768, 4096):
+                raise ValueError("visual_dim must be 768 or 4096")
+            continue
         if key not in base:
             raise ValueError(f"Unsupported configuration field: {name}")
         if isinstance(base[key], dict):
@@ -336,8 +340,9 @@ def resolve_setup(args, tune_config=None):
                                  excluded_temporal_targets=sum(sample.sequence_length for sample in view.samples) - eligible,
                                  trials_without_targets=sum(sample.sequence_length < support for sample in view.samples))
         training["temporal_target_coverage"] = coverage
-    if any(sample.visual.shape[1] != 768 for sample in consumed):
-        raise ValueError("The current model requires 768-dimensional visual features")
+    visual_width = model["encoder"]["embedder"].get("visual_dim", 768)
+    if visual_width not in (768, 4096) or any(sample.visual.shape[1] != visual_width for sample in consumed):
+        raise ValueError("Visual feature width must match the configured 768/4096-dimensional input")
     # Include held-out trial lengths so checkpoint capacity preserves every
     # selected trial; this does not evaluate held-out targets.
     data["max_time_length"] = max(sample.sequence_length

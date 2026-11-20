@@ -87,6 +87,7 @@ def _visual(trial, starts, ends):
                for start, end, left_closed, right_closed in segments):
         raise TrialUnavailable("Visual reconstruction does not continuously cover the stimulus interval")
     times, features, indices, identities = [], [], [], []
+    width = trial.observations[0].feature.size if trial.observations[0].feature is not None else None
     previous_time = None
     for index, row in enumerate(rows):
         meta = row.metadata
@@ -108,9 +109,11 @@ def _visual(trial, starts, ends):
         previous_time = time
         if row.status == "encoded":
             feature = np.asarray(row.feature)
-            if (not row.selected or feature.shape != (768,) or feature.dtype != np.dtype("float32")
+            if (not row.selected or feature.ndim != 1 or feature.size not in (768, 4096)
+                    or (width is not None and feature.size != width) or feature.dtype != np.dtype("float32")
                     or not np.isfinite(feature).all() or not np.isclose(np.linalg.norm(feature), 1, atol=1e-5)):
                 raise ValueError("Malformed or non-normalized encoded visual feature")
+            width = feature.size
             times.append(time)
             features.append(feature)
             indices.append(index)

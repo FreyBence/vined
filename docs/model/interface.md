@@ -212,7 +212,7 @@ count. Valid positions must be int64 indices in `[0,max_F)`; padding indices are
 ignored. Longer sequences and incompatible feature widths are rejected explicitly.
 Adding temporal padding within the maximum does not change valid predictions
 beyond normal floating-point rounding. Upstream feature preparation and training
-dataset constraints are separate; the current research dataset still uses 768 features.
+dataset constraints are separate; pooled inputs use 768 features and E2 flat patch inputs use 4096.
 
 `config.context.forward` and `backward` are model-grid position limits: `-1`
 means unrestricted in that direction and a nonnegative integer sets the maximum
@@ -355,8 +355,8 @@ The training adapter supplies the declared modality dictionaries and retains
 idempotent, and its unsupervised singleton copies do not change session dispatch.
 Training stores the unmodified `state_dict`, preserving model identity metadata;
 it also owns ordered-population provenance and optimizer/checkpoint selection.
-Training's current dataset configuration restricts visual width to 768 even
-though the model itself accepts configured widths.
+Training validates matching configured and dataset widths of 768 or 4096.
+Both remain one temporal token per aligned bin; the model implementation is unchanged.
 
 For compatible training checkpoints, the existing
 `trainer.pretrained.model_from_checkpoint(path)` restores saved configuration,

@@ -35,7 +35,7 @@ def _check_identity(value, field):
         raise ValueError(f"Invalid {field}")
 
 
-def write_features(observations, encoder, output, *, batch_size=32, workers=1):
+def write_features(observations, encoder, output, *, batch_size=32, workers=1, _encoded=None):
     """Publish a new archive only after extraction, source completion and readback.
 
     Existing destinations are refused. A failed run never returns an old result.
@@ -60,8 +60,8 @@ def write_features(observations, encoder, output, *, batch_size=32, workers=1):
     with progress, tempfile.TemporaryDirectory(prefix=".features-", dir=output.parent) as temporary:
         staging = Path(temporary)
         with (staging / "records.jsonl").open("wb") as records, (staging / "pixels-free-features").open("wb") as values:
-            with closing(iter_encoded_observations(observations, encoder, batch_size=batch_size,
-                                                   workers=workers)) as stream:
+            with closing(_encoded if _encoded is not None else iter_encoded_observations(
+                    observations, encoder, batch_size=batch_size, workers=workers)) as stream:
                 for item in stream:
                     if isinstance(item, EncodedObservation):
                         index = None
@@ -100,7 +100,7 @@ def write_features(observations, encoder, output, *, batch_size=32, workers=1):
             archive.write(staging / "records.jsonl", "records.jsonl")
             with archive.open("features.npy", "w", force_zip64=True) as member:
                 np.lib.format.write_array_header_2_0(member, dict(
-                    descr="<f4", fortran_order=False, shape=(count, 768)))
+                    descr="<f4", fortran_order=False, shape=(count, encoder.provenance["feature_width"])))
                 with (staging / "pixels-free-features").open("rb") as source:
                     shutil.copyfileobj(source, member, length=1024 * 1024)
             archive.writestr("manifest.json", _json(manifest))
@@ -151,7 +151,7 @@ class FeatureArtifactReader:
             required = {"model", "revision", "artifact_hashes", "output", "feature_width", "dtype",
                         "normalization", "preparation", "processor", "packages", "sources", "device"}
             if (not required.issubset(rep) or not re.fullmatch(r"[0-9a-f]{40}", rep["revision"])
-                    or not rep["artifact_hashes"] or rep["feature_width"] != 768
+                    or not rep["artifact_hashes"] or rep["feature_width"] != {"A": 768, "B": 4096, "G": 4096}.get(rep.get("representation_id"), 768)
                     or rep["dtype"] != "float32" or rep["normalization"] != "L2 per observation"):
                 raise ValueError("Missing or unsupported feature representation")
             for requested, actual, name in (
@@ -213,7 +213,7 @@ class FeatureArtifactReader:
                 if np.lib.format.read_magic(features) != (2, 0):
                     raise ValueError("Unsupported feature array header")
                 shape, fortran, dtype = np.lib.format.read_array_header_2_0(features)
-                if shape != (manifest["feature_count"], 768) or fortran or dtype != np.dtype("<f4"):
+                if shape != (manifest["feature_count"], self._definition["representation"]["feature_width"]) or fortran or dtype != np.dtype("<f4"):
                     raise ValueError("Invalid feature array shape/type")
                 for line in records:
                     records_hash.update(line)
@@ -257,10 +257,10 @@ class FeatureArtifactReader:
                     if expected_status == "encoded":
                         if record["feature_index"] != count:
                             raise ValueError("Feature association mismatch")
-                        raw = features.read(768 * 4)
+                        raw = features.read(self._definition["representation"]["feature_width"] * 4)
                         features_hash.update(raw)
                         vector = np.frombuffer(raw, dtype="<f4")
-                        if (vector.shape != (768,) or not np.isfinite(vector).all()
+                        if (vector.shape != (self._definition["representation"]["feature_width"],) or not np.isfinite(vector).all()
                                 or not np.isclose(np.linalg.norm(vector), 1, atol=1e-5)):
                             raise ValueError("Invalid normalized feature vector")
                         count += 1

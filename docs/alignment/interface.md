@@ -86,7 +86,7 @@ Each `PreparedTrial` contains `session_id`, `trial_id`, `stim_on`, `stim_off`,
 the copied source `CountWindow` in `neural`, all `EncodedObservation` records in
 `observations`, and the unchanged trial outcome metadata in `visual_outcome`.
 Feature arrays are read-only. Neural counts have shape `[source_bins, units]`;
-encoded features have shape `[768]`. Neither input is an aligned output tensor.
+encoded features have shape `[D]`, with D=768 or 4096 and one consistent width per trial. Neither input is an aligned output tensor.
 Times and bin duration are seconds in the source session clock, not model indices.
 
 Direct in-memory counts are defensively copied; persisted counts are freshly
@@ -157,7 +157,7 @@ model context restricts aligned token indices, not underlying frame availability
 | `bin_start_times`, `bin_center_times`, `bin_end_times` | Float64 `[T]` physical session timestamps. Centers are midpoints of supplied edges. |
 | `neural_activity` | Int64 `[T,N]` raw counts, retaining zeros and silent units. |
 | `neuron_identity` | Copied full ordered unit table; row `n` identifies neural column `n`. |
-| `visual_features` | Float32 `[T,768]` L2-normalized interpolated features at bin centers. |
+| `visual_features` | Float32 `[T,D]` L2-normalized interpolated features at bin centers. |
 | `alignment_metadata` | Compact trial-specific source definitions/completion identities, neural configuration/recordings/trial sources, request/generation identities, source-bin slice, visual outcome, and resampling policy/associations. |
 
 `alignment_metadata["visual_resampling"]` records the versioned mapping policy.
@@ -339,3 +339,14 @@ Training-dataset consumes `load_alignment(...).trials` and owns splitting,
 padding, and model packaging. `src/create_dataset.py --alignment-generation PATH`
 accepts published alignment generations; see the
 [training-dataset interface](../training-dataset/interface.md) for creation options.
+
+
+## Flat spatial feature compatibility
+
+Visual input validation accepts normalized float32 vectors of width 768 or 4096.
+Published/read aligned arrays must match the width declared by
+`alignment_metadata.visual_definition.representation.feature_width`.
+Whole-vector float64 interpolation followed by L2 normalization is unchanged;
+4096 features remain one observation per bin. Source representation and feature
+completion identities remain in alignment metadata. No spatial tokens, neural
+changes, or new temporal mapping are introduced by accepting the wider vector.

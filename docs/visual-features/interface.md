@@ -75,7 +75,7 @@ with ObservationSelection(ReplayArtifactReader(generation_directory),
 
 `ClipEncoder(model_name="openai/clip-vit-large-patch14", *, revision="main",
 device=None, workers=1, precision="auto", gpu_duty_cycle=1.0,
-feature_cache_size=512, attention_backend="auto")` resolves the model revision to an immutable commit and loads model
+feature_cache_size=512, attention_backend="auto", spatial_bundle=False)` resolves the model revision to an immutable commit and loads model
 and image processor from that snapshot. The default device is CUDA when
 available, otherwise CPU. The supported model has a square image input and
 768 projected features. Weights are frozen; execution uses evaluation and
@@ -170,7 +170,7 @@ It yields:
   source metadata. Status is `encoded`, `not_selected`, or `source_unavailable`.
   The last category retains the exact upstream invalid/unavailable/failed status
   and reason in metadata. Only `encoded` records have an immutable float32
-  `[768]` feature. Selected valid blanks are encoded normally.
+  `[D]` feature, where D is the declared representation width. Selected valid blanks are encoded normally.
 - Unchanged `TrialOutcome` records, including trials without any features.
 
 The generator owns its observation selector while iterating; close it explicitly
@@ -215,7 +215,7 @@ distinct from recorded upstream invalidity.
   Observation records contain unchanged source `metadata`, boolean `selected`,
   extraction `status`, and `feature_index` (zero-based row or null). Trial records
   contain the complete unchanged source outcome, including domain and coverage.
-- `features.npy`: little-endian float32 `[F,768]`, NPY format 2.0, in encoded-record
+- `features.npy`: little-endian float32 `[F,D]`, NPY format 2.0, in encoded-record
   order. `F` counts selected valid images; it can be zero. No invalid placeholders
   or model padding are included.
 - `manifest.json`: schema version 1, kind `visual_feature_artifacts`, definition
@@ -327,3 +327,34 @@ its legacy top-level provenance field is absent. Those consumers do not yet hand
 coverage partitions or generation identity. Alignment migration is separate work;
 neural resampling and dataset construction are unchanged. Existing legacy files
 are not converted or silently replaced.
+
+
+## Common-pass spatial CLIP bundle
+
+`ClipEncoder(..., spatial_bundle=True)` requires the 224-pixel ViT-L/14 vision
+configuration (24 layers, 16?16 patches, hidden width 1024). `encode` returns
+float32 `[B,8960]`: A at `0:768`, B at `768:4864`, G at `4864:8960`.
+Each section is independently L2-normalized as a complete vector. This packed
+return is an extraction boundary; it is not a model input representation.
+
+A is projected post-LayerNorm pooled CLS. B excludes CLS from raw final vision
+states, averages nonoverlapping 8?8 quadrants, and flattens top-left, top-right,
+bottom-left, bottom-right. G averages all 256 raw patch states and repeats that
+1024-vector four times before normalization. B/G do not use post-LayerNorm or
+visual projection. Reduction occurs on device; full patch states are not stored.
+The instance cache always stores all three sections together.
+
+`representation_provenance(arm)` returns the individual A/B/G definition with
+`representation_id`, width, layer, pooling, cell ordering, and normalization.
+`visual_features.bundle.write_feature_bundle(observations, encoder, outputs,
+*, batch_size=64, workers=1)` consumes one replay stream and publishes three
+separate archives through the same verified writer. `outputs` must contain
+exactly A/B/G paths and none may exist. Queues are bounded; source metadata,
+invalidity and observation order are shared unchanged. It returns a manifest
+per arm only after all three readbacks pass. An individual archive may already
+have published if another writer fails; absence of a bundle completion must
+not be treated as a completed three-arm extraction.
+
+The array width D is bound to representation metadata: A=768, B/G=4096.
+Existing schema-1 pooled 768 artifacts without `representation_id` remain
+readable; immutable generations and overwrite refusal are preserved.

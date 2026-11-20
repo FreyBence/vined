@@ -295,7 +295,7 @@ against recorded context on scoring and artifact readback. An entirely empty
 active evaluation fails; a session without eligible targets remains explicitly
 unavailable alongside its retained trial identities.
 
-`T` and `N` are the checkpoint runtime padding sizes; `D` is its visual width (currently 768). Real unit rows identify the leading valid neural columns. Neural cells are interpretable only where both masks are true; padded model fill is never a valid prediction. No exponentiation, rate conversion, normalization of observations, or metrics are applied during collection.
+`T` and `N` are the checkpoint runtime padding sizes; `D` is its saved visual width (768 for pooled CLS; 4096 for E2 patch representations). Real unit rows identify the leading valid neural columns. Neural cells are interpretable only where both masks are true; padded model fill is never a valid prediction. No exponentiation, rate conversion, normalization of observations, or metrics are applied during collection.
 
 Encoding uses visual-only keyword inference without neural targets or model loss. Decoding uses the neural encoder without targets. No random training masks, input from the predicted target modality, stochastic sampler, optimizer, or singleton duplication is used.
 

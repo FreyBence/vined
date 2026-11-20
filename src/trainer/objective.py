@@ -20,7 +20,8 @@ def validate_batch(batch, *, config, populations, split):
     b, t, n = spikes.shape
     if b < 1 or t != config.data.max_time_length or n != config.data.max_space_length:
         raise ValueError("Batch dimensions disagree with the configured scientific runtime layout")
-    shapes = {"vision-clip": (b,t,768), "visual": (b,t,768), "neural": (b,t,n),
+    visual_width = config.model.encoder.embedder.get("visual_dim", 768)
+    shapes = {"vision-clip": (b,t,visual_width), "visual": (b,t,visual_width), "neural": (b,t,n),
               "temporal_mask": (b,t), "neuron_mask": (b,n), "time_attn_mask": (b,t),
               "space_attn_mask": (b,n), "vision-clip_valid": (b,t), "spikes_timestamps": (b,t)}
     for name, shape in shapes.items():

@@ -314,7 +314,7 @@ accepts `--pretrained-checkpoint PATH` for pretrained weights.
 Split membership, sample/trial/session identities, physical timestamps, and
 ordered unit tables come from the persisted dataset. Source counts/features
 are unchanged. Runtime tensors use the training-dataset loader contract:
-`spikes_data[B,T,N]`, `vision-clip[B,T,768]`, temporal/neuron validity masks,
+`spikes_data[B,T,N]`, `vision-clip[B,T,D]`, temporal/neuron validity masks,
 and separate identity/provenance fields. `B` is batch size, `T` the configured
 time size, and `N` the largest selected session population. No implicit population
 sorting or filtering is allowed. Time maxima cannot truncate real observations.
@@ -438,8 +438,8 @@ run artifacts. It also works through `bash script/train.sh`; prepend
 `--finetune` for fine-tuning. Positional training wrappers accept additional
 Python options, including explicit generation selection.
 
-Invalid configuration, incompatible feature width (the current model requires
-768), truncating time maxima, unavailable sessions, empty optimization or
+Invalid configuration, incompatible feature width (the configured visual dimension must match
+every consumed sample and be 768 or 4096), truncating time maxima, unavailable sessions, empty optimization or
 required validation splits, and generation verification errors fail visibly.
 Legacy implicit `--continue_pretrain` is rejected.
 
@@ -702,3 +702,14 @@ exact resume compatibility; their dataset generation binds the policy. Resume
 retains existing generation/configuration compatibility checks. For the upcoming
 Scenario 11 baseline explicitly select a newly interpolated dataset; selecting a
 historical dataset intentionally retains its historical representation.
+
+
+## E2 flat visual widths
+
+`resolve_setup` validates consumed feature width against
+`model.encoder.embedder.visual_dim` (default 768; accepted 768 or 4096).
+Wider normalized inputs retain one temporal token per bin and the existing
+encoding-only objective, temporal context, neural targets and optional decoder.
+Resolved model configuration and dataset generation bind checkpoint width and
+representation. The dedicated controlled experiment entry point is
+`script/experiment/spatial-clip/run.py`; its contract is documented beside it.

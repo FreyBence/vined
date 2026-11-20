@@ -85,7 +85,7 @@ def _validate(trials):
             raise ValueError(f"Trial {trial.trial_id}: inconsistent complete neural bin grid")
         if (trial.neural_activity.shape != (t, n) or trial.neural_activity.dtype != np.dtype("int64")
                 or np.any(trial.neural_activity < 0)
-                or trial.visual_features.shape != (t, 768)
+                or trial.visual_features.shape != (t, trial.alignment_metadata["visual_definition"]["representation"]["feature_width"])
                 or trial.visual_features.dtype != np.dtype("float32")
                 or not np.isfinite(trial.visual_features).all()
                 or not np.allclose(np.linalg.norm(trial.visual_features, axis=1), 1, atol=1e-5)):

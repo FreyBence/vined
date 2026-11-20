@@ -54,7 +54,8 @@ class ClipEncoder:
 
     def __init__(self, model_name="openai/clip-vit-large-patch14", *, revision="main",
                  device=None, workers=1, precision="auto", gpu_duty_cycle=1.0,
-                 feature_cache_size=512, attention_backend="auto"):
+                 feature_cache_size=512, attention_backend="auto", spatial_bundle=False):
+        self._spatial_bundle = spatial_bundle
         if type(workers) is not int or workers < 1:
             raise ValueError("workers must be a positive integer")
         self._workers = workers
@@ -103,6 +104,11 @@ class ClipEncoder:
         self._width = self._model.config.projection_dim
         if type(self._size) is not int or self._size <= 0 or self._width != 768:
             raise ValueError("Require a square-input CLIP model with 768 projected features")
+        if spatial_bundle:
+            vision = self._model.config.vision_config
+            if (self._size, vision.patch_size, vision.hidden_size, vision.num_hidden_layers) != (224, 14, 1024, 24):
+                raise ValueError("Spatial bundle requires CLIP ViT-L/14 at 224 pixels")
+            self._width = 8960
         # Pixel conversion/normalization are explicit; downloaded crop defaults
         # must not undo the full-view adaptation.
         self._processor.do_resize = False
@@ -139,6 +145,24 @@ class ClipEncoder:
     @property
     def provenance(self):
         return deepcopy(self._provenance)
+
+    def representation_provenance(self, arm):
+        """Describe one output of the optional common-pass A/B/G bundle."""
+        if not self._spatial_bundle or arm not in ("A", "B", "G"):
+            raise ValueError("Require spatial bundle and arm A/B/G")
+        result = self.provenance
+        result.update(representation_id=arm, feature_width=768 if arm == "A" else 4096,
+            output={"A": "projected post-LayerNorm pooled CLS",
+                    "B": "raw final-layer patch-state 2x2 quadrant means",
+                    "G": "raw final-layer global patch mean repeated four times"}[arm],
+            spatial=dict(layer=24, exclude_cls=True, patch_grid=[16, 16], hidden_width=1024,
+                         post_layernorm=False, projection=False,
+                         cell_order=["top-left", "top-right", "bottom-left", "bottom-right"],
+                         normalization="whole flattened vector"),
+            common_pass_outputs=["A", "B", "G"])
+        if arm == "A":
+            result["spatial"] = None
+        return result
 
     def encode(self, frames):
         """Return float32[B,768]; raise rather than publish unusable vectors."""
@@ -177,14 +201,27 @@ class ClipEncoder:
                 autocast = (torch.autocast(device_type="cuda", dtype=torch.float16)
                             if self._precision == "float16" else nullcontext())
                 with autocast:
-                    features = self._model.get_image_features(
-                        **{key: value.to(self._device) for key, value in inputs.items()})
+                    device_inputs = {key: value.to(self._device) for key, value in inputs.items()}
+                    if self._spatial_bundle:
+                        vision = self._model.vision_model(**device_inputs)
+                        pooled = self._model.visual_projection(vision.pooler_output).float()
+                        patches = vision.last_hidden_state[:, 1:].float().reshape(-1, 16, 16, 1024)
+                        grid = patches.reshape(-1, 2, 8, 2, 8, 1024).mean(dim=(2, 4)).flatten(1)
+                        global_patch = patches.mean(dim=(1, 2)).repeat(1, 4)
+                        parts = (pooled, grid, global_patch)
+                        if any(not torch.isfinite(p).all() or (torch.linalg.vector_norm(p, dim=-1) <= 1e-12).any() for p in parts):
+                            raise ValueError("Invalid common-pass representation")
+                        features = torch.cat([torch.nn.functional.normalize(p, dim=-1) for p in parts], dim=-1)
+                        del patches, grid, global_patch, vision, parts
+                    else:
+                        features = self._model.get_image_features(**device_inputs)
                 features = features.float()
                 if (features.shape != (len(images), self._width)
                         or not torch.isfinite(features).all()
                         or (torch.linalg.vector_norm(features, dim=-1) <= 1e-12).any()):
                     raise ValueError("CLIP produced invalid projected features")
-                features = torch.nn.functional.normalize(features, dim=-1).cpu().numpy()
+                features = (features if self._spatial_bundle else
+                            torch.nn.functional.normalize(features, dim=-1)).cpu().numpy()
             if self._gpu_duty_cycle < 1:
                 elapsed = time.perf_counter() - started
                 pause = elapsed * (1 / self._gpu_duty_cycle - 1)
