@@ -78,6 +78,20 @@ Do not expand a task into stronger validation, benchmarking, historical reconstr
 
 When functional completion and additional confidence-building work compete for effort, prioritize completing the required functional pipeline according to `.agent/rules/scope.md`.
 
+## Execution policy — user-run only
+
+By default, Codex must implement and prepare the requested functionality **without executing the application or research pipeline**. The user is responsible for running it and reviewing runtime results.
+
+* Do not launch application entry points, experiment runners, training, evaluation, inference, feature extraction, dataset generation, replay, alignment, benchmarks, migrations, or other project-runtime workflows.
+* Do not run a smaller sample, smoke run, manual probe, or diagnostic script as a substitute for the full application run. Do not install dependencies, download models or data, or start resource-intensive processing merely to verify implementation.
+* Static work is permitted: inspect the relevant source, configurations, documentation, artifact manifests, and diffs; reason about interfaces, shapes, control flow, and expected outputs. Read-only repository commands such as `git status` and `git diff` are permitted. Do not execute project code during static verification.
+* After implementation, provide reproducible **user-executed instructions**: prerequisites, exact commands from the repository root, required configuration and inputs, expected outputs or artifact locations, and a short manual verification checklist. Identify potentially expensive steps, particularly GPU use, data generation, and training.
+* Clearly distinguish checks actually performed from checks that the user still needs to run. Do not claim successful execution, numerical correctness, model quality, or runtime validation without observed results.
+* If execution is needed to resolve a blocker, explain why and provide the smallest relevant command for the user to run. Continue with static work where possible, and report any remaining unverified assumptions.
+* Only execute an otherwise prohibited workflow if the user **explicitly authorizes that specific execution** in the current task. A request to implement, complete, audit, or validate a feature is not implicit permission to run it.
+
+This policy takes precedence over references elsewhere to execution-based validation or experiment completion. Completion normally means the implementation and its run instructions are ready, not that Codex has executed the pipeline.
+
 ## Planning and task tracking
 
 Follow `.agent/rules/planning.md` whenever creating, revising, or updating implementation plans or `tasks.md` files.
@@ -105,7 +119,7 @@ Audits identify the current implementation delta. They do not redesign component
 ## No test writing
 
 * Do not create, add, or modify test code in this repository, including unit, integration, regression, end-to-end, snapshot, or temporary test scripts.
-* Validate changes through code inspection, existing checks, execution of the implemented functionality, or manual verification without writing tests.
+* Validate changes through static code and configuration inspection. Provide instructions for the user to execute the implemented functionality and manually verify its behavior; do not execute it yourself without explicit task-specific authorization.
 * Apply the validation principles in `.agent/rules/scope.md`: validation should be proportional to the concrete risk and project claim.
 * Do not create automated validation infrastructure as a substitute for directly demonstrating that the requested functionality works.
 * Do not delete existing tests unless the user explicitly requests their removal.
@@ -114,12 +128,12 @@ Audits identify the current implementation delta. They do not redesign component
 
 * This repository does not use continuous integration, continuous delivery, or continuous deployment.
 * Do not add CI/CD workflows, pipeline configuration, automated dependency-update bots, or scripts and documentation intended to support those systems.
-* Use code inspection, existing local checks, direct execution, and manual verification as appropriate.
+* Use static code inspection and, where appropriate, provide commands for the user to perform existing local checks and manual verification. Do not run the application or checks that execute project code without explicit task-specific authorization.
 * Review dependency updates manually and keep them consistent with the repository's constraints files.
 
 ## Task completion
 
-Unless the user or a task specification explicitly requires something stronger, stop when the requested functionality satisfies the completion principles in `.agent/rules/scope.md`.
+Unless the user or a task specification explicitly requires something stronger, stop when the requested implementation and user-run instructions satisfy the completion principles in `.agent/rules/scope.md`.
 
 When task tracking is involved, update the plan according to `.agent/rules/planning.md`.
 
@@ -131,4 +145,4 @@ Normally this means:
 
 without adding a completion report or rewriting the plan.
 
-Do not create additional work merely because a more exhaustive implementation, validation strategy, research investigation, abstraction, or future-proofing effort would be possible.
+Do not treat unperformed runtime verification as a successful run. State briefly what remains for the user to execute, and do not create additional work merely because a more exhaustive implementation, validation strategy, research investigation, abstraction, or future-proofing effort would be possible.
