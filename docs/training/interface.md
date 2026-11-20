@@ -1,5 +1,18 @@
 # Training interface
 
+## E0 controlled temporal horizon experiment
+
+The isolated [E0 runner](../../script/experiment/temporal-horizon/README.md)
+resolves fresh H6/H12 strict subregion encoding with D=0/S=12 through production
+setup and training. A shared override file controls the initial 50-epoch budget.
+`preflight` resolves both arms without optimization and rejects differences beyond
+H, including unequal parameter dimensions, recorded source mappings and training
+baselines. `train --arm H6|H12` explicitly trains only that arm with full eligible
+S=12 objectives and validation-loss selection. The training-only median cutoff
+affects downstream reporting only. Effective configurations, production histories,
+selected checkpoint hashes/epochs and source identities remain under the new E0
+output root; historical experiment identities are not reused.
+
 ## Fixed train-derived source-column screening
 
 `--target-selection-json PATH` optionally supplies a JSON mapping

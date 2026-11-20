@@ -1,0 +1,18 @@
+{
+  "dataset_generation": "output/datasets/training-dataset/generations/01e5d3830786d45e1aa6f074d3e6c08fb0e476165f93b11a94d605edefb7995c",
+  "expected_dataset_generation_id": "01e5d3830786d45e1aa6f074d3e6c08fb0e476165f93b11a94d605edefb7995c",
+  "session_id": "0cad7ea8-8e6c-4ad1-a5c5-53fbb2df1a63",
+  "training_defaults": "script/experiment/temporal-horizon/configs/training.json",
+  "output_root": "output/experiment/temporal-horizon",
+  "context_mode": "strict",
+  "horizons": [6, 12],
+  "target_delay_bins": 0,
+  "support_bins": 12,
+  "target_granularity": "subregion",
+  "neural_region_selection": "all_recorded",
+  "information_filtering": false,
+  "objective": "encoding",
+  "response_windows": [1, 6, 12],
+  "evaluation_batch_size": 1,
+  "evaluation_device": "cpu"
+}

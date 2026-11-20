@@ -1,5 +1,25 @@
 # Evaluation interface
 
+## E0 median-limited temporal horizon comparison
+
+The isolated [E0 runner](../../script/experiment/temporal-horizon/README.md)
+uses production selected-checkpoint restoration and `collect_predictions` for
+`evaluate --arm H6|H12`. It preserves original native subregion count/log-count
+arrays and trial-relative bins. Its training-derived cutoff admits complete bins
+`11<=t<min(T,floor(median_train_length))`; optimization and checkpoint selection
+remain full-support. The baseline is the same full eligible training mean in both
+arms, not a median-restricted mean. W=1/6/12 smoothing stays within each declared
+interval. Undefined diagnostics retain contributor counts and reasons.
+
+`compare` reads verified completed E0 attempts and requires exact session/trial/
+original-bin/subregion pairing, targets, mappings, baseline and implementation
+sources, with configuration differing only in H. It publishes cell-weighted and
+equal-trial NLL/gain, correlations, variance ratios, trial variability, paired
+trial/channel differences and improved-trial fractions. Full intervals, long-trial
+tails and summed-intensity parent reconstruction are supplementary. JSON includes
+configuration/checkpoint/curve provenance; the report never selects a winner.
+The linked README defines commands, errors and persisted array/manifest schemas.
+
 ## Filtered population validation diagnostics
 
 `evaluation.setup.resolve_setup(..., split="test")` retains isolated held-out
